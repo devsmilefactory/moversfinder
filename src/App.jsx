@@ -14,6 +14,7 @@ import { PWAInstallPrompt, PWAUpdateNotification, IOSInstallInstructions } from 
 import RideStatusToasts from './components/notifications/RideStatusToasts';
 
 import NotificationBell from './components/notifications/NotificationBell';
+import { checkAndHandleUpdate, getCurrentVersion } from './utils/versionManager';
 
 /**
  * Main App Component for TaxiCab PWA
@@ -33,6 +34,33 @@ function App() {
 
   const { user, isAuthenticated, authLoading, authError, initialize } = useAuthStore();
   const { isOnline, isConnected, checkConnectivity } = useNetworkStatus();
+
+  // Check for app updates and clear caches if needed
+  useEffect(() => {
+    const checkForUpdates = async () => {
+      console.log('🔍 Checking for app updates...');
+      console.log('📦 Current app version:', getCurrentVersion());
+
+      try {
+        const wasUpdated = await checkAndHandleUpdate();
+
+        if (wasUpdated) {
+          console.log('✅ App was updated - caches cleared');
+          // Force re-authentication after update to ensure fresh state
+          const currentState = useAuthStore.getState();
+          if (currentState.isAuthenticated) {
+            console.log('🔄 Re-initializing auth after update...');
+            await initialize();
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error checking for updates:', error);
+      }
+    };
+
+    checkForUpdates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
   // Initialize auth on mount with timeout to prevent infinite loading
   useEffect(() => {

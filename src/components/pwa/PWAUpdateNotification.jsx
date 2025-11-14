@@ -11,6 +11,7 @@ import React, { useEffect, useState } from 'react';
 import { RefreshCw, X, AlertCircle } from 'lucide-react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import Button from '../ui/Button';
+import { handleAppUpdate } from '../../utils/versionManager';
 
 const PWAUpdateNotification = () => {
   const [showReloadPrompt, setShowReloadPrompt] = useState(false);
@@ -60,8 +61,10 @@ const PWAUpdateNotification = () => {
 
   const handleUpdate = async () => {
     setIsUpdating(true);
-    
+
     try {
+      console.log('🔄 PWA Update: Starting update process...');
+
       // Track update acceptance (optional analytics)
       if (window.gtag) {
         window.gtag('event', 'pwa_update_accepted', {
@@ -69,17 +72,29 @@ const PWAUpdateNotification = () => {
         });
       }
 
-      // Update and reload
+      // Clear all caches and auth state before updating
+      console.log('🧹 Clearing caches before update...');
+      await handleAppUpdate();
+
+      // Update service worker
+      console.log('🔄 Updating service worker...');
       await updateServiceWorker(true);
-      
+
       // The page will reload automatically after updateServiceWorker
       // But if it doesn't, force reload after a short delay
       setTimeout(() => {
+        console.log('🔄 Force reloading page...');
         window.location.reload();
       }, 1000);
     } catch (error) {
-      console.error('Error updating service worker:', error);
+      console.error('❌ Error updating service worker:', error);
       setIsUpdating(false);
+
+      // Even if there's an error, try to reload to get the new version
+      setTimeout(() => {
+        console.log('🔄 Reloading despite error...');
+        window.location.reload();
+      }, 2000);
     }
   };
 

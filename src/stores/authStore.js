@@ -643,7 +643,32 @@ const useAuthStore = create(
       }),
       {
         name: 'auth-storage',
+        version: 1, // Increment this when auth state structure changes
         partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated }),
+        // Migrate function to handle version changes
+        migrate: (persistedState, version) => {
+          console.log('🔄 Migrating auth storage from version', version, 'to version 1');
+
+          // If version mismatch, clear stale state
+          if (version !== 1) {
+            console.warn('⚠️ Auth storage version mismatch - clearing stale state');
+            return { user: null, isAuthenticated: false };
+          }
+
+          return persistedState;
+        },
+        // Add storage event listener to detect cross-tab changes
+        onRehydrateStorage: () => {
+          console.log('🔄 Rehydrating auth storage...');
+
+          return (state, error) => {
+            if (error) {
+              console.error('❌ Error rehydrating auth storage:', error);
+            } else {
+              console.log('✅ Auth storage rehydrated successfully');
+            }
+          };
+        },
       }
     ),
     { name: 'AuthStore' }

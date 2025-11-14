@@ -49,6 +49,7 @@ const ActiveRideCard = ({ ride, onClick }) => {
 
   const loadDriverInfo = async () => {
     try {
+      // Fetch driver profile information
       const { data, error } = await supabase
         .from('driver_profiles')
         .select('id, user_id, full_name, vehicle_make, vehicle_model, vehicle_color, license_plate')
@@ -56,6 +57,13 @@ const ActiveRideCard = ({ ride, onClick }) => {
         .single();
 
       if (error) throw error;
+
+      // Fetch phone number from profiles table
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('phone')
+        .eq('id', ride.driver_id)
+        .single();
 
       // Get driver rating from completed rides
       const { data: ratingData } = await supabase
@@ -71,7 +79,11 @@ const ActiveRideCard = ({ ride, onClick }) => {
         avgRating = (sum / ratingData.length).toFixed(1);
       }
 
-      setDriverInfo({ ...data, rating: avgRating });
+      setDriverInfo({
+        ...data,
+        rating: avgRating,
+        phone_number: userProfile?.phone || null
+      });
     } catch (error) {
       console.error('Error loading driver info:', error);
     } finally {

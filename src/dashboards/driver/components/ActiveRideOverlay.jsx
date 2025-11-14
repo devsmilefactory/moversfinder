@@ -15,6 +15,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
   if (!ride) return null;
 
   const [localRide, setLocalRide] = useState(ride);
+  const [passengerPhone, setPassengerPhone] = useState(null);
   const isScheduled = localRide?.ride_timing !== 'instant';
   const isInstant = localRide?.ride_timing === 'instant';
 
@@ -73,6 +74,39 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
   useEffect(() => {
     setLocalRide(ride);
   }, [ride?.id, ride?.ride_status]);
+
+  // Fetch passenger phone number when ride is accepted/active
+  useEffect(() => {
+    const fetchPassengerPhone = async () => {
+      if (!ride?.user_id) {
+        setPassengerPhone(null);
+        return;
+      }
+
+      // Only show contact info when ride is accepted or active
+      const showContact = ['accepted', 'driver_on_way', 'driver_arrived', 'trip_started'].includes(ride.ride_status);
+      if (!showContact) {
+        setPassengerPhone(null);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('phone')
+          .eq('id', ride.user_id)
+          .single();
+
+        if (!error && data?.phone) {
+          setPassengerPhone(data.phone);
+        }
+      } catch (error) {
+        console.error('Error fetching passenger phone:', error);
+      }
+    };
+
+    fetchPassengerPhone();
+  }, [ride?.user_id, ride?.ride_status]);
 
   // Allowed transitions and next-action UI
   const getNextAction = () => {
@@ -197,6 +231,21 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
               <div className="flex-1">
                 <p className="text-xs text-gray-500">Passenger</p>
                 <p className="text-sm font-medium text-gray-900">{ride.passenger_name}</p>
+              </div>
+            </div>
+          )}
+          {passengerPhone && (
+            <div className="flex items-start gap-2">
+              <span className="text-gray-500">📞</span>
+              <div className="flex-1">
+                <p className="text-xs text-gray-500">Contact Passenger</p>
+                <a
+                  href={`tel:${passengerPhone}`}
+                  className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {passengerPhone}
+                </a>
               </div>
             </div>
           )}

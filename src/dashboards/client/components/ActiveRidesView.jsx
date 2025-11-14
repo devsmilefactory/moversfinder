@@ -126,12 +126,28 @@ const ActiveRidesView = () => {
       if (!selectedRide?.driver_id) { setDriverInfo(null); return; }
       setDriverInfoLoading(true);
       try {
-        const { data, error } = await supabase
+        // Fetch driver profile information
+        const { data: driverProfile, error: profileError } = await supabase
           .from('driver_profiles')
-          .select('full_name, vehicle_make, vehicle_model, vehicle_color, license_plate, phone_number')
+          .select('full_name, vehicle_make, vehicle_model, vehicle_color, license_plate')
           .eq('user_id', selectedRide.driver_id)
           .single();
-        if (!error) setDriverInfo(data || null);
+
+        // Fetch phone number from profiles table
+        const { data: userProfile, error: userError } = await supabase
+          .from('profiles')
+          .select('phone')
+          .eq('id', selectedRide.driver_id)
+          .single();
+
+        if (!profileError && !userError) {
+          setDriverInfo({
+            ...driverProfile,
+            phone_number: userProfile?.phone || null
+          });
+        } else {
+          setDriverInfo(driverProfile || null);
+        }
       } catch (e) {
         console.error('Error loading driver info:', e);
         setDriverInfo(null);

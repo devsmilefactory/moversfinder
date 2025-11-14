@@ -37,23 +37,45 @@ function App() {
   // Initialize auth on mount with timeout to prevent infinite loading
   useEffect(() => {
     console.log('🔄 App.jsx: Initializing auth...');
+    let timeoutId;
+    let isTimedOut = false;
+
     const initAuth = async () => {
       try {
-        // Set a timeout to prevent infinite loading
-        const timeoutId = setTimeout(() => {
-          console.warn('⏱️ Auth initialization timeout - proceeding without auth');
+        // Set a timeout to force-stop auth loading after 8 seconds
+        timeoutId = setTimeout(() => {
+          console.warn('⏱️ Auth initialization timeout - forcing authLoading to false');
+          isTimedOut = true;
+          // Force clear loading state if it's still true
+          const currentState = useAuthStore.getState();
+          if (currentState.authLoading) {
+            useAuthStore.setState({ authLoading: false });
+          }
           setShowSplash(false);
-        }, 10000); // 10 second timeout
+        }, 8000); // 8 second timeout
 
         await initialize();
-        console.log('✅ App.jsx: Auth initialization complete');
-        clearTimeout(timeoutId);
+
+        if (!isTimedOut) {
+          console.log('✅ App.jsx: Auth initialization complete');
+          clearTimeout(timeoutId);
+        }
       } catch (error) {
         console.error('❌ App.jsx: Failed to initialize auth:', error);
+        // Ensure loading state is cleared on error
+        useAuthStore.setState({ authLoading: false });
+        if (timeoutId) clearTimeout(timeoutId);
       }
     };
 
     initAuth();
+
+    // Cleanup function
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
@@ -69,6 +91,19 @@ function App() {
       console.log('🧹 App.jsx: Cleaning up splash timer');
       clearTimeout(timer);
     };
+  }, []);
+
+  // Safety mechanism: Force clear authLoading after 10 seconds to prevent infinite loading
+  useEffect(() => {
+    const safetyTimer = setTimeout(() => {
+      const currentState = useAuthStore.getState();
+      if (currentState.authLoading) {
+        console.warn('⚠️ Safety timeout: Force clearing authLoading after 10 seconds');
+        useAuthStore.setState({ authLoading: false });
+      }
+    }, 10000);
+
+    return () => clearTimeout(safetyTimer);
   }, []);
 
   // Handle network status and show offline page when needed

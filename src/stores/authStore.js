@@ -61,18 +61,37 @@ const useAuthStore = create(
 
         // Initialize auth state from Supabase session
         initialize: async () => {
+          console.log('🔄 AuthStore: Starting initialization...');
+
           // Reset to a safe unauthenticated baseline while checking session to avoid stale persisted state
           set({ authLoading: true, isAuthenticated: false, user: null, authError: null });
+
           try {
-            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+            // Add timeout to session check to prevent hanging
+            const sessionPromise = supabase.auth.getSession();
+            const timeoutPromise = new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Session check timeout')), 5000)
+            );
+
+            const { data: { session }, error: sessionError } = await Promise.race([
+              sessionPromise,
+              timeoutPromise
+            ]);
 
             // If there's a session error, check if it's a network error
             if (sessionError) {
-              console.error('Session error:', sessionError);
+              console.error('❌ Session error:', sessionError);
+
+              // Check for timeout error
+              if (sessionError.message === 'Session check timeout') {
+                console.warn('⏱️ Session check timed out - proceeding without auth');
+                set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
+                return;
+              }
 
               // If it's a network error, don't clear session - just stop loading
               if (isNetworkError(sessionError)) {
-                console.warn('Network error during auth initialization - will retry when online');
+                console.warn('🌐 Network error during auth initialization - will retry when online');
                 set({
                   authLoading: false,
                   authError: 'NETWORK_ERROR',
@@ -82,25 +101,45 @@ const useAuthStore = create(
               }
 
               // For non-network errors, clear auth
+              console.log('🔓 Clearing auth due to session error');
               await supabase.auth.signOut();
-              set({ user: null, isAuthenticated: false, authLoading: false });
+              set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
               return;
             }
 
             if (session?.user) {
-              // Fetch full profile
-              const { data: profile, error } = await supabase
+              console.log('✅ Session found, fetching profile...');
+
+              // Fetch full profile with timeout
+              const profilePromise = supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', session.user.id)
                 .single();
 
+              const profileTimeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+              );
+
+              const { data: profile, error } = await Promise.race([
+                profilePromise,
+                profileTimeoutPromise
+              ]);
+
               if (error) {
-                console.error('Profile fetch error:', error);
+                console.error('❌ Profile fetch error:', error);
+
+                // Check for timeout error
+                if (error.message === 'Profile fetch timeout') {
+                  console.warn('⏱️ Profile fetch timed out - signing out');
+                  await supabase.auth.signOut();
+                  set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
+                  return;
+                }
 
                 // If it's a network error, don't clear session
                 if (isNetworkError(error)) {
-                  console.warn('Network error fetching profile - will retry when online');
+                  console.warn('🌐 Network error fetching profile - will retry when online');
                   set({
                     authLoading: false,
                     authError: 'NETWORK_ERROR',
@@ -109,19 +148,22 @@ const useAuthStore = create(
                 }
 
                 // For non-network errors, sign out to prevent infinite loop
+                console.log('🔓 Signing out due to profile fetch error');
                 await supabase.auth.signOut();
-                set({ user: null, isAuthenticated: false, authLoading: false });
+                set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
                 return;
               }
+
+              console.log('✅ Profile fetched successfully');
 
               // Increment login count (non-critical, don't fail if this errors)
               try {
                 await supabase.rpc('increment_login_count', { user_id: session.user.id });
               } catch (rpcError) {
-                console.warn('Failed to increment login count:', rpcError);
+                console.warn('⚠️ Failed to increment login count:', rpcError);
               }
 
-              set({ user: profile, isAuthenticated: true, authLoading: false });
+              set({ user: profile, isAuthenticated: true, authLoading: false, authError: null });
 
               // Load available profiles for multi-profile system
               // Import dynamically to avoid circular dependency
@@ -129,17 +171,25 @@ const useAuthStore = create(
                 const { default: useProfileStore } = await import('./profileStore');
                 await useProfileStore.getState().loadAvailableProfiles(session.user.id);
               } catch (profileError) {
-                console.warn('Failed to load profiles:', profileError);
+                console.warn('⚠️ Failed to load profiles:', profileError);
               }
             } else {
-              set({ user: null, isAuthenticated: false, authLoading: false });
+              console.log('ℹ️ No session found - user not authenticated');
+              set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
             }
           } catch (error) {
-            console.error('Auth initialization error:', error);
+            console.error('❌ Auth initialization error:', error);
+
+            // Check for timeout error
+            if (error.message === 'Session check timeout' || error.message === 'Profile fetch timeout') {
+              console.warn('⏱️ Auth initialization timed out - proceeding without auth');
+              set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
+              return;
+            }
 
             // If it's a network error, don't clear session
             if (isNetworkError(error)) {
-              console.warn('Network error during auth initialization - will retry when online');
+              console.warn('🌐 Network error during auth initialization - will retry when online');
               set({
                 authLoading: false,
                 authError: 'NETWORK_ERROR',
@@ -148,13 +198,16 @@ const useAuthStore = create(
             }
 
             // For non-network errors, clear any stale session data to prevent infinite retry loops
+            console.log('🔓 Clearing session due to initialization error');
             try {
               await supabase.auth.signOut();
             } catch (signOutError) {
-              console.error('Failed to sign out during error recovery:', signOutError);
+              console.error('❌ Failed to sign out during error recovery:', signOutError);
             }
-            set({ user: null, isAuthenticated: false, authLoading: false });
+            set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
           }
+
+          console.log('✅ AuthStore: Initialization complete');
         },
 
         // Actions

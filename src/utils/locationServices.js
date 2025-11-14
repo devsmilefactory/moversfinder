@@ -26,7 +26,7 @@ export const getCurrentLocation = (options = {}) => {
     const defaultOptions = {
       enableHighAccuracy: true,
       timeout: 10000,
-      maximumAge: 30000, // Cache for 30 seconds
+      maximumAge: 0, // No caching - always get fresh location
       ...options
     };
 
@@ -35,7 +35,8 @@ export const getCurrentLocation = (options = {}) => {
         resolve({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          accuracy: position.coords.accuracy
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp
         });
       },
       (error) => {
@@ -81,11 +82,11 @@ export const detectCurrentLocationWithCity = async (options = {}) => {
     timeout = 15000
   } = options;
 
-  // Step 1: Get coordinates from browser geolocation
+  // Step 1: Get coordinates from browser geolocation (fresh, no cache)
   const coords = await getCurrentLocation({
     enableHighAccuracy: true,
     timeout: 10000,
-    maximumAge: 30000,
+    maximumAge: 0, // Always get fresh location
     ...geolocationOptions
   });
 

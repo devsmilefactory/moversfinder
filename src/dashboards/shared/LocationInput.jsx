@@ -56,10 +56,15 @@ const LocationInput = ({
   };
 
   const handleMapSelect = async () => {
-    // Try to get current location for map center
+    // Try to get current location for map center (fresh, no cache)
     try {
-      const coords = await getCurrentLocation();
+      const coords = await getCurrentLocation({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0 // Always get fresh location
+      });
       setCurrentMapLocation(coords);
+      console.log('📍 Map centered on fresh location:', coords);
     } catch (error) {
       console.log('Could not get current location for map:', error);
       // Will use fallback location in LocationPicker
@@ -85,8 +90,14 @@ const LocationInput = ({
   const handleCurrentLocation = async () => {
     setIsDetectingLocation(true);
     try {
-      // Get current coordinates
-      const coords = await getCurrentLocation();
+      // Get current coordinates (fresh, no cache)
+      const coords = await getCurrentLocation({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0 // Always get fresh location
+      });
+
+      console.log('📍 Fresh location detected:', coords);
 
       // Wait for Google Maps to load if not already loaded
       let attempts = 0;
@@ -100,23 +111,29 @@ const LocationInput = ({
         const geocoder = new window.google.maps.Geocoder();
 
         try {
-          const result = await geocoder.geocode({ location: coords });
+          const result = await geocoder.geocode({
+            location: { lat: coords.lat, lng: coords.lng }
+          });
 
           if (result.results?.[0]) {
             const address = result.results[0].formatted_address;
+            console.log('✅ Geocoded address:', address);
+
             onChange({
               target: {
                 value: address,
                 name: 'location',
                 data: {
                   address: address,
-                  coordinates: coords,
-                  placeId: result.results[0].place_id
+                  coordinates: { lat: coords.lat, lng: coords.lng },
+                  placeId: result.results[0].place_id,
+                  timestamp: coords.timestamp
                 }
               }
             });
           } else {
             // Fallback: Try to get city name at least
+            console.warn('⚠️ No geocoding results, using fallback');
             const cityName = await getCityFromCoords(coords);
             onChange({
               target: {
@@ -124,13 +141,14 @@ const LocationInput = ({
                 name: 'location',
                 data: {
                   address: cityName,
-                  coordinates: coords
+                  coordinates: { lat: coords.lat, lng: coords.lng },
+                  timestamp: coords.timestamp
                 }
               }
             });
           }
         } catch (geocodeError) {
-          console.error('Geocoding error:', geocodeError);
+          console.error('❌ Geocoding error:', geocodeError);
           // Fallback: Try to get city name
           const cityName = await getCityFromCoords(coords);
           onChange({
@@ -139,13 +157,15 @@ const LocationInput = ({
               name: 'location',
               data: {
                 address: cityName,
-                coordinates: coords
+                coordinates: { lat: coords.lat, lng: coords.lng },
+                timestamp: coords.timestamp
               }
             }
           });
         }
       } else {
         // If Google Maps not available, use OpenStreetMap Nominatim as fallback
+        console.warn('⚠️ Google Maps not available, using OpenStreetMap');
         const cityName = await getCityFromCoords(coords);
         onChange({
           target: {
@@ -153,13 +173,14 @@ const LocationInput = ({
             name: 'location',
             data: {
               address: cityName,
-              coordinates: coords
+              coordinates: { lat: coords.lat, lng: coords.lng },
+              timestamp: coords.timestamp
             }
           }
         });
       }
     } catch (error) {
-      console.error('Location detection error:', error);
+      console.error('❌ Location detection error:', error);
       alert(error.message || 'Unable to detect your location. Please enter it manually.');
     } finally {
       setIsDetectingLocation(false);

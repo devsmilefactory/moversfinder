@@ -7,6 +7,7 @@ const reasons = [
   'Vehicle issue',
   'Traffic/delay',
   'Price issue',
+  'Trip Completed',
   'Other',
 ];
 

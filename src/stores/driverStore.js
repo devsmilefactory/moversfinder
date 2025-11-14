@@ -106,8 +106,8 @@ const useDriverStore = create(
           const { data: todayRides, error: ridesError } = await supabase
             .from('rides')
             .select('*')
-            .eq('driver_id', driverProfileRow.id)
-            .eq('status', 'completed')
+            .eq('driver_id', userId)
+            .eq('ride_status', 'trip_completed')
             .gte('created_at', today.toISOString());
 
           if (ridesError) throw ridesError;
@@ -121,8 +121,8 @@ const useDriverStore = create(
           const { data: requests, error: requestsError } = await supabase
             .from('rides')
             .select('*')
-            .eq('driver_id', driverProfileRow.id)
-            .eq('status', 'pending')
+            .eq('driver_id', userId)
+            .eq('ride_status', 'pending')
             .order('created_at', { ascending: false });
 
           if (requestsError) throw requestsError;
@@ -246,8 +246,8 @@ const useDriverStore = create(
           const { data: allRides, error: ridesError } = await supabase
             .from('rides')
             .select('*')
-            .eq('driver_id', profile.id)
-            .eq('status', 'completed')
+            .eq('driver_id', userId)
+            .eq('ride_status', 'trip_completed')
             .order('created_at', { ascending: false });
 
           if (ridesError) throw ridesError;
@@ -307,7 +307,7 @@ const useDriverStore = create(
           let query = supabase
             .from('rides')
             .select('*')
-            .eq('driver_id', profile.id)
+            .eq('driver_id', userId)
             .order('created_at', { ascending: false });
 
           if (filters.limit) {
@@ -315,7 +315,7 @@ const useDriverStore = create(
           }
 
           if (filters.status) {
-            query = query.eq('status', filters.status);
+            query = query.eq('ride_status', filters.status);
           }
 
           const { data, error } = await query;

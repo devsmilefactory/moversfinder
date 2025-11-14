@@ -12,15 +12,15 @@ import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
 const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
   const handleChange = (e) => {
     const { name, value } = e.target;
-    onChange({ ...formData, [name]: value });
+    onChange(prev => ({ ...prev, [name]: value }));
   };
 
   const handleLocationChange = (field) => (e) => {
     // Support both plain strings and structured data from LocationInput
     if (e?.target?.data) {
-      onChange({ ...formData, [field]: { data: e.target.data } });
+      onChange(prev => ({ ...prev, [field]: { data: e.target.data } }));
     } else {
-      onChange({ ...formData, [field]: e?.target?.value ?? '' });
+      onChange(prev => ({ ...prev, [field]: e?.target?.value ?? '' }));
     }
   };
 
@@ -29,23 +29,27 @@ const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
   return (
     <div className="space-y-4">
       {/* Locations */}
-      <LocationInput
-        label="Passenger Pick-up"
-        value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
-        onChange={handleLocationChange('pickupLocation')}
-        savedPlaces={savedPlaces}
-        required
-        placeholder="Enter passenger pickup location..."
-      />
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+        <LocationInput
+          label="Passenger Pick-up"
+          value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
+          onChange={handleLocationChange('pickupLocation')}
+          savedPlaces={savedPlaces}
+          required
+          placeholder="Enter passenger pickup location..."
+        />
+      </div>
 
-      <LocationInput
-        label="Drop-off Location"
-        value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}
-        onChange={handleLocationChange('dropoffLocation')}
-        savedPlaces={savedPlaces}
-        required
-        placeholder="Where to?"
-      />
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+        <LocationInput
+          label="Drop-off Location"
+          value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}
+          onChange={handleLocationChange('dropoffLocation')}
+          savedPlaces={savedPlaces}
+          required
+          placeholder="Where to?"
+        />
+      </div>
 
       {/* Round Trip Option */}
       <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">

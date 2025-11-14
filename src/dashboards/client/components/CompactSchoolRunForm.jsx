@@ -12,15 +12,15 @@ import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
 const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    onChange({ ...formData, [name]: type === 'checkbox' ? checked : value });
+    onChange(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
   const handleLocationChange = (field) => (e) => {
     // Support both plain strings and structured data from LocationInput
     if (e?.target?.data) {
-      onChange({ ...formData, [field]: { data: e.target.data } });
+      onChange(prev => ({ ...prev, [field]: { data: e.target.data } }));
     } else {
-      onChange({ ...formData, [field]: e?.target?.value ?? '' });
+      onChange(prev => ({ ...prev, [field]: e?.target?.value ?? '' }));
     }
   };
 
@@ -44,55 +44,44 @@ const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
 
   return (
     <div className="space-y-4">
-      {/* Trip Type */}
-      <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">Trip Type</label>
-        <div className="grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => onChange({ ...formData, tripDirection: 'one-way' })}
-            className={`p-3 rounded-lg border-2 transition-all ${
-              formData.tripDirection === 'one-way'
-                ? 'border-yellow-400 bg-yellow-50'
-                : 'border-slate-200 hover:border-slate-300'
-            }`}
-          >
-            <div className="text-xl mb-1">➡️</div>
-            <div className="font-semibold text-slate-700 text-sm">One-Way</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => onChange({ ...formData, tripDirection: 'round-trip' })}
-            className={`p-3 rounded-lg border-2 transition-all ${
-              formData.tripDirection === 'round-trip'
-                ? 'border-yellow-400 bg-yellow-50'
-                : 'border-slate-200 hover:border-slate-300'
-            }`}
-          >
-            <div className="text-xl mb-1">🔄</div>
-            <div className="font-semibold text-slate-700 text-sm">Round Trip</div>
-          </button>
-        </div>
+      {/* Round Trip Option (standardized with Taxi) */}
+      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={formData.isRoundTrip || formData.tripDirection === 'round-trip' || false}
+            onChange={(e) => onChange({ ...formData, isRoundTrip: e.target.checked, tripDirection: e.target.checked ? 'round-trip' : 'one-way' })}
+            className="w-4 h-4 text-yellow-600 border-slate-300 rounded focus:ring-yellow-500"
+          />
+          <div className="flex-1">
+            <div className="font-medium text-slate-700 text-sm">Round Trip</div>
+            <div className="text-xs text-slate-600">Return to pickup location (doubles the fare)</div>
+          </div>
+        </label>
       </div>
 
       {/* Locations */}
-      <LocationInput
-        label="Pickup Location"
-        value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
-        onChange={handleLocationChange('pickupLocation')}
-        savedPlaces={savedPlaces}
-        required
-        placeholder="Where to pick up?"
-      />
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+        <LocationInput
+          label="Pickup Location"
+          value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
+          onChange={handleLocationChange('pickupLocation')}
+          savedPlaces={savedPlaces}
+          required
+          placeholder="Where to pick up?"
+        />
+      </div>
 
-      <LocationInput
-        label="Drop-off Location"
-        value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}
-        onChange={handleLocationChange('dropoffLocation')}
-        savedPlaces={savedPlaces}
-        required
-        placeholder="Where to drop off?"
-      />
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+        <LocationInput
+          label="Drop-off Location"
+          value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}
+          onChange={handleLocationChange('dropoffLocation')}
+          savedPlaces={savedPlaces}
+          required
+          placeholder="Where to drop off?"
+        />
+      </div>
 
       {/* Passenger Details */}
       <div className="grid grid-cols-2 gap-4">
@@ -129,7 +118,6 @@ const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
             { value: 'cash', label: 'Cash' },
             { value: 'ecocash', label: 'EcoCash' },
             { value: 'onemoney', label: 'OneMoney' },
-            { value: 'cash', label: 'Cash' },
             { value: 'card', label: 'Card' }
           ]}
         />

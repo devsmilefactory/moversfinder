@@ -88,44 +88,71 @@ const LocationInput = ({
       // Get current coordinates
       const coords = await getCurrentLocation();
 
+      // Wait for Google Maps to load if not already loaded
+      let attempts = 0;
+      while (!window.google?.maps?.Geocoder && attempts < 50) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+
       // Reverse geocode to get address
       if (window.google?.maps?.Geocoder) {
         const geocoder = new window.google.maps.Geocoder();
-        const result = await geocoder.geocode({ location: coords });
 
-        if (result.results?.[0]) {
-          const address = result.results[0].formatted_address;
-          onChange({
-            target: {
-              value: address,
-              name: 'location',
-              data: {
-                address: address,
-                coordinates: coords
+        try {
+          const result = await geocoder.geocode({ location: coords });
+
+          if (result.results?.[0]) {
+            const address = result.results[0].formatted_address;
+            onChange({
+              target: {
+                value: address,
+                name: 'location',
+                data: {
+                  address: address,
+                  coordinates: coords,
+                  placeId: result.results[0].place_id
+                }
               }
-            }
-          });
-        } else {
-          // Fallback to coordinates if no address found
+            });
+          } else {
+            // Fallback: Try to get city name at least
+            const cityName = await getCityFromCoords(coords);
+            onChange({
+              target: {
+                value: cityName,
+                name: 'location',
+                data: {
+                  address: cityName,
+                  coordinates: coords
+                }
+              }
+            });
+          }
+        } catch (geocodeError) {
+          console.error('Geocoding error:', geocodeError);
+          // Fallback: Try to get city name
+          const cityName = await getCityFromCoords(coords);
           onChange({
             target: {
-              value: 'Current location',
+              value: cityName,
               name: 'location',
               data: {
-                address: 'Current location',
+                address: cityName,
                 coordinates: coords
               }
             }
           });
         }
       } else {
-        // If Google Maps not available, just use coordinates
+        // If Google Maps not available, use OpenStreetMap Nominatim as fallback
+        const cityName = await getCityFromCoords(coords);
         onChange({
           target: {
-            value: 'Current location',
+            value: cityName,
             name: 'location',
             data: {
-              address: 'Current location',
+              address: cityName,
               coordinates: coords
             }
           }
@@ -139,14 +166,85 @@ const LocationInput = ({
     }
   };
 
+  // Helper function to get city name from coordinates using OpenStreetMap
+  const getCityFromCoords = async (coords) => {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}`
+      );
+      const data = await response.json();
+
+      // Try to build a meaningful address
+      const city = data.address?.city || data.address?.town || data.address?.village;
+      const suburb = data.address?.suburb;
+      const road = data.address?.road;
+
+      if (road && suburb && city) {
+        return `${road}, ${suburb}, ${city}`;
+      } else if (suburb && city) {
+        return `${suburb}, ${city}`;
+      } else if (city) {
+        return city;
+      } else {
+        return data.display_name || 'Current location';
+      }
+    } catch (error) {
+      console.error('Error getting city from coords:', error);
+      return 'Current location';
+    }
+  };
+
   return (
     <div className={`mb-4 ${className}`}>
-      {label && (
-        <label className="block text-sm font-medium text-slate-700 mb-2">
-          {label}
-          {required && <span className="text-red-500 ml-1">*</span>}
-        </label>
-      )}
+      {/* Label and Input Method Buttons on Same Line */}
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+        {label && (
+          <label className="text-sm font-medium text-slate-700">
+            {label}
+            {required && <span className="text-red-500 ml-1">*</span>}
+          </label>
+        )}
+
+        {/* Input Method Buttons - Inline with Label */}
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={handleCurrentLocation}
+            disabled={isDetectingLocation}
+            className="px-2.5 py-1.5 bg-blue-100 hover:bg-blue-200 disabled:bg-slate-100 disabled:cursor-not-allowed rounded-md text-xs font-medium text-blue-700 disabled:text-slate-400 transition-colors flex items-center gap-1.5"
+            title="Use current location"
+          >
+            {isDetectingLocation ? (
+              <span className="animate-spin text-sm">⌛</span>
+            ) : (
+              <span className="text-sm">📍</span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleMapSelect}
+            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-xs font-medium text-slate-700 transition-colors flex items-center gap-1.5"
+            title="Select on map"
+          >
+            <span className="text-sm">🗺️</span>
+          </button>
+
+          {showSavedPlaces && savedPlaces.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowSavedDropdown(!showSavedDropdown);
+                setShowRecentDropdown(false);
+              }}
+              className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-xs font-medium text-slate-700 transition-colors flex items-center gap-1.5"
+              title="Select saved place"
+            >
+              <span className="text-sm">📌</span>
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Main Input Field - Using AddressAutocomplete */}
       <div className="relative">
@@ -168,52 +266,8 @@ const LocationInput = ({
           placeholder={placeholder}
           required={required}
           error={error}
+          label=""
         />
-
-        {/* Input Method Buttons */}
-        <div className="flex gap-2 mt-3">
-          <button
-            type="button"
-            onClick={handleCurrentLocation}
-            disabled={isDetectingLocation}
-            className="flex-1 px-3 py-2 bg-blue-100 hover:bg-blue-200 disabled:bg-slate-100 disabled:cursor-not-allowed rounded-lg text-sm font-medium text-blue-700 disabled:text-slate-400 transition-colors flex items-center justify-center gap-2"
-          >
-            {isDetectingLocation ? (
-              <>
-                <span className="animate-spin">⌛</span>
-                <span>Detecting...</span>
-              </>
-            ) : (
-              <>
-                <span>📍</span>
-                <span>Current</span>
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleMapSelect}
-            className="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700 transition-colors flex items-center justify-center gap-2"
-          >
-            <span>🗺️</span>
-            <span>Map</span>
-          </button>
-
-          {showSavedPlaces && savedPlaces.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setShowSavedDropdown(!showSavedDropdown);
-                setShowRecentDropdown(false);
-              }}
-              className="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700 transition-colors flex items-center justify-center gap-2"
-            >
-              <span>📌</span>
-              <span>Saved</span>
-            </button>
-          )}
-        </div>
 
         {/* Saved Places Dropdown */}
         {showSavedDropdown && savedPlaces.length > 0 && (

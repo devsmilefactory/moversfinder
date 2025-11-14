@@ -11,6 +11,9 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/ui/ToastProvider';
 import { PWAInstallPrompt, PWAUpdateNotification, IOSInstallInstructions } from './components/pwa';
 // GoogleMapsProvider removed - using vanilla Google Maps API instead
+import RideStatusToasts from './components/notifications/RideStatusToasts';
+
+import NotificationBell from './components/notifications/NotificationBell';
 
 /**
  * Main App Component for TaxiCab PWA
@@ -134,11 +137,18 @@ function App() {
           {/* PWA Components */}
           <PWAUpdateNotification />
           <PWAInstallPrompt />
+              {isAuthenticated && user && (
+                <div className="fixed top-4 right-4 z-[9990]">
+                  <NotificationBell />
+                </div>
+              )}
+
           <IOSInstallInstructions />
 
           {/* Main Content */}
           {/* Always render routes so public pages like /login are reachable even while auth initializes */}
           <>
+            <RideStatusToasts />
             <AppRoutes />
 
             {/* Profile Completion Modal - Only show for authenticated users */}

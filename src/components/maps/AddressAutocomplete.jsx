@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { getCurrentLocation } from '../../utils/locationServices';
 
 /**
  * AddressAutocomplete Component
@@ -91,48 +92,26 @@ const AddressAutocomplete = ({
       componentRestrictions: { country: 'zw' },
     };
 
-    // Optionally add location bias if available
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          request.location = new window.google.maps.LatLng(
-            position.coords.latitude,
-            position.coords.longitude
-          );
-          request.radius = 50000;
-          autocompleteService.current.getPlacePredictions(request, (predictions, status) => {
-            setIsLoading(false);
-            if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
-              setSuggestions(predictions);
-            } else {
-              setSuggestions([]);
-            }
-          });
-        },
-        () => {
-          // If geolocation fails, proceed without location bias
-          autocompleteService.current.getPlacePredictions(request, (predictions, status) => {
-            setIsLoading(false);
-            if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
-              setSuggestions(predictions);
-            } else {
-              setSuggestions([]);
-            }
-          });
-        },
-        { timeout: 5000, maximumAge: 300000 }
-      );
-    } else {
-      // No geolocation available, proceed without location bias
-      autocompleteService.current.getPlacePredictions(request, (predictions, status) => {
-        setIsLoading(false);
-        if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
-          setSuggestions(predictions);
-        } else {
-          setSuggestions([]);
-        }
+    // Optionally add location bias if available using centralized utility
+    const fetchPredictions = (predictions, status) => {
+      setIsLoading(false);
+      if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
+        setSuggestions(predictions);
+      } else {
+        setSuggestions([]);
+      }
+    };
+
+    getCurrentLocation({ timeout: 5000, maximumAge: 60000 })
+      .then((coords) => {
+        request.location = new window.google.maps.LatLng(coords.lat, coords.lng);
+        request.radius = 50000;
+        autocompleteService.current.getPlacePredictions(request, fetchPredictions);
+      })
+      .catch(() => {
+        // If geolocation fails, proceed without location bias
+        autocompleteService.current.getPlacePredictions(request, fetchPredictions);
       });
-    }
   }, [inputValue, useWidget]);
 
   const handleInput = (e) => {
@@ -224,6 +203,9 @@ const AddressAutocomplete = ({
           <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-yellow-400"></div>
           </div>
+        )}
+        {inputValue && ready && !isLoading && (
+          <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-green-600">✓</div>
         )}
       </div>
       {suggestions.length > 0 && !useWidget && (

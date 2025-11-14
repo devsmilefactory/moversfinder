@@ -19,6 +19,7 @@ export const ToastProvider = ({ children }) => {
       title: toast.title || '',
       message: toast.message || '',
       duration: typeof toast.duration === 'number' ? toast.duration : 3500,
+      onClick: typeof toast.onClick === 'function' ? toast.onClick : undefined,
     };
     setToasts((prev) => [...prev, t]);
     if (t.duration > 0) {
@@ -61,13 +62,18 @@ const ToastItem = ({ toast, onClose }) => {
   }, [onClose]);
 
   return (
-    <div className={`shadow-lg rounded-lg overflow-hidden ${typeStyles[toast.type] || typeStyles.info}`}>
+    <div
+      className={`shadow-lg rounded-lg overflow-hidden ${typeStyles[toast.type] || typeStyles.info} ${toast.onClick ? 'cursor-pointer' : ''}`}
+      onClick={toast.onClick}
+      role={toast.onClick ? 'button' : undefined}
+      tabIndex={toast.onClick ? 0 : undefined}
+    >
       <div className="px-4 py-3">
         {toast.title && <div className="font-semibold mb-0.5">{toast.title}</div>}
         {toast.message && <div className="text-sm opacity-90">{toast.message}</div>}
       </div>
       <button
-        onClick={onClose}
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
         className="absolute top-1 right-2 text-white/80 hover:text-white text-sm"
         aria-label="Close"
       >

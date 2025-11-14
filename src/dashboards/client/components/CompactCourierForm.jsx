@@ -12,15 +12,15 @@ import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
 const CompactCourierForm = ({ formData, onChange, savedPlaces = [] }) => {
   const handleChange = (e) => {
     const { name, value } = e.target;
-    onChange({ ...formData, [name]: value });
+    onChange(prev => ({ ...prev, [name]: value }));
   };
 
   const handleLocationChange = (field) => (e) => {
     // Support both plain strings and structured data from LocationInput
     if (e?.target?.data) {
-      onChange({ ...formData, [field]: { data: e.target.data } });
+      onChange(prev => ({ ...prev, [field]: { data: e.target.data } }));
     } else {
-      onChange({ ...formData, [field]: e?.target?.value ?? '' });
+      onChange(prev => ({ ...prev, [field]: e?.target?.value ?? '' }));
     }
   };
 
@@ -54,17 +54,19 @@ const CompactCourierForm = ({ formData, onChange, savedPlaces = [] }) => {
   return (
     <div className="space-y-4">
       {/* Pickup Location */}
-      <LocationInput
-        label="Pickup Location"
-        value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
-        onChange={handleLocationChange('pickupLocation')}
-        savedPlaces={savedPlaces}
-        required
-        placeholder="Where to pick up the package?"
-      />
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+        <LocationInput
+          label="Pickup Location"
+          value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
+          onChange={handleLocationChange('pickupLocation')}
+          savedPlaces={savedPlaces}
+          required
+          placeholder="Where to pick up the package?"
+        />
+      </div>
 
       {/* Primary Delivery */}
-      <div className="p-4 bg-green-50 rounded-lg space-y-3">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3 space-y-3">
         <h3 className="font-semibold text-slate-700 text-sm mb-3">Primary Delivery</h3>
 
         <LocationInput
@@ -112,7 +114,7 @@ const CompactCourierForm = ({ formData, onChange, savedPlaces = [] }) => {
       {formData.additionalDeliveries && formData.additionalDeliveries.length > 0 && (
         <div className="space-y-3">
           {formData.additionalDeliveries.map((delivery, index) => (
-            <div key={index} className="p-4 bg-blue-50 rounded-lg space-y-3 relative">
+            <div key={index} className="bg-white rounded-xl shadow-sm border border-slate-200 p-3 space-y-3 relative">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="font-semibold text-slate-700 text-sm">Delivery {index + 2}</h4>
                 <button

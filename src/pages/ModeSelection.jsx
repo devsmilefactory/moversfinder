@@ -97,8 +97,9 @@ const ModeSelection = () => {
     };
   };
 
-  // Display all profile types from config to ensure consistency with ProfileSwitcher
-  const displayProfiles = Object.keys(profileConfigs).map(type => getProfileStatus(type));
+  // Display only Passenger (individual) and Driver per UI request
+  const displayProfiles = ['individual', 'driver']
+    .map(type => getProfileStatus(type));
 
   // Get status badge component
   const getStatusBadge = (status) => {
@@ -158,8 +159,17 @@ const ModeSelection = () => {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1, duration: 0.5 }}
                 whileTap={isClickable ? { scale: 0.98 } : {}}
+                role={isClickable ? 'button' : undefined}
+                tabIndex={isClickable ? 0 : -1}
                 onClick={() => {
                   if (isClickable) {
+                    handleProfileSelect(profile.type);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (!isClickable) return;
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
                     handleProfileSelect(profile.type);
                   }
                 }}

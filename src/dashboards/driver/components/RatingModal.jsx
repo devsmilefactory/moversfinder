@@ -45,14 +45,14 @@ const RatingModal = ({ trip, onClose, onRatingSubmitted }) => {
 
     setSubmitting(true);
     try {
-      // Update ride with rating
+      // Update ride with driver's rating of passenger
       const { error: rideError } = await supabase
         .from('rides')
         .update({
-          rating: rating,
+          passenger_rating: rating,
           driver_review: review || null,
           driver_reported_issues: issues.length > 0 ? issues : null,
-          rated_at: new Date().toISOString()
+          driver_rated_at: new Date().toISOString()
         })
         .eq('id', trip.id);
 

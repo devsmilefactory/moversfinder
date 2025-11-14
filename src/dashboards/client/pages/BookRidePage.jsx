@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import MapView from '../../../components/maps/MapView';
 import LocationPicker from '../../../components/maps/LocationPicker';
 
@@ -12,6 +12,7 @@ import { supabase } from '../../../lib/supabase';
 
 import { calculateEstimatedFareV2 } from '../../../utils/pricingCalculator';
 import { detectCurrentLocationWithCity } from '../../../utils/locationServices';
+
 
 /**
  * Individual Book Ride Page - PWA Style
@@ -72,6 +73,20 @@ const BookRidePage = () => {
   const [routePath, setRoutePath] = useState([]);
   const [routeEstimate, setRouteEstimate] = useState(null);
 
+
+  // Handle rebooking from past ride
+  const routerLocation = useLocation();
+  useEffect(() => {
+    const rebook = routerLocation.state && routerLocation.state.rebookFromRide;
+    if (rebook) {
+      if (rebook.pickup) setPickupLocation(rebook.pickup);
+      if (rebook.dropoff) setDropoffLocation(rebook.dropoff);
+      setShowBookingModal(true);
+      // Clear the state to avoid re-triggering on back/forward
+      navigate('/user/book-ride', { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routerLocation.state]);
 
 
 
@@ -135,11 +150,7 @@ const BookRidePage = () => {
         // Set detected location data
         setCurrentLocation(location.coords);
         setDetectedCity(location.city);
-        setPickupLocation({
-          lat: location.coords.lat,
-          lng: location.coords.lng,
-          address: location.address
-        });
+        // Removed: no auto-setting pickupLocation
 
         setIsDetectingLocation(false);
         setLocationDetectionFailed(false);
@@ -238,31 +249,11 @@ const BookRidePage = () => {
   };
 
   const services = [
-    {
-
-      id: 'taxi',
-      name: 'Taxi',
-      icon: '🚕',
-      color: 'yellow'
-    },
-    {
-      id: 'courier',
-      name: 'Courier',
-      icon: '📦',
-      color: 'blue'
-    },
-    {
-      id: 'school_run',
-      name: 'School Run',
-      icon: '🎒',
-      color: 'green'
-    },
-    {
-      id: 'errands',
-      name: 'Errands',
-      icon: '🛍️',
-      color: 'purple'
-    }
+    { id: 'taxi', name: 'Taxi', icon: '🚕', color: 'yellow' },
+    { id: 'courier', name: 'Courier', icon: '📦', color: 'blue' },
+    { id: 'school_run', name: 'School/Work', icon: '🎒', color: 'green' },
+    { id: 'errands', name: 'Errands', icon: '🛍️', color: 'purple' },
+    { id: 'bulk', name: 'Bulk', icon: '👥', color: 'teal' }
   ];
 
   const handleServiceSelect = (serviceId) => {
@@ -270,14 +261,7 @@ const BookRidePage = () => {
   };
 
   const handleBookNow = () => {
-    // Default pickup to current GPS position if not explicitly chosen
-    if (!pickupLocation && currentLocation) {
-      setPickupLocation({
-        lat: currentLocation.lat,
-        lng: currentLocation.lng,
-        address: 'Current location'
-      });
-    }
+    // Removed: no auto-defaulting pickup from current GPS
     setShowBookingModal(true);
   };
 
@@ -379,7 +363,7 @@ const BookRidePage = () => {
 
           {/* Location Detection Status Banner */}
           {isDetectingLocation && (
-            <div className="absolute top-4 left-20 right-4 z-10">
+            <div className="absolute top-4 left-20 right-20 z-10">
               <div className="bg-blue-500 text-white rounded-xl shadow-lg p-4 flex items-center gap-3">
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                 <p className="text-sm font-medium">Detecting your location...</p>
@@ -389,7 +373,7 @@ const BookRidePage = () => {
 
           {/* Location Detection Failed Banner */}
           {locationDetectionFailed && !isDetectingLocation && (
-            <div className="absolute top-4 left-20 right-4 z-10">
+            <div className="absolute top-4 left-20 right-20 z-10">
               <div className="bg-yellow-500 text-slate-900 rounded-xl shadow-lg p-4">
                 <p className="text-sm font-medium mb-2">📍 Unable to detect location</p>
                 <button
@@ -404,7 +388,7 @@ const BookRidePage = () => {
 
           {/* Top Info Bar */}
           {!isDetectingLocation && !locationDetectionFailed && (
-            <div className="absolute top-4 left-20 right-4 z-10">
+            <div className="absolute top-4 left-20 right-20 z-10">
               <div className="bg-white rounded-xl shadow-lg p-4 flex items-center justify-between">
                 <div>
                   <p className="text-xs text-slate-500">Service Area</p>
@@ -427,7 +411,13 @@ const BookRidePage = () => {
 
               <div className="flex items-center justify-center gap-3">
                 <span className="text-2xl">{services.find(s => s.id === selectedService)?.icon}</span>
-                <span className="text-lg">Book {services.find(s => s.id === selectedService)?.name} Now</span>
+                <span className="text-lg">
+                  {selectedService === 'school_run'
+                    ? 'Book School/Work Run'
+                    : selectedService === 'bulk'
+                    ? 'Book Bulk'
+                    : `Book ${services.find(s => s.id === selectedService)?.name} Now`}
+                </span>
               </div>
             </button>
           </div>
@@ -435,7 +425,7 @@ const BookRidePage = () => {
 
         {/* Bottom Navigation Tabs - Fixed at bottom */}
         <div className="bg-white border-t border-slate-200 shadow-lg">
-          <div className="grid grid-cols-4 gap-0">
+          <div className="grid grid-cols-5 gap-0">
             {services.map((service) => (
               <button
                 key={service.id}

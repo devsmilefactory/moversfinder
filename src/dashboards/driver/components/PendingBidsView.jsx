@@ -4,6 +4,7 @@ import useAuthStore from '../../../stores/authStore';
 import Button from '../../../components/ui/Button';
 import ConfirmationModal from '../../../components/modals/ConfirmationModal';
 import MapView from '../../../components/maps/MapView';
+import { calculateTripDistance, formatDistance, calculateDistance } from '../../../utils/locationServices';
 import { useToast } from '../../../components/ui/ToastProvider';
 
 /**
@@ -52,7 +53,28 @@ const PendingBidsView = ({ onBidUpdate }) => {
 
       if (error) throw error;
 
-      // Convert GeoJSON coordinates to {lat, lng} format
+      // Get driver's current location from driver_locations table
+      let driverLocation = null;
+      try {
+        const { data: locationData } = await supabase
+          .from('driver_locations')
+          .select('coordinates')
+          .eq('driver_id', user.id)
+          .maybeSingle();
+
+        if (locationData?.coordinates) {
+          if (locationData.coordinates.type === 'Point') {
+            const [lng, lat] = locationData.coordinates.coordinates;
+            driverLocation = { lat, lng };
+          } else if (locationData.coordinates.lat && locationData.coordinates.lng) {
+            driverLocation = locationData.coordinates;
+          }
+        }
+      } catch (locError) {
+        console.warn('Could not fetch driver location:', locError);
+      }
+
+      // Convert GeoJSON coordinates to {lat, lng} format and calculate distances
       const bidsWithConvertedCoords = data?.map(bid => {
         if (!bid.ride) return bid;
 
@@ -79,12 +101,29 @@ const PendingBidsView = ({ onBidUpdate }) => {
           }
         }
 
+        // Calculate distance to pickup (dynamic based on driver's current location)
+        const distanceToPickup = driverLocation && pickupCoords
+          ? calculateDistance(driverLocation, pickupCoords)
+          : null;
+
+        // Calculate total trip distance (pickup to dropoff)
+        let tripDistance = null;
+        if (bid.ride.distance_km && typeof bid.ride.distance_km === 'number') {
+          tripDistance = bid.ride.distance_km;
+        } else if (bid.ride.distance && typeof bid.ride.distance === 'number') {
+          tripDistance = bid.ride.distance;
+        } else if (pickupCoords && dropoffCoords) {
+          tripDistance = calculateDistance(pickupCoords, dropoffCoords);
+        }
+
         return {
           ...bid,
           ride: {
             ...bid.ride,
             pickup_coordinates: pickupCoords,
-            dropoff_coordinates: dropoffCoords
+            dropoff_coordinates: dropoffCoords,
+            distance_to_pickup: distanceToPickup,
+            trip_distance: tripDistance
           }
         };
       }) || [];
@@ -168,6 +207,22 @@ const PendingBidsView = ({ onBidUpdate }) => {
     return icons[serviceType] || '🚗';
   };
 
+  const getTripDistanceKm = (bid) => {
+    if (!bid?.ride) return null;
+    const ride = bid.ride;
+
+    if (typeof ride.distance_km === 'number') {
+      return ride.distance_km;
+    }
+
+    if (ride.pickup_coordinates && ride.dropoff_coordinates) {
+      const distance = calculateTripDistance(ride.pickup_coordinates, ride.dropoff_coordinates);
+      return typeof distance === 'number' ? distance : null;
+    }
+
+    return null;
+  };
+
   const timeAgo = (dateString) => {
     if (!dateString) return '';
     const seconds = Math.floor((new Date() - new Date(dateString)) / 1000);
@@ -205,158 +260,188 @@ const PendingBidsView = ({ onBidUpdate }) => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-600">
-          ⏳ <strong>{pendingBids.length}</strong> bid(s) waiting for passenger acceptance
-        </p>
-        <Button variant="outline" size="sm" onClick={loadPendingBids}>
-          🔄 Refresh
-        </Button>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Bids List */}
-        <div className="lg:col-span-1 space-y-3">
-          {pendingBids.map(bid => (
-            <div
-              key={bid.id}
-              onClick={() => setSelectedBid(bid)}
-              className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                selectedBid?.id === bid.id
-                  ? 'border-yellow-500 bg-yellow-50'
-                  : 'border-gray-200 hover:border-gray-300 bg-white'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <span className="text-2xl">{getServiceIcon(bid.ride?.service_type)}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-gray-900 capitalize truncate">
-                    {bid.ride?.service_type?.replace('_', ' ')}
-                  </p>
-                  <p className="text-sm text-gray-600 truncate">
-                    📍 {bid.ride?.pickup_address || bid.ride?.pickup_location}
-                  </p>
-                  <p className="text-sm font-semibold text-yellow-700 mt-2">
-                    Your Bid: ${parseFloat(bid.quoted_price).toFixed(2)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Placed {timeAgo(bid.offered_at)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          ))}
+    <>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-gray-600">
+            ⏳ <strong>{pendingBids.length}</strong> bid(s) waiting for passenger acceptance
+          </p>
+          <Button variant="outline" size="sm" onClick={loadPendingBids}>
+            🔄 Refresh
+          </Button>
         </div>
 
-        {/* Bid Details */}
-        <div className="lg:col-span-2">
-          {selectedBid ? (
-            <div className="bg-white rounded-lg border border-gray-200">
-              {/* Header */}
-              <div className="p-6 border-b border-gray-200">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-3xl">{getServiceIcon(selectedBid.ride?.service_type)}</span>
-                    <div>
-                      <h3 className="text-xl font-bold text-gray-900 capitalize">
-                        {selectedBid.ride?.service_type?.replace('_', ' ')}
-                      </h3>
-                      <p className="text-sm text-gray-500">
-                        Bid placed {timeAgo(selectedBid.offered_at)}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Bids List */}
+          <div className="lg:col-span-1 space-y-3">
+            {pendingBids.map(bid => (
+              <div
+                key={bid.id}
+                onClick={() => setSelectedBid(bid)}
+                className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                  selectedBid?.id === bid.id
+                    ? 'border-yellow-500 bg-yellow-50'
+                    : 'border-gray-200 hover:border-gray-300 bg-white'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">{getServiceIcon(bid.ride?.service_type)}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 capitalize truncate">
+                      {bid.ride?.service_type?.replace('_', ' ')}
+                    </p>
+                    <p className="text-sm text-gray-600 truncate">
+                      📍 Pickup: {bid.ride?.pickup_address || bid.ride?.pickup_location || 'Not specified'}
+                    </p>
+                    {(bid.ride?.dropoff_address || bid.ride?.dropoff_location) && (
+                      <p className="text-sm text-gray-600 truncate">
+                        🎯 Dropoff: {bid.ride.dropoff_address || bid.ride.dropoff_location}
                       </p>
+                    )}
+
+                    {/* Distance Information */}
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      {bid.ride?.distance_to_pickup !== null && (
+                        <div className="bg-blue-50 rounded p-1.5">
+                          <p className="text-xs text-gray-600">To Pickup</p>
+                          <p className="text-xs font-bold text-blue-700">
+                            {formatDistance(bid.ride.distance_to_pickup)}
+                          </p>
+                        </div>
+                      )}
+                      {bid.ride?.trip_distance !== null && (
+                        <div className="bg-purple-50 rounded p-1.5">
+                          <p className="text-xs text-gray-600">Trip Dist</p>
+                          <p className="text-xs font-bold text-purple-700">
+                            {formatDistance(bid.ride.trip_distance)}
+                          </p>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <div className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm font-medium">
-                    ⏳ Pending
+
+                    <p className="text-sm font-semibold text-yellow-700 mt-2">
+                      Your Bid: ${parseFloat(bid.quoted_price).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Placed {timeAgo(bid.offered_at)}
+                    </p>
                   </div>
                 </div>
               </div>
+            ))}
+          </div>
 
-              {/* Map */}
-              {selectedBid.ride?.pickup_coordinates && (
-                <div className="h-64">
-                  <MapView
-                    center={selectedBid.ride.pickup_coordinates}
-                    zoom={14}
-                    markers={[
-                      {
-                        position: selectedBid.ride.pickup_coordinates,
-                        label: 'P',
-                        title: 'Pickup'
-                      },
-                      selectedBid.ride.dropoff_coordinates && {
-                        position: selectedBid.ride.dropoff_coordinates,
-                        label: 'D',
-                        title: 'Dropoff'
-                      }
-                    ].filter(Boolean)}
-                  />
-                </div>
-              )}
-
-              {/* Details */}
-              <div className="p-6 space-y-4">
-                {/* Your Bid */}
-                <div className="bg-yellow-50 rounded-lg p-4 border-2 border-yellow-200">
-                  <p className="text-sm font-medium text-gray-700 mb-1">💰 Your Bid</p>
-                  <p className="text-3xl font-bold text-yellow-700">
-                    ${parseFloat(selectedBid.quoted_price).toFixed(2)}
-                  </p>
-                  {selectedBid.message && (
-                    <p className="text-sm text-gray-600 mt-2">
-                      <strong>Your message:</strong> {selectedBid.message}
-                    </p>
-                  )}
-                </div>
-
-                {/* Locations */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs font-medium text-gray-500 mb-1">📍 Pickup</p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {selectedBid.ride?.pickup_address || selectedBid.ride?.pickup_location}
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <p className="text-xs font-medium text-gray-500 mb-1">🎯 Dropoff</p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {selectedBid.ride?.dropoff_address || selectedBid.ride?.dropoff_location}
-                    </p>
+          {/* Bid Details */}
+          <div className="lg:col-span-2">
+            {selectedBid ? (
+              <div className="bg-white rounded-lg border border-gray-200">
+                {/* Header */}
+                <div className="p-6 border-b border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-3xl">{getServiceIcon(selectedBid.ride?.service_type)}</span>
+                      <div>
+                        <h3 className="text-xl font-bold text-gray-900 capitalize">
+                          {selectedBid.ride?.service_type?.replace('_', ' ')}
+                        </h3>
+                        <p className="text-sm text-gray-500">
+                          Bid placed {timeAgo(selectedBid.offered_at)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm font-medium">
+                      ⏳ Pending
+                    </div>
                   </div>
                 </div>
 
-                {/* Passenger Info */}
-                {selectedBid.ride?.passenger_name && (
-                  <div className="bg-blue-50 rounded-lg p-3">
-                    <p className="text-xs font-medium text-gray-700 mb-1">👤 Passenger</p>
-                    <p className="text-sm text-gray-900">{selectedBid.ride.passenger_name}</p>
+                {/* Map */}
+                {selectedBid.ride?.pickup_coordinates && (
+                  <div className="h-64">
+                    <MapView
+                      center={selectedBid.ride.pickup_coordinates}
+                      zoom={14}
+                      markers={[
+                        {
+                          position: selectedBid.ride.pickup_coordinates,
+                          label: 'P',
+                          title: 'Pickup'
+                        },
+                        selectedBid.ride.dropoff_coordinates && {
+                          position: selectedBid.ride.dropoff_coordinates,
+                          label: 'D',
+                          title: 'Dropoff'
+                        }
+                      ].filter(Boolean)}
+                    />
                   </div>
                 )}
 
-                {/* Actions */}
-                <div className="border-t border-gray-200 pt-4">
-                  <p className="text-sm text-gray-600 mb-3">
-                    ⏳ Waiting for passenger to review and accept your bid...
-                  </p>
-                  <Button
-                    variant="danger"
-                    onClick={() => { setWithdrawOfferId(selectedBid.id); setWithdrawConfirmOpen(true); }}
-                    disabled={withdrawing}
-                    className="w-full"
-                  >
-                    {withdrawing ? 'Withdrawing...' : '❌ Withdraw Bid'}
-                  </Button>
+                {/* Details */}
+                <div className="p-6 space-y-4">
+                  {/* Your Bid */}
+                  <div className="bg-yellow-50 rounded-lg p-4 border-2 border-yellow-200">
+                    <p className="text-sm font-medium text-gray-700 mb-1">💰 Your Bid</p>
+                    <p className="text-3xl font-bold text-yellow-700">
+                      ${parseFloat(selectedBid.quoted_price).toFixed(2)}
+                    </p>
+                    {selectedBid.message && (
+                      <p className="text-sm text-gray-600 mt-2">
+                        <strong>Your message:</strong> {selectedBid.message}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Locations */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-xs font-medium text-gray-500 mb-1">📍 Pickup</p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {selectedBid.ride?.pickup_address || selectedBid.ride?.pickup_location}
+                      </p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-xs font-medium text-gray-500 mb-1">🎯 Dropoff</p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {selectedBid.ride?.dropoff_address || selectedBid.ride?.dropoff_location}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Passenger Info */}
+                  {selectedBid.ride?.passenger_name && (
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <p className="text-xs font-medium text-gray-700 mb-1">👤 Passenger</p>
+                      <p className="text-sm text-gray-900">{selectedBid.ride.passenger_name}</p>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="border-t border-gray-200 pt-4">
+                    <p className="text-sm text-gray-600 mb-3">
+                      ⏳ Waiting for passenger to review and accept your bid...
+                    </p>
+                    <Button
+                      variant="danger"
+                      onClick={() => { setWithdrawOfferId(selectedBid.id); setWithdrawConfirmOpen(true); }}
+                      disabled={withdrawing}
+                      className="w-full"
+                    >
+                      {withdrawing ? 'Withdrawing...' : '❌ Withdraw Bid'}
+                    </Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-              <p className="text-gray-500">Select a bid to view details</p>
-            </div>
-          )}
+            ) : (
+              <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+                <p className="text-gray-500">Select a bid to view details</p>
+              </div>
+            )}
+          </div>
         </div>
+      </div>
 
+      {/* Confirmation Modal - Outside the grid to prevent layout issues */}
       <ConfirmationModal
         isOpen={withdrawConfirmOpen}
         onClose={() => setWithdrawConfirmOpen(false)}
@@ -368,9 +453,7 @@ const PendingBidsView = ({ onBidUpdate }) => {
         type="warning"
         confirmButtonClass="flex-1 px-4 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors"
       />
-
-      </div>
-    </div>
+    </>
   );
 };
 

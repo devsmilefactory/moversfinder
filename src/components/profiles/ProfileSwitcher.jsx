@@ -108,8 +108,8 @@ const ProfileSwitcher = ({ isOpen, onClose }) => {
 
             {/* Profile List */}
             <div className="max-h-96 overflow-y-auto p-4 space-y-3">
-              {/* Show all possible profile types */}
-              {Object.keys(profileConfigs).map((profileType) => {
+              {/* Show only Passenger and Driver */}
+              {['individual','driver'].map((profileType) => {
                 const config = profileConfigs[profileType];
                 const profile = availableProfiles.find(p => p.type === profileType) || {
                   type: profileType,

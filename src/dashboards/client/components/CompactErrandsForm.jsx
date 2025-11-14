@@ -23,11 +23,11 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    onChange({ ...formData, [name]: value });
+    onChange(prev => ({ ...prev, [name]: value }));
   };
 
   const handleLocationChange = (field) => (e) => {
-    onChange({ ...formData, [field]: e.target.value });
+    onChange(prev => ({ ...prev, [field]: e.target.value }));
   };
 
   const handleOpenTaskModal = (index = null) => {
@@ -172,23 +172,27 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
 
             {/* Modal Content - Scrollable */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <LocationInput
-                label="Task Start Point"
-                value={taskFormData.startPoint}
-                onChange={(e) => setTaskFormData({ ...taskFormData, startPoint: e.target.value })}
-                savedPlaces={savedPlaces}
-                required
-                placeholder="Where does this task start?"
-              />
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+                <LocationInput
+                  label="Task Start Point"
+                  value={taskFormData.startPoint}
+                  onChange={(e) => setTaskFormData({ ...taskFormData, startPoint: e.target.value })}
+                  savedPlaces={savedPlaces}
+                  required
+                  placeholder="Where does this task start?"
+                />
+              </div>
 
-              <LocationInput
-                label="Task Destination Point"
-                value={taskFormData.destinationPoint}
-                onChange={(e) => setTaskFormData({ ...taskFormData, destinationPoint: e.target.value })}
-                savedPlaces={savedPlaces}
-                required
-                placeholder="Where does this task end?"
-              />
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+                <LocationInput
+                  label="Task Destination Point"
+                  value={taskFormData.destinationPoint}
+                  onChange={(e) => setTaskFormData({ ...taskFormData, destinationPoint: e.target.value })}
+                  savedPlaces={savedPlaces}
+                  required
+                  placeholder="Where does this task end?"
+                />
+              </div>
 
               <FormTextarea
                 label="Task Description"

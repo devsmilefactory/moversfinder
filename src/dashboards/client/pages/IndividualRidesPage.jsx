@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Menu } from 'lucide-react';
+import { Menu, RefreshCw } from 'lucide-react';
 import PWALeftDrawer from '../../../components/layouts/PWALeftDrawer';
 import RideDetailsModal from '../components/RideDetailsModal';
 import RideTabs from '../components/RideTabs';
@@ -23,6 +23,7 @@ const IndividualRidesPage = () => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedRide, setSelectedRide] = useState(null);
   const [showRideDetails, setShowRideDetails] = useState(false);
+  const [autoOpenRating, setAutoOpenRating] = useState(false);
   const [offerCounts, setOfferCounts] = useState({});
   const [activeTab, setActiveTab] = useState('pending');
   const [filters, setFilters] = useState({ serviceType: 'all', rideTiming: 'all' });
@@ -59,6 +60,7 @@ const IndividualRidesPage = () => {
     return () => {
       channel.unsubscribe();
     };
+
   }, [user?.id, rides.length]);
 
   const loadOfferCounts = async () => {
@@ -80,6 +82,8 @@ const IndividualRidesPage = () => {
       // Count pending offers for each ride
       const counts = {};
       data.forEach(offer => {
+
+
         if (!counts[offer.ride_id]) {
           counts[offer.ride_id] = { pending: 0, total: 0 };
         }
@@ -115,6 +119,7 @@ const IndividualRidesPage = () => {
       // Service type filter
       if (filters.serviceType !== 'all' && ride.service_type !== filters.serviceType) {
         return false;
+
       }
 
       // Ride timing filter
@@ -138,10 +143,9 @@ const IndividualRidesPage = () => {
         completed.push(ride);
       } else if (['accepted','driver_on_way','driver_arrived','trip_started','driver_assigned','offer_accepted','driver_en_route','in_progress','journey_started'].includes(status)) {
         active.push(ride);
-      } else {
-        // pending, awaiting_offers, or any other status
+      } else if (status === 'pending' || status === 'awaiting_offers') {
         pending.push(ride);
-      }
+      } // else: ignore unknown statuses
     });
 
     return { pending, active, completed, cancelled, saved };
@@ -157,28 +161,90 @@ const IndividualRidesPage = () => {
   };
 
   // Get rides for current tab
+  // Auto-open rating modal when a ride transitions to completed and hasn't been rated
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel(`user-ride-status-${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'rides', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const ride = payload.new;
+          const status = ride?.ride_status || ride?.status;
+          if (status === 'completed' && !ride?.rating) {
+            setSelectedRide(ride);
+            setAutoOpenRating(true);
+            setShowRideDetails(true);
+          }
+        }
+      )
+      .subscribe();
+    return () => { channel.unsubscribe(); };
+  }, [user?.id]);
+
+  // Realtime: refresh rides list on any change for this user
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel(`user-rides-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rides', filter: `user_id=eq.${user.id}` }, () => {
+        loadRides(user.id, 'individual');
+        loadOfferCounts();
+      })
+      .subscribe();
+    return () => { channel.unsubscribe(); };
+  }, [user?.id, loadRides]);
+
+
   const currentRides = categorizedRides[activeTab] || [];
+  const groupedItems = useMemo(() => {
+    const seen = new Set();
+    const items = [];
+    currentRides.forEach((r) => {
+      const isBulk = r?.booking_type === 'bulk' && r?.batch_id;
+      const key = isBulk ? `bulk:${r.batch_id}` : `single:${r.id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (isBulk) {
+        const groupRides = currentRides.filter(x => x?.booking_type === 'bulk' && x?.batch_id === r.batch_id);
+        if (groupRides.length > 1) {
+          items.push({ type: 'bulk_group', batch_id: r.batch_id, rides: groupRides });
+        } else {
+          items.push({ type: 'single', ride: r });
+        }
+      } else {
+        items.push({ type: 'single', ride: r });
+      }
+    });
+    return items;
+  }, [currentRides]);
+
 
   return (
     <div className="fixed inset-0 bg-slate-50 flex flex-col">
       {/* Header */}
-      <div className="p-4 pt-safe bg-white border-b border-slate-200 flex items-center justify-between">
-        <button onClick={() => setIsDrawerOpen(true)} className="p-2 rounded-lg hover:bg-slate-100">
+      <div className="p-3 pt-safe bg-white border-b border-slate-200 flex items-center justify-between">
+        <button onClick={() => setIsDrawerOpen(true)} className="p-2 rounded-lg hover:bg-slate-100" aria-label="Open menu">
           <Menu className="w-6 h-6 text-slate-700" />
         </button>
         <h1 className="font-bold text-slate-800">My Rides</h1>
-        {tabCounts.active > 0 ? (
-          <button onClick={() => setActiveTab('active')} className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-green-100 text-green-800 text-sm font-medium">
-            <span className="text-base">🚗</span>
-            <span>{tabCounts.active}</span>
+        <div className="flex items-center gap-2">
+          <button onClick={() => user?.id && loadRides(user.id, 'individual')} className="p-2 rounded-lg hover:bg-slate-100" aria-label="Refresh">
+            <RefreshCw className="w-5 h-5 text-slate-700" />
           </button>
-        ) : (
-          <div className="w-8" />
-        )}
+          {tabCounts.active > 0 && (
+            <button onClick={() => setActiveTab('active')} className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-green-100 text-green-800 text-sm font-medium">
+              <span className="text-base">🚗</span>
+              <span>{tabCounts.active}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
       <RideTabs activeTab={activeTab} onTabChange={setActiveTab} counts={tabCounts} />
+
 
       {/* Filter Bar */}
       <RideFilterBar filters={filters} onFilterChange={setFilters} />
@@ -202,66 +268,74 @@ const IndividualRidesPage = () => {
           </div>
         ) : (
           <div className="space-y-3">
-            {currentRides.map((ride) => {
-              const rideOffers = offerCounts[ride.id] || { pending: 0, total: 0 };
-
-              // Render different card types based on tab
-              if (activeTab === 'pending') {
+            {groupedItems.map((item) => {
+              if (item.type === 'bulk_group') {
+                const total = item.rides.reduce((sum, rr) => sum + (parseFloat(rr.estimated_cost) || 0), 0);
                 return (
-                  <PendingRideCard
-                    key={ride.id}
-                    ride={ride}
-                    offerCount={rideOffers.pending}
-                    onClick={() => handleRideClick(ride)}
-                    onCancelled={() => {
-                      if (user?.id) loadRides(user.id, 'individual');
-                    }}
-                  />
+                  <div key={item.batch_id} className="rounded-lg border-2 border-indigo-200 bg-indigo-50 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="font-semibold text-indigo-800">Bulk Trip ({item.rides.length} trips)</div>
+                      <div className="text-sm text-indigo-700">Total: ${total.toFixed(2)}</div>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {item.rides.map((ride) => {
+                        const rideOffers = offerCounts[ride.id] || { pending: 0, total: 0 };
+                        if (activeTab === 'pending') {
+                          return (
+                            <PendingRideCard
+                              key={ride.id}
+                              ride={ride}
+                              offerCount={rideOffers.pending}
+                              onClick={() => handleRideClick(ride)}
+                              onCancelled={() => { if (user?.id) loadRides(user.id, 'individual'); }}
+                            />
+                          );
+                        } else if (activeTab === 'active') {
+                          return (
+                            <ActiveRideCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />
+                          );
+                        } else if (activeTab === 'completed') {
+                          return (
+                            <CompletedRideCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />
+                          );
+                        } else if (activeTab === 'cancelled') {
+                          return (
+                            <CancelledRideCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />
+                          );
+                        } else if (activeTab === 'saved') {
+                          return (
+                            <SavedTripCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />
+                          );
+                        }
+                        return null;
+                      })}
+                    </div>
+                  </div>
                 );
-              } else if (activeTab === 'active') {
-                return (
-                  <ActiveRideCard
-                    key={ride.id}
-                    ride={ride}
-                    onClick={() => handleRideClick(ride)}
-                  />
-                );
-              } else if (activeTab === 'completed') {
-                return (
-                  <CompletedRideCard
-                    key={ride.id}
-                    ride={ride}
-                    onClick={() => handleRideClick(ride)}
-                  />
-                );
-              } else if (activeTab === 'cancelled') {
-                return (
-                  <CancelledRideCard
-                    key={ride.id}
-                    ride={ride}
-                    onClick={() => handleRideClick(ride)}
-                  />
-                );
-              } else if (activeTab === 'saved') {
-                return (
-                  <SavedTripCard
-                    key={ride.id}
-                    ride={ride}
-                    onClick={() => handleRideClick(ride)}
-                    onBookAgain={(savedRide) => {
-                      // TODO: Open UnifiedBookingModal with pre-filled data
-                      console.log('Book again:', savedRide);
-                      alert('Book Again feature coming soon! This will open the booking modal with pre-filled data.');
-                    }}
-                    onDelete={async (rideId) => {
-                      // TODO: Implement delete saved trip
-                      console.log('Delete saved trip:', rideId);
-                      alert('Delete feature coming soon! This will remove the saved trip template.');
-                    }}
-                  />
-                );
+              } else {
+                const ride = item.ride;
+                const rideOffers = offerCounts[ride.id] || { pending: 0, total: 0 };
+                if (activeTab === 'pending') {
+                  return (
+                    <PendingRideCard
+                      key={ride.id}
+                      ride={ride}
+                      offerCount={rideOffers.pending}
+                      onClick={() => handleRideClick(ride)}
+                      onCancelled={() => { if (user?.id) loadRides(user.id, 'individual'); }}
+                    />
+                  );
+                } else if (activeTab === 'active') {
+                  return (<ActiveRideCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />);
+                } else if (activeTab === 'completed') {
+                  return (<CompletedRideCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />);
+                } else if (activeTab === 'cancelled') {
+                  return (<CancelledRideCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />);
+                } else if (activeTab === 'saved') {
+                  return (<SavedTripCard key={ride.id} ride={ride} onClick={() => handleRideClick(ride)} />);
+                }
+                return null;
               }
-              return null;
             })}
           </div>
         )}
@@ -276,6 +350,7 @@ const IndividualRidesPage = () => {
         onClose={() => {
           setShowRideDetails(false);
           setSelectedRide(null);
+          setAutoOpenRating(false);
           // Reload rides to get updated status
           if (user?.id) loadRides(user.id, 'individual');
         }}
@@ -284,6 +359,7 @@ const IndividualRidesPage = () => {
           if (user?.id) loadRides(user.id, 'individual');
         }}
         ride={selectedRide}
+        autoOpenRating={autoOpenRating}
       />
     </div>
   );

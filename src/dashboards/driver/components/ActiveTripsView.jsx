@@ -5,6 +5,7 @@ import MapView from '../../../components/maps/MapView';
 import Button from '../../../components/ui/Button';
 import Modal from '../../../components/ui/Modal';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { formatDistance, calculateDistance, getCurrentLocation } from '../../../utils/locationServices';
 
 import { getNavigationUrlForDriver, getNavigationUrlTo } from '../../../utils/navigation';
 
@@ -21,7 +22,7 @@ import { getNavigationUrlForDriver, getNavigationUrlTo } from '../../../utils/na
  * - Passenger contact information
  * - Navigation to pickup/dropoff
  */
-const ActiveTripsView = () => {
+const ActiveTripsView = ({ onTripSelected }) => {
   const { addToast } = useToast();
   const { user } = useAuthStore();
   const [activeTrips, setActiveTrips] = useState([]);
@@ -80,11 +81,82 @@ const ActiveTripsView = () => {
 
       if (error) throw error;
 
-      setActiveTrips(data || []);
+      // Get driver's current location from driver_locations table
+      let driverLocation = null;
+      try {
+        const { data: locationData } = await supabase
+          .from('driver_locations')
+          .select('coordinates')
+          .eq('driver_id', user.id)
+          .maybeSingle();
+
+        if (locationData?.coordinates) {
+          if (locationData.coordinates.type === 'Point') {
+            const [lng, lat] = locationData.coordinates.coordinates;
+            driverLocation = { lat, lng };
+          } else if (locationData.coordinates.lat && locationData.coordinates.lng) {
+            driverLocation = locationData.coordinates;
+          }
+        }
+      } catch (locError) {
+        console.warn('Could not fetch driver location:', locError);
+      }
+
+      // Process trips with distance calculations
+      const tripsWithDistance = (data || []).map(trip => {
+        let pickupCoords = null;
+        let dropoffCoords = null;
+
+        // Convert pickup coordinates from GeoJSON to {lat, lng}
+        if (trip.pickup_coordinates) {
+          if (trip.pickup_coordinates.type === 'Point') {
+            const [lng, lat] = trip.pickup_coordinates.coordinates;
+            pickupCoords = { lat, lng };
+          } else if (trip.pickup_coordinates.lat && trip.pickup_coordinates.lng) {
+            pickupCoords = trip.pickup_coordinates;
+          }
+        }
+
+        // Convert dropoff coordinates from GeoJSON to {lat, lng}
+        if (trip.dropoff_coordinates) {
+          if (trip.dropoff_coordinates.type === 'Point') {
+            const [lng, lat] = trip.dropoff_coordinates.coordinates;
+            dropoffCoords = { lat, lng };
+          } else if (trip.dropoff_coordinates.lat && trip.dropoff_coordinates.lng) {
+            dropoffCoords = trip.dropoff_coordinates;
+          }
+        }
+
+        // Calculate distance to pickup (dynamic based on driver's current location)
+        const distanceToPickup = driverLocation && pickupCoords
+          ? calculateDistance(driverLocation, pickupCoords)
+          : null;
+
+        // Calculate total trip distance (pickup to dropoff)
+        // Use stored distance_km if available, otherwise calculate using coordinates
+        let tripDistance = null;
+        if (trip.distance_km && typeof trip.distance_km === 'number') {
+          tripDistance = trip.distance_km;
+        } else if (trip.distance && typeof trip.distance === 'number') {
+          tripDistance = trip.distance;
+        } else if (pickupCoords && dropoffCoords) {
+          tripDistance = calculateDistance(pickupCoords, dropoffCoords);
+        }
+
+        return {
+          ...trip,
+          pickup_coordinates: pickupCoords,
+          dropoff_coordinates: dropoffCoords,
+          distance_to_pickup: distanceToPickup,
+          trip_distance: tripDistance
+        };
+      });
+
+      setActiveTrips(tripsWithDistance);
 
       // Auto-select first trip if none selected
-      if (data && data.length > 0 && !selectedTrip) {
-        setSelectedTrip(data[0]);
+      if (tripsWithDistance.length > 0 && !selectedTrip) {
+        setSelectedTrip(tripsWithDistance[0]);
       }
     } catch (error) {
       console.error('Error loading active trips:', error);
@@ -126,8 +198,9 @@ const ActiveTripsView = () => {
         driver_on_way: 'accepted',
         driver_arrived: 'driver_on_way',
         trip_started: 'driver_arrived',
-        trip_completed: 'trip_started',
+        completed: 'trip_started',
       };
+
       const expectedCurrent = allowedFrom[newStatus];
       if (!expectedCurrent) throw new Error('Invalid status transition');
 
@@ -138,7 +211,7 @@ const ActiveTripsView = () => {
           status_updated_at: new Date().toISOString(),
           ...(newStatus === 'driver_arrived' && { estimated_arrival_time: new Date().toISOString() }),
           ...(newStatus === 'trip_started' && { actual_pickup_time: new Date().toISOString() }),
-          ...(newStatus === 'trip_completed' && {
+          ...(newStatus === 'completed' && {
             actual_dropoff_time: new Date().toISOString(),
             payment_status: 'paid' // Mark as paid when completed
           })
@@ -150,7 +223,7 @@ const ActiveTripsView = () => {
       if (error) throw error;
 
       // If trip completed, show rating modal
-      if (newStatus === 'trip_completed') {
+      if (newStatus === 'completed') {
         setTripToRate(trip);
         setShowRatingModal(true);
 
@@ -225,7 +298,7 @@ const ActiveTripsView = () => {
       },
       trip_started: {
         label: 'Complete Trip',
-        status: 'trip_completed',
+        status: 'completed',
         variant: 'success'
       }
     };
@@ -289,55 +362,188 @@ const ActiveTripsView = () => {
       <div className="lg:col-span-1 space-y-4">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Active Trips ({activeTrips.length})</h2>
 
-        {activeTrips.map((trip) => (
-          <div
-            key={trip.id}
-            onClick={() => setSelectedTrip(trip)}
-            className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-              selectedTrip?.id === trip.id
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-200 bg-white hover:border-gray-300'
-            }`}
-          >
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">{getServiceIcon(trip.service_type)}</span>
-                <div>
-                  <p className="font-semibold text-gray-900 capitalize">
-                    {trip.service_type?.replace('_', ' ')}
+        {(() => {
+          const seen = new Set();
+          const groups = [];
+          activeTrips.forEach((t) => {
+            const isBulk = t?.booking_type === 'bulk' && t?.batch_id;
+            const key = isBulk ? `bulk:${t.batch_id}` : `single:${t.id}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            if (isBulk) {
+              const members = activeTrips.filter(x => x?.booking_type === 'bulk' && x?.batch_id === t.batch_id);
+              if (members.length > 1) {
+                groups.push({ type: 'bulk_group', batch_id: t.batch_id, trips: members });
+              } else {
+                groups.push({ type: 'single', trip: t });
+              }
+            } else {
+              groups.push({ type: 'single', trip: t });
+            }
+          });
+          return groups;
+        })().map((item) => (
+          item.type === 'bulk_group' ? (
+            <div key={item.batch_id} className="p-4 rounded-lg border-2 border-indigo-300 bg-indigo-50">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-semibold text-indigo-800">Bulk Batch ({item.trips.length} trips)</div>
+                <div className="text-sm text-indigo-700">
+                  Total: ${item.trips.reduce((s, tr) => s + (parseFloat(tr.estimated_cost) || 0), 0).toFixed(2)}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {item.trips.map((trip) => (
+                  <div
+                    key={trip.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => { setSelectedTrip(trip); try { onTripSelected && onTripSelected(trip); } catch {} }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedTrip(trip); try { onTripSelected && onTripSelected(trip); } catch {} } }}
+                    className={`p-3 rounded border cursor-pointer transition-all ${
+                      selectedTrip?.id === trip.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{getServiceIcon(trip.service_type)}</span>
+                        <div>
+                          <p className="font-semibold text-gray-900 capitalize">
+                            {trip.service_type?.replace('_', ' ')} <span className="ml-1 text-xs text-indigo-600 font-medium">Bulk</span>
+                          </p>
+                          <p className="text-xs text-gray-500">{formatTime(trip.created_at)}</p>
+                        </div>
+                      </div>
+                      {getStatusBadge(trip.ride_status)}
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-2 text-sm">
+                      <div className="flex items-start gap-2">
+                        <span className="text-green-600 mt-0.5">📍</span>
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500">Pickup</p>
+                          <p className="text-gray-900 line-clamp-1">{trip.pickup_address || 'Not specified'}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="text-red-600 mt-0.5">📍</span>
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-500">Dropoff</p>
+                          <p className="text-gray-900 line-clamp-1">{trip.dropoff_address || 'Not specified'}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        {trip.distance_to_pickup !== null && (
+                          <div className="flex items-start gap-1">
+                            <span className="text-blue-600 mt-0.5 text-xs">🚗</span>
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500">To Pickup</p>
+                              <p className="text-xs font-semibold text-blue-700">
+                                {formatDistance(trip.distance_to_pickup)}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {trip.trip_distance !== null && (
+                          <div className="flex items-start gap-1">
+                            <span className="text-indigo-600 mt-0.5 text-xs">📏</span>
+                            <div className="flex-1">
+                              <p className="text-xs text-gray-500">Trip Dist</p>
+                              <p className="text-xs font-semibold text-indigo-700">
+                                {formatDistance(trip.trip_distance)}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div
+              key={item.trip.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => { setSelectedTrip(item.trip); try { onTripSelected && onTripSelected(item.trip); } catch {} }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedTrip(item.trip); try { onTripSelected && onTripSelected(item.trip); } catch {} } }}
+              className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                selectedTrip?.id === item.trip.id
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 bg-white hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">{getServiceIcon(item.trip.service_type)}</span>
+                  <div>
+                    <p className="font-semibold text-gray-900 capitalize">
+                      {item.trip.service_type?.replace('_', ' ')}
+                    </p>
+                    <p className="text-xs text-gray-500">{formatTime(item.trip.created_at)}</p>
+                  </div>
+                </div>
+                {getStatusBadge(item.trip.ride_status)}
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="flex items-start gap-2">
+                  <span className="text-green-600 mt-0.5">📍</span>
+                  <div className="flex-1">
+                    <p className="text-xs text-gray-500">Pickup</p>
+                    <p className="text-gray-900 line-clamp-1">{item.trip.pickup_address || 'Not specified'}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2">
+                  <span className="text-red-600 mt-0.5">📍</span>
+                  <div className="flex-1">
+                    <p className="text-xs text-gray-500">Dropoff</p>
+                    <p className="text-gray-900 line-clamp-1">{item.trip.dropoff_address || 'Not specified'}</p>
+                  </div>
+                </div>
+
+                {/* Distance Information Grid */}
+                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-100">
+                  {item.trip.distance_to_pickup !== null && (
+                    <div className="bg-blue-50 rounded-lg p-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">🚗</span>
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-600">To Pickup</p>
+                          <p className="text-sm font-bold text-blue-700">
+                            {formatDistance(item.trip.distance_to_pickup)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {item.trip.trip_distance !== null && (
+                    <div className="bg-purple-50 rounded-lg p-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-base">📏</span>
+                        <div className="flex-1">
+                          <p className="text-xs text-gray-600">Trip Dist</p>
+                          <p className="text-sm font-bold text-purple-700">
+                            {formatDistance(item.trip.trip_distance)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {item.trip.estimated_cost && (
+                <div className="mt-3 pt-3 border-t border-gray-200">
+                  <p className="text-sm font-semibold text-gray-900">
+                    Fare: ${parseFloat(item.trip.estimated_cost).toFixed(2)}
                   </p>
-                  <p className="text-xs text-gray-500">{formatTime(trip.created_at)}</p>
                 </div>
-              </div>
-              {getStatusBadge(trip.ride_status)}
+              )}
             </div>
-
-            <div className="space-y-2 text-sm">
-              <div className="flex items-start gap-2">
-                <span className="text-green-600 mt-0.5">📍</span>
-                <div className="flex-1">
-                  <p className="text-xs text-gray-500">Pickup</p>
-                  <p className="text-gray-900 line-clamp-1">{trip.pickup_address || 'Not specified'}</p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2">
-                <span className="text-red-600 mt-0.5">📍</span>
-                <div className="flex-1">
-                  <p className="text-xs text-gray-500">Dropoff</p>
-                  <p className="text-gray-900 line-clamp-1">{trip.dropoff_address || 'Not specified'}</p>
-                </div>
-              </div>
-            </div>
-
-            {trip.estimated_cost && (
-              <div className="mt-3 pt-3 border-t border-gray-200">
-                <p className="text-sm font-semibold text-gray-900">
-                  Fare: ${parseFloat(trip.estimated_cost).toFixed(2)}
-                </p>
-              </div>
-            )}
-          </div>
+          )
         ))}
       </div>
 
@@ -409,6 +615,16 @@ const ActiveTripsView = () => {
                       </p>
                     )}
                 </div>
+
+	              {typeof selectedTrip.distance_km === 'number' && (
+	                <div className="mt-4 text-sm text-gray-700">
+	                  Trip distance:{' '}
+	                  <span className="font-semibold">
+	                    {formatDistance(selectedTrip.distance_km)}
+	                  </span>
+	                </div>
+	              )}
+
               </div>
 
               {/* Passenger Info */}
@@ -422,12 +638,20 @@ const ActiveTripsView = () => {
                   <span className="font-mono text-xs">{selectedTrip.user_id}</span>
                 </div>
                 {passengerProfile?.phone && (
-                  <div className="mt-1">
-                    <a className="text-sm text-blue-600 hover:underline" href={`tel:${passengerProfile.phone}`}>
-
-
-                      Call {passengerProfile.phone}
-                    </a>
+                  <div className="mt-2 flex items-center gap-3">
+                    <span className="text-sm text-gray-700">{passengerProfile.phone}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.location.href = `tel:${passengerProfile.phone}`;
+                      }}
+                      className="inline-flex items-center px-3 py-1.5 text-sm rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.163 21 3 14.837 3 7V6a1 1 0 011-1z" />
+                      </svg>
+                      Call Passenger
+                    </button>
                   </div>
                 )}
                 {selectedTrip.passengers && (

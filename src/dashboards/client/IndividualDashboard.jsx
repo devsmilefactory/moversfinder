@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../shared/DashboardLayout';
 import StatsCard from '../shared/StatsCard';
 import DataTable from '../shared/DataTable';
 import { LineChart } from '../shared/Charts';
+import useAuthStore from '../../stores/authStore';
+import useSavedPlacesStore from '../../stores/savedPlacesStore';
 
 /**
  * Individual User Dashboard
@@ -11,21 +13,25 @@ import { LineChart } from '../shared/Charts';
  * Supabase-ready with real-time ride tracking
  */
 const IndividualDashboard = () => {
-  // Mock user data - will be replaced with Supabase auth
-  const user = {
-    id: 1,
-    name: 'John Doe',
-    email: 'john.doe@example.com',
-    userType: 'individual',
-    phone: '+263 912 345 678',
-    memberSince: '2024-01-15',
-  };
+  // Get authenticated user from store
+  const { user } = useAuthStore();
+
+  // Get saved places from database-backed store
+  const savedPlaces = useSavedPlacesStore((state) => state.savedPlaces);
+  const loadSavedPlaces = useSavedPlacesStore((state) => state.loadSavedPlaces);
+
+  // Load saved places on mount
+  useEffect(() => {
+    if (user?.id) {
+      loadSavedPlaces(user.id);
+    }
+  }, [user?.id, loadSavedPlaces]);
 
   // Mock stats - will be replaced with Supabase queries
   const stats = {
     totalRides: 47,
     totalSpent: 1245.50,
-    savedPlaces: 5,
+    savedPlaces: savedPlaces?.length || 0, // Use actual count from database
     upcomingRides: 2,
   };
 
@@ -96,15 +102,6 @@ const IndividualDashboard = () => {
     { label: 'Apr', value: 267 },
     { label: 'May', value: 289 },
     { label: 'Jun', value: 334 },
-  ];
-
-  // Saved places
-  const savedPlaces = [
-    { id: 1, name: 'Home', address: '123 Main Street, Bulawayo', icon: '🏠' },
-    { id: 2, name: 'Work', address: '456 Business Ave, Bulawayo', icon: '💼' },
-    { id: 3, name: 'Gym', address: '789 Fitness Road, Bulawayo', icon: '💪' },
-    { id: 4, name: 'Airport', address: 'Joshua Mqabuko Nkomo International Airport', icon: '✈️' },
-    { id: 5, name: 'Shopping', address: 'Ascot Shopping Centre', icon: '🛍️' },
   ];
 
   const [showBookingModal, setShowBookingModal] = useState(false);

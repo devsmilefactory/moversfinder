@@ -4,6 +4,7 @@ import useAuthStore from '../../stores/authStore';
 import useProfileStore from '../../stores/profileStore';
 import useRidesStore from '../../stores/ridesStore';
 import ProfileSwitcher from '../profiles/ProfileSwitcher';
+import usePWAInstall from '../../hooks/usePWAInstall';
 
 /**
  * PWALeftDrawer
@@ -19,6 +20,7 @@ const PWALeftDrawer = ({ open, onClose, profileType }) => {
   const { activeProfileType } = useProfileStore();
   const rides = useRidesStore((state) => state.rides);
   const [showProfileSwitcher, setShowProfileSwitcher] = useState(false);
+  const { isInstalled, canPrompt, promptInstall } = usePWAInstall();
 
   const type = profileType || activeProfileType || 'individual';
   const activeRidesCount = type === 'individual'
@@ -166,6 +168,13 @@ const PWALeftDrawer = ({ open, onClose, profileType }) => {
 
               {/* Footer */}
               <div className="p-4 border-t border-slate-200">
+                <button
+                  onClick={promptInstall}
+                  className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-yellow-400 text-slate-900 font-semibold hover:bg-yellow-500 transition-colors"
+                >
+                  <span className="text-lg">{isInstalled ? '✅' : '⬇️'}</span>
+                  <span>{isInstalled ? 'Installed' : 'Install App'}</span>
+                </button>
                 <p className="text-xs text-center text-slate-500">TaxiCab PWA v1.0.0</p>
               </div>
             </div>

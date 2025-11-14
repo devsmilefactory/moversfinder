@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Modal from '../../../components/ui/Modal';
 import Button from '../../../components/ui/Button';
+import { supabase } from '../../../lib/supabase';
 import { getNavigationUrlForDriver, getNavigationUrlTo } from '../../../utils/navigation';
 
 const Row = ({ label, value }) => (
@@ -20,9 +21,44 @@ const DriverRideDetailsModal = ({ open, onClose, ride }) => {
     }
   };
 
+  const [passenger, setPassenger] = useState({ name: null, phone: null });
+  const isActive = !['cancelled', 'completed'].includes(ride?.ride_status);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!ride?.user_id) return;
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('name, phone')
+          .eq('id', ride.user_id)
+          .maybeSingle();
+        if (!cancelled && data) setPassenger({ name: data.name, phone: data.phone });
+      } catch (e) {
+        if (!cancelled) setPassenger({ name: null, phone: null });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ride?.user_id]);
+
   return (
     <Modal isOpen={open} onClose={onClose} title="Ride Details" size="lg">
       <div className="space-y-4">
+        {isActive && (
+          <div className="flex items-center justify-between bg-slate-50 rounded-lg p-3">
+            <div className="text-sm text-slate-700">
+              Passenger: <span className="font-medium">{passenger.name || '—'}</span>
+              {passenger.phone && <span className="text-slate-500 ml-2">• {passenger.phone}</span>}
+            </div>
+            {passenger.phone && (
+              <Button size="sm" variant="outline" onClick={() => window.location.href = `tel:${passenger.phone}`}>
+                Call
+              </Button>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-3">
           <Row label="Status" value={ride.ride_status} />
           <Row label="Service" value={ride.service_type} />

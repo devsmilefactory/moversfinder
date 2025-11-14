@@ -49,7 +49,7 @@ const ActiveRidesView = () => {
         .from('rides')
         .select('*')
         .eq('user_id', user.id)
-        .in('ride_status', ['pending', 'accepted', 'driver_on_way', 'driver_arrived', 'trip_started'])
+        .in('ride_status', ['accepted', 'driver_on_way', 'driver_arrived', 'trip_started'])
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -128,7 +128,7 @@ const ActiveRidesView = () => {
       try {
         const { data, error } = await supabase
           .from('driver_profiles')
-          .select('full_name, vehicle_make, vehicle_model, vehicle_color, license_plate')
+          .select('full_name, vehicle_make, vehicle_model, vehicle_color, license_plate, phone_number')
           .eq('user_id', selectedRide.driver_id)
           .single();
         if (!error) setDriverInfo(data || null);
@@ -235,6 +235,7 @@ const ActiveRidesView = () => {
       courier: '📦',
       school_run: '🎒',
       errands: '🛍️',
+      bulk: '👥',
     };
     return icons[serviceType] || '🚗';
   };
@@ -448,7 +449,8 @@ const ActiveRidesView = () => {
                         {driverInfo.vehicle_color} {driverInfo.vehicle_make} {driverInfo.vehicle_model} • {driverInfo.license_plate}
                       </p>
                       {driverInfo.phone_number && (
-                        <div className="mt-2">
+                        <div className="mt-2 flex items-center gap-3">
+                          <span className="text-sm text-gray-700">{driverInfo.phone_number}</span>
                           <Button variant="outline" size="sm" onClick={() => window.location.href = `tel:${driverInfo.phone_number}`}>
                             Call Driver
                           </Button>

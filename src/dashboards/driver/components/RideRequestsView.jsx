@@ -33,6 +33,12 @@ const RideRequestsView = () => {
   const { addToast } = useToast();
   const user = useAuthStore((state) => state.user);
   const activeProfile = useProfileStore((state) => state.activeProfile);
+
+  const activeProfileType = useProfileStore((state) => state.activeProfileType);
+  const loadProfileData = useProfileStore((state) => state.loadProfileData);
+  const refreshProfiles = useProfileStore((state) => state.refreshProfiles);
+  const [refreshingStatus, setRefreshingStatus] = useState(false);
+
   const [isOnline, setIsOnline] = useState(false);
   const [rideRequests, setRideRequests] = useState([]);
   const [filteredRequests, setFilteredRequests] = useState([]);
@@ -88,6 +94,7 @@ const RideRequestsView = () => {
           const [lng, lat] = data.coordinates.coordinates;
           setDriverLocation({ lat, lng });
         }
+
       }
     } catch (error) {
       console.error('Error loading driver status:', error);
@@ -111,6 +118,7 @@ const RideRequestsView = () => {
     // Check activeProfile from driver_profiles table
     if (!activeProfile || activeProfile.approval_status !== 'approved') {
       setRideRequests([]);
+
       setFilteredRequests([]);
       setLoading(false);
       return;
@@ -217,6 +225,7 @@ const RideRequestsView = () => {
 
     // Filter by ride timing
     if (filters.rideTiming !== 'all') {
+
       if (filters.rideTiming === 'instant') {
         filtered = filtered.filter(ride => ride.ride_timing === 'instant');
       } else if (filters.rideTiming === 'scheduled') {
@@ -285,6 +294,7 @@ const RideRequestsView = () => {
         if (lastLoc) {
           const km = calculateDistance(lastLoc, location) || 0;
           movedEnough = (km * 1000) >= minMoveMeters;
+
         }
         if (now - lastUpdateAt < minIntervalMs && !movedEnough) {
           setDriverLocation(location);
@@ -660,15 +670,47 @@ const RideRequestsView = () => {
           <p className="text-gray-600 mb-6">
             {status.message}
           </p>
-          {(activeProfile?.approval_status === 'rejected' || activeProfile?.approval_status === 'suspended') && (
+          <div className="flex items-center justify-center gap-3">
             <Button
               variant="primary"
               size="lg"
-              onClick={() => window.location.href = '/support'}
+              disabled={refreshingStatus}
+              onClick={async () => {
+                if (!user?.id) return;
+                try {
+                  setRefreshingStatus(true);
+                  await refreshProfiles(user.id);
+                  await loadProfileData(user.id, 'driver');
+                  addToast({ type: 'success', message: 'Status refreshed' });
+                } catch (e) {
+                  console.error('Failed to refresh status', e);
+                  addToast({ type: 'error', message: 'Failed to refresh status. Please try again.' });
+                } finally {
+                  setRefreshingStatus(false);
+                }
+              }}
+              className="bg-yellow-400 text-slate-900 hover:bg-yellow-500"
             >
-              Contact Support
+              {refreshingStatus ? 'Refreshing...' : 'Refresh Status'}
             </Button>
-          )}
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => (window.location.href = '/driver/profile')}
+            >
+              View Profile
+            </Button>
+
+            {(activeProfile?.approval_status === 'rejected' || activeProfile?.approval_status === 'suspended') && (
+              <Button
+                variant="primary"
+                size="lg"
+                onClick={() => window.location.href = '/support'}
+              >
+                Contact Support
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     );

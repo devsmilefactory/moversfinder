@@ -51,8 +51,8 @@ const Modal = ({
       
       {/* Modal */}
       <div className="flex min-h-full items-center justify-center p-4">
-        <div 
-          className={`relative bg-white rounded-xl shadow-xl w-full ${sizeClasses[size]} transform transition-all`}
+        <div
+          className={`relative bg-white rounded-xl shadow-xl w-full ${sizeClasses[size]} transform transition-all max-h-[90vh] flex flex-col`}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -75,7 +75,7 @@ const Modal = ({
           )}
           
           {/* Content */}
-          <div className="p-6">
+          <div className="p-6 overflow-y-auto">
             {children}
           </div>
         </div>

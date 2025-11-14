@@ -5,6 +5,7 @@ import CompactTaxiForm from './CompactTaxiForm';
 import CompactCourierForm from './CompactCourierForm';
 import CompactSchoolRunForm from './CompactSchoolRunForm';
 import CompactErrandsForm from './CompactErrandsForm';
+import CompactBulkForm from './CompactBulkForm';
 import ScheduleModal from './ScheduleModal';
 import { useAuthStore, useSavedPlacesStore } from '../../../stores';
 import { supabase } from '../../../lib/supabase';
@@ -69,14 +70,6 @@ const UnifiedBookingModal = ({
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
 
-  const [showPickupBanner, setShowPickupBanner] = useState(false);
-
-  const [isPickupResolving, setIsPickupResolving] = useState(false);
-
-  const [pickupResolveError, setPickupResolveError] = useState(false);
-
-  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
-  const [locationError, setLocationError] = useState(null);
 
   // Form data - comprehensive for all service types
   const [formData, setFormData] = useState({
@@ -172,7 +165,63 @@ const UnifiedBookingModal = ({
   useEffect(() => {
     // Reset estimate immediately on input/tab changes to update pricing in realtime
     setComputedEstimate(null);
-    // Only attempt when we have pickup and dropoff
+
+    // Special handling for Bulk trips: sum distances across segments
+    if (selectedService === 'bulk') {
+      const mode = formData.bulkMode || 'multi_pickup';
+      let segments = [];
+      if (mode === 'multi_pickup') {
+        const drop = extractCoords(formData.dropoffLocation);
+        const pickups = (formData.bulkPickups || []).map(extractCoords).filter(Boolean);
+        if (!drop || pickups.length === 0) return;
+        segments = pickups.map((p) => ({ origin: p, destination: drop }));
+      } else {
+        const pick = extractCoords(formData.pickupLocation);
+        const drops = (formData.bulkDropoffs || []).map(extractCoords).filter(Boolean);
+        if (!pick || drops.length === 0) return;
+        segments = drops.map((d) => ({ origin: pick, destination: d }));
+      }
+
+      let aborted = false;
+      (async () => {
+        try {
+          let totalKm = 0;
+          let totalMin = 0;
+          const perTripEstimates = [];
+          for (const seg of segments) {
+            const res = await getRouteDistanceAndDuration(seg.origin, seg.destination);
+            let segKm = res?.distance ?? 0;
+            let segMin = res?.duration ?? (segKm > 0 ? Math.round((segKm / 40) * 60) : 0);
+
+            if (!segKm || !(segKm > 0)) {
+              const hav = calculateDistance(seg.origin, seg.destination);
+              if (hav && hav > 0) {
+                segKm = hav;
+                segMin = Math.round((hav / 40) * 60);
+              }
+            }
+
+            const segCost = segKm ? (calculateEstimatedFareV2({ distanceKm: segKm }) ?? 0) : 0;
+            perTripEstimates.push({ distanceKm: segKm, durationMinutes: segMin, cost: segCost });
+
+            totalKm += segKm;
+            totalMin += segMin;
+            if (aborted) return;
+          }
+          if (!aborted && totalKm > 0) {
+            const totalCost = perTripEstimates.reduce((sum, t) => sum + (t.cost || 0), 0);
+            setComputedEstimate({ distanceKm: totalKm, durationMinutes: totalMin, cost: totalCost, tripCount: perTripEstimates.length, perTripEstimates });
+          }
+        } catch (e) {
+          console.warn('Failed to compute bulk route estimate:', e);
+          if (!aborted) setComputedEstimate(null);
+        }
+      })();
+
+      return () => {};
+    }
+
+    // Default handling for single-trip distance computation
     const origin = extractCoords(formData.pickupLocation);
     const destination = extractCoords(formData.dropoffLocation);
     if (!origin || !destination) {
@@ -218,82 +267,23 @@ const UnifiedBookingModal = ({
     })();
 
     return () => { aborted = true; };
-  }, [selectedService, formData.pickupLocation, formData.dropoffLocation, JSON.stringify(formData.additionalStops), JSON.stringify(formData.additionalDeliveries)]);
+  }, [selectedService, formData.pickupLocation, formData.dropoffLocation, JSON.stringify(formData.additionalStops), JSON.stringify(formData.additionalDeliveries), formData.bulkMode, JSON.stringify(formData.bulkPickups || []), JSON.stringify(formData.bulkDropoffs || [])]);
 
   // Service types configuration
   const services = [
     { id: 'taxi', name: 'Taxi', icon: '🚕', color: 'yellow' },
     { id: 'courier', name: 'Courier', icon: '📦', color: 'blue' },
     { id: 'errands', name: 'Errands', icon: '🛍️', color: 'purple' },
-    { id: 'school_run', name: 'School/Work Run', icon: '🎒', color: 'green' }
+    { id: 'school_run', name: 'School/Work', icon: '🎒', color: 'green' },
+    { id: 'bulk', name: 'Bulk', icon: '👥', color: 'teal' }
   ];
 
-  // Auto-detect current location when modal opens (only for new bookings)
+  // Auto-detect on open disabled per UX request (no auto-fill of pickup/dropoff)
   useEffect(() => {
-    if (isOpen && !initialData && !formData.pickupLocation) {
-      handleDetectCurrentLocation();
-    }
-  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+    // intentionally left blank
+  }, [isOpen]);
 
-  // Function to detect and set current location
-  const handleDetectCurrentLocation = async () => {
-    setIsDetectingLocation(true);
-    setLocationError(null);
 
-    try {
-      // Get current coordinates
-      const coords = await getCurrentLocation();
-
-      // Reverse geocode to get address
-      if (window.google?.maps?.Geocoder) {
-        const geocoder = new window.google.maps.Geocoder();
-        const result = await geocoder.geocode({ location: coords });
-
-        if (result.results?.[0]) {
-          const address = result.results[0].formatted_address;
-          setFormData(prev => ({
-            ...prev,
-            pickupLocation: {
-              data: {
-                address: address,
-                coordinates: coords
-              }
-            }
-          }));
-          setShowPickupBanner(true);
-          setTimeout(() => setShowPickupBanner(false), 5000);
-        } else {
-          // Fallback to coordinates if no address found
-          setFormData(prev => ({
-            ...prev,
-            pickupLocation: {
-              data: {
-                address: 'Current location',
-                coordinates: coords
-              }
-            }
-          }));
-        }
-      } else {
-        // If Google Maps not available, just use coordinates
-        setFormData(prev => ({
-          ...prev,
-          pickupLocation: {
-            data: {
-              address: 'Current location',
-              coordinates: coords
-            }
-          }
-        }));
-      }
-    } catch (error) {
-      console.error('Location detection error:', error);
-      setLocationError(error.message);
-      // Don't show error to user, just silently fail
-    } finally {
-      setIsDetectingLocation(false);
-    }
-  };
 
   // Reset to default service when modal opens OR pre-fill with initialData
   useEffect(() => {
@@ -363,61 +353,9 @@ const UnifiedBookingModal = ({
   }, [isOpen, defaultServiceType, initialData]);
 
 
-  // Show banner hint when pickup is auto-set to current location
-  useEffect(() => {
-    if (!isOpen) return;
-    try {
-      const addr = initialData?.pickupLocation?.data?.address || '';
-      if (addr && addr.toLowerCase().includes('current location')) {
-        setShowPickupBanner(true);
-        const t = setTimeout(() => setShowPickupBanner(false), 3000);
-        return () => clearTimeout(t);
-      }
-    } catch (_) { /* ignore */ }
-  }, [isOpen, initialData]);
 
-  // Reverse geocode pickup if it's a placeholder like 'Current location'
-  useEffect(() => {
-    if (!isOpen) return;
-    const coords = formData?.pickupLocation?.data?.coordinates;
-    const addr = formData?.pickupLocation?.data?.address || (typeof formData?.pickupLocation === 'string' ? formData.pickupLocation : '');
-    const needsGeocode = coords && (!addr || addr.toLowerCase().includes('current location'));
-    if (!needsGeocode) return;
 
-    let cancelled = false;
-    (async () => {
-      try {
-        if (!cancelled) setPickupResolveError(false);
-        if (!window.google?.maps?.importLibrary) { if (!cancelled) setPickupResolveError(true); return; }
-        if (!cancelled) setIsPickupResolving(true);
-        const { Geocoder } = await window.google.maps.importLibrary('geocoding');
-        const geocoder = new (Geocoder || window.google.maps.Geocoder)();
-        const res = await geocoder.geocode({ location: coords });
-        const formatted = res?.results?.[0]?.formatted_address;
-        if (!cancelled && formatted) {
-          setFormData((prev) => ({
-            ...prev,
-            pickupLocation: {
-              data: {
-                ...(prev?.pickupLocation?.data || {}),
-                address: formatted,
-                coordinates: coords
-              }
-            }
-          }));
-        } else if (!cancelled) {
-          setPickupResolveError(true);
-        }
-      } catch (e) {
-        // Silent fallback; keep placeholder
-        console.warn('Reverse geocode failed:', e);
-      } finally {
-        if (!cancelled) setIsPickupResolving(false);
-      }
-    })();
 
-    return () => { cancelled = true; };
-  }, [isOpen, formData?.pickupLocation]);
 
 
 
@@ -438,6 +376,13 @@ const UnifiedBookingModal = ({
 
   // Calculate estimated cost without requiring local formData locations; rely on available distance
   const calculateCost = () => {
+    if (selectedService === 'bulk') {
+      if (computedEstimate && computedEstimate.cost != null) {
+        return Math.round(computedEstimate.cost * 100) / 100;
+      }
+      return 0;
+    }
+
     const distanceKmForPrice = (computedEstimate && computedEstimate.distanceKm)
       ? computedEstimate.distanceKm
       : (estimate && estimate.distanceKm ? estimate.distanceKm : null);
@@ -465,9 +410,7 @@ const UnifiedBookingModal = ({
       let singleTripFare;
 
       // Calculate single trip fare (with round trip if applicable)
-      if (selectedService === 'taxi' && formData.isRoundTrip) {
-        singleTripFare = calculateRoundTripFare({ distanceKm: distanceKmForPrice }) ?? 0;
-      } else if (selectedService === 'school_run' && formData.tripDirection === 'round-trip') {
+      if ((selectedService === 'taxi' || selectedService === 'school_run') && formData.isRoundTrip) {
         singleTripFare = calculateRoundTripFare({ distanceKm: distanceKmForPrice }) ?? 0;
       } else {
         singleTripFare = calculateEstimatedFareV2({ distanceKm: distanceKmForPrice }) ?? 0;
@@ -501,6 +444,14 @@ const UnifiedBookingModal = ({
 
       case 'errands':
         return formData.pickupLocation && formData.tasks && formData.tasks.length > 0;
+
+      case 'bulk': {
+        const mode = formData.bulkMode || 'multi_pickup';
+        if (mode === 'multi_pickup') {
+          return formData.dropoffLocation && (formData.bulkPickups || []).length > 0;
+        }
+        return formData.pickupLocation && (formData.bulkDropoffs || []).length > 0;
+      }
 
       default:
         return false;
@@ -606,13 +557,13 @@ const UnifiedBookingModal = ({
       const bookingData = {
         // User and service info
         user_id: user.id,
-        service_type: selectedService,
+        service_type: selectedService === 'bulk' ? 'taxi' : selectedService,
 
         // Ride timing and type
         ride_timing: formData.scheduleType === 'instant' ? 'instant' :
                      (formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 1) ? 'scheduled_recurring' :
                      'scheduled_single',
-        ride_type: selectedService,
+        ride_type: selectedService === 'bulk' ? 'taxi' : selectedService,
         booking_source: 'individual',
 
         // Location data (standardized columns)
@@ -705,6 +656,7 @@ const UnifiedBookingModal = ({
           is_round_trip: formData.isRoundTrip || false
         }),
 
+
         // Courier-specific fields
         ...(selectedService === 'courier' && formData.packages && {
           courier_packages: JSON.stringify(formData.packages),
@@ -719,7 +671,145 @@ const UnifiedBookingModal = ({
 
 
       // Check if this is a recurring ride
-      const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && bookingData.recurrence_pattern;
+      // Bulk booking: create one ride per segment with shared batch_id
+if (selectedService === 'bulk') {
+  try {
+    const mode = formData.bulkMode || 'multi_pickup';
+    const extractAddress = (loc) => {
+      if (!loc) return '';
+      return typeof loc === 'string' ? loc : (loc?.data?.address || '');
+    };
+
+    const segments = [];
+    if (mode === 'multi_pickup') {
+      const dropCoords = extractCoords(formData.dropoffLocation);
+      const dropAddr = extractAddress(formData.dropoffLocation);
+      if (!dropCoords || !dropAddr) {
+        alert('Please set a drop-off location before adding pickups.');
+        setLoading(false);
+        return;
+      }
+      (formData.bulkPickups || []).forEach((p) => {
+        const pCoords = extractCoords(p);
+        const pAddr = extractAddress(p);
+        if (pCoords && pAddr) {
+          segments.push({ origin: pCoords, originAddr: pAddr, destination: dropCoords, destAddr: dropAddr });
+        }
+      });
+    } else {
+      const pickCoords = extractCoords(formData.pickupLocation);
+      const pickAddr = extractAddress(formData.pickupLocation);
+      if (!pickCoords || !pickAddr) {
+        alert('Please set a pickup location before adding drop-offs.');
+        setLoading(false);
+        return;
+      }
+      (formData.bulkDropoffs || []).forEach((d) => {
+        const dCoords = extractCoords(d);
+        const dAddr = extractAddress(d);
+        if (dCoords && dAddr) {
+          segments.push({ origin: pickCoords, originAddr: pickAddr, destination: dCoords, destAddr: dAddr });
+        }
+      });
+    }
+
+    if (segments.length === 0) {
+      alert('Add at least one valid location in the multiple list.');
+      setLoading(false);
+      return;
+    }
+
+    const batchId = (window.crypto?.randomUUID && window.crypto.randomUUID()) || Math.random().toString(36).slice(2);
+
+    const ridesToInsert = [];
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      let segDistanceKm = null;
+      let segDurationMin = null;
+      try {
+        const route = await getRouteDistanceAndDuration(seg.origin, seg.destination);
+        segDistanceKm = route?.distance ?? null;
+        segDurationMin = route?.duration ?? null;
+      } catch (e) {
+        // ignore and fallback below
+      }
+      if (!segDistanceKm || !(segDistanceKm > 0)) {
+        const hav = calculateDistance(seg.origin, seg.destination);
+        if (hav && hav > 0) {
+          segDistanceKm = hav;
+          segDurationMin = Math.round((hav / 40) * 60);
+        }
+      }
+
+      const segCost = segDistanceKm ? (calculateEstimatedFareV2({ distanceKm: segDistanceKm }) ?? 0) : 0;
+
+      ridesToInsert.push({
+        user_id: bookingData.user_id,
+        service_type: bookingData.service_type,
+        ride_type: bookingData.ride_type,
+        ride_timing: bookingData.ride_timing,
+        booking_source: bookingData.booking_source,
+        pickup_location: seg.originAddr,
+        pickup_coordinates: toGeoJSON(seg.origin),
+        dropoff_location: seg.destAddr,
+        dropoff_coordinates: toGeoJSON(seg.destination),
+        vehicle_type: bookingData.vehicle_type,
+        distance_km: segDistanceKm ?? null,
+        estimated_duration_minutes: segDurationMin ?? null,
+        scheduled_datetime: bookingData.scheduled_datetime ?? null,
+        number_of_trips: 1,
+        is_round_trip: false,
+        is_saved_template: false,
+        acceptance_status: 'pending',
+        ride_status: 'pending',
+        status_updated_at: new Date().toISOString(),
+        payment_method: bookingData.payment_method,
+        estimated_cost: segCost,
+        payment_status: 'pending',
+        special_requests: bookingData.special_requests || null,
+        batch_id: batchId,
+        created_at: new Date().toISOString()
+      });
+    }
+
+    const { data: createdRides, error: bulkError } = await supabase
+      .from('rides')
+      .insert(ridesToInsert)
+      .select();
+
+    if (bulkError) {
+      console.error('Error creating bulk rides:', bulkError);
+      alert('❌ Failed to book bulk trips. Please try again.');
+      setLoading(false);
+      return;
+    }
+
+    if (bookingData.ride_timing === 'instant') {
+      for (const ride of createdRides || []) {
+        if (ride.pickup_coordinates) {
+          const pickupLatLng = fromGeoJSON(ride.pickup_coordinates);
+          await broadcastRideToDrivers(ride.id, pickupLatLng, 5);
+        }
+      }
+      alert(`🎉 Success! ${createdRides.length} trip(s) created and sent to nearby drivers.`);
+    } else {
+      alert(`🎉 Success! ${createdRides.length} trip(s) have been scheduled.`);
+    }
+
+    setLoading(false);
+    if (onSuccess) onSuccess({ rides: createdRides, isBulk: true, batchId });
+    onClose();
+    return;
+  } catch (err) {
+    console.error('Bulk booking failed:', err);
+    alert('❌ Bulk booking failed. Please try again.');
+    setLoading(false);
+    return;
+  }
+}
+
+// Check if this is a recurring ride
+const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && bookingData.recurrence_pattern;
 
       if (isRecurring) {
         // Handle recurring rides - generate multiple ride records
@@ -877,7 +967,7 @@ const UnifiedBookingModal = ({
       <div className="fixed inset-0 z-50 flex items-center justify-center md:p-4">
         {/* Backdrop */}
         <div
-          className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+          className="absolute inset-0 bg-black/70 backdrop-blur-sm"
           onClick={onClose}
         />
 
@@ -891,15 +981,19 @@ const UnifiedBookingModal = ({
           {/* Header Row - Compact */}
           <div className="px-4 py-2 border-b border-slate-100">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-slate-700">Book a Trip</h2>
-              <button
-                onClick={onClose}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="text-slate-500 hover:text-slate-700 transition-colors rounded-full p-1.5 bg-slate-100 hover:bg-slate-200"
+                  aria-label="Close"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                <h2 className="text-lg font-bold text-slate-700">Book a Trip</h2>
+              </div>
+              <div />
             </div>
             {/* Progress Indicator - Centered, Full Width - Only show for new trips */}
             {tripMode === 'new' && (
@@ -947,13 +1041,13 @@ const UnifiedBookingModal = ({
 
           {/* Service Type Tabs - Centered, Part of Fixed Area */}
           {tripMode === 'new' && (
-            <div className="px-4 py-2 border-t border-slate-100">
-              <div className="flex justify-center gap-2 overflow-x-auto scrollbar-hide">
+            <div className="px-0 -mx-4 py-2 border-t border-slate-100">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 snap-x snap-mandatory">
                 {services.map((service) => (
                   <button
                     key={service.id}
                     onClick={() => setSelectedService(service.id)}
-                    className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all text-sm ${
+                    className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all text-sm snap-start ${
                       selectedService === service.id
                         ? 'bg-yellow-400 text-slate-800 shadow-md transform -translate-y-0.5'
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -969,7 +1063,7 @@ const UnifiedBookingModal = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto bg-slate-50">
           {tripMode === 'saved' ? (
             /* Saved Trips List */
             <div className="p-4">
@@ -1016,37 +1110,7 @@ const UnifiedBookingModal = ({
           ) : (
             /* New Trip Form - Service Details Section */
             <div className="p-4">
-              {showPickupBanner && (
-                <div className="mb-3 rounded-lg border-l-4 border-yellow-400 bg-yellow-50 px-3 py-2 text-sm text-slate-700 flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <span>📍</span>
-                    <span>Pickup set to your current location</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowPickupBanner(false)}
-                    aria-label="Dismiss"
 
-
-                    className="text-slate-500 hover:text-slate-700"
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-
-
-              {pickupResolveError && (
-                <div className="mb-3 text-xs text-red-500">
-                  Failed to resolve address. Using “Current location”.
-                </div>
-              )}
-
-              {isPickupResolving && (
-                <div className="mb-3 text-xs text-slate-500 animate-pulse">
-                  Locating address...
-                </div>
-              )}
 
 
                 {selectedService === 'taxi' && (
@@ -1074,6 +1138,32 @@ const UnifiedBookingModal = ({
                     savedPlaces={savedPlaces}
                   />
                 )}
+
+                {selectedService === 'bulk' && (
+                  <div className="flex flex-col items-center justify-center py-16 px-4">
+                    <div className="text-center max-w-md">
+                      <div className="text-6xl mb-4">🚧</div>
+                      <h3 className="text-2xl font-bold text-slate-800 mb-3">Coming Soon!</h3>
+                      <p className="text-slate-600 mb-6">
+                        Bulk booking feature is currently under development. We're working hard to bring you the ability to book multiple rides at once.
+                      </p>
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                        <p className="text-sm text-yellow-800">
+                          <span className="font-semibold">Stay tuned!</span> This feature will be available soon.
+                        </p>
+                      </div>
+                    </div>
+                    {/* Keep the actual form hidden but in the code for future use */}
+                    <div className="hidden">
+                      <CompactBulkForm
+                        formData={formData}
+                        onChange={setFormData}
+                        savedPlaces={savedPlaces}
+                      />
+                    </div>
+                  </div>
+                )}
+
 
                 {selectedService === 'errands' && (
                   <CompactErrandsForm
@@ -1105,6 +1195,13 @@ const UnifiedBookingModal = ({
                     )}
                     <p className="text-xs text-slate-600 mt-1">Estimated Cost</p>
                     <p className="text-xl font-bold text-green-600">${calculateCost().toFixed(2)}</p>
+                    {selectedService === 'bulk' && computedEstimate?.perTripEstimates?.length > 0 && (
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        {computedEstimate.tripCount} trips: {computedEstimate.perTripEstimates.slice(0,3).map((t) => `$${((t.cost || 0)).toFixed(0)}`).join(' + ')}
+                        {computedEstimate.tripCount > 3 ? ' + …' : ''} = ${calculateCost().toFixed(0)}
+                      </p>
+                    )}
+
 
                   </>
                 ) : (
@@ -1185,7 +1282,7 @@ const UnifiedBookingModal = ({
           </div>
 
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="flex-1 overflow-y-auto px-6 py-4 bg-slate-50">
             <div className="space-y-4">
               {/* Service Type */}
               <div className="bg-slate-50 rounded-lg p-4">
@@ -1299,7 +1396,7 @@ const UnifiedBookingModal = ({
                   <>
                     <div>
                       <p className="text-xs font-semibold text-slate-500 uppercase mb-1">📦 Package Size</p>
-                      <p className="text-sm text-slate-700 capitalize">{formData.packageSize || 'Small'}</p>
+                      <p className="text-sm text-slate-700 capitalize">{(formData.packages && formData.packages[0]?.packageSize) || 'Small'}</p>
                     </div>
                     {formData.packageDetails && (
                       <div className="col-span-2">
@@ -1368,6 +1465,13 @@ const UnifiedBookingModal = ({
                     <p className="text-xs text-green-600">Estimated Cost</p>
                     <p className="text-2xl font-bold text-green-800">${calculateCost().toFixed(2)}</p>
                   </div>
+                {selectedService === 'bulk' && computedEstimate?.perTripEstimates?.length > 0 && (
+                  <div className="text-[11px] text-green-700 mt-1">
+                    {computedEstimate.tripCount} trips: {computedEstimate.perTripEstimates.slice(0,3).map((t) => `$${((t.cost || 0)).toFixed(0)}`).join(' + ')}
+                    {computedEstimate.tripCount > 3 ? ' + …' : ''} = ${calculateCost().toFixed(0)}
+                  </div>
+                )}
+
                 </div>
                 <p className="text-xs text-green-600 mt-2">
                   * Final fare calculated based on actual distance

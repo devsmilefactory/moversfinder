@@ -257,14 +257,18 @@ const CorporateBookingFlowSimplified = ({ onBack, initialLocation }) => {
         );
       }
     } else {
-      // Bulk booking - same form handles both Rides and Courier
+      // Bulk booking - temporarily in Coming Soon mode
       return (
-        <CorporateBulkBookingFormNew
-          serviceType={serviceType}
-          onBack={handleBackToSelection}
-          onComplete={handleComplete}
-          initialLocation={initialLocation}
-        />
+        <div className="text-center p-8">
+          <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span className="text-4xl">🚧</span>
+          </div>
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">Bulk Booking – Coming Soon</h2>
+          <p className="text-slate-600 mb-6">We're rolling this out gradually. For now, please use Single booking.</p>
+          <div className="flex items-center justify-center">
+            <Button variant="primary" onClick={handleBackToSelection} className="bg-yellow-400 text-slate-900 hover:bg-yellow-500">Back</Button>
+          </div>
+        </div>
       );
     }
   }

@@ -25,7 +25,7 @@ const MyRidesPage = () => {
 
   useEffect(() => {
     if (user?.id) {
-      loadRideHistory(user.id, { status: 'completed', limit: 50 });
+      loadRideHistory(user.id, { status: 'trip_completed', limit: 50 });
     }
   }, [user?.id, loadRideHistory]);
 

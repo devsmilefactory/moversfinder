@@ -1,15 +1,26 @@
 import React from 'react';
 import { MapPin, Calendar, DollarSign, Star, RotateCcw, Car, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Repeat } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { fromGeoJSON } from '../../../utils/locationServices';
 import Button from '../../shared/Button';
 
 /**
  * Card component for completed rides
  */
 const CompletedRideCard = ({ ride, onClick }) => {
+  const navigate = useNavigate();
   const handleRebook = (e) => {
     e.stopPropagation();
-    // TODO: Implement rebook functionality
-    alert('Rebook feature coming soon!');
+    const pickupCoords = fromGeoJSON(ride.pickup_coordinates);
+    const dropoffCoords = fromGeoJSON(ride.dropoff_coordinates);
+    navigate('/user/book-ride', {
+      state: {
+        rebookFromRide: {
+          pickup: pickupCoords ? { ...pickupCoords, address: ride.pickup_address || ride.pickup_location } : null,
+          dropoff: dropoffCoords ? { ...dropoffCoords, address: ride.dropoff_address || ride.dropoff_location } : null,
+        }
+      }
+    });
   };
 
   // Get service type icon and label

@@ -11,6 +11,7 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
   const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
   const [review, setReview] = useState('');
+  const [saveTrip, setSaveTrip] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   if (!isOpen) return null;
@@ -28,7 +29,8 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
         .update({
           rating: rating,
           review: review || null,
-          rated_at: new Date().toISOString()
+          rated_at: new Date().toISOString(),
+          ...(saveTrip ? { is_saved_template: true } : {})
         })
         .eq('id', ride.id);
 
@@ -120,6 +122,20 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
               className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
               rows={4}
             />
+
+            {/* Save Trip Option */}
+            <div className="mt-4 flex items-center gap-2">
+              <input
+                id="saveTrip"
+                type="checkbox"
+                checked={saveTrip}
+                onChange={(e) => setSaveTrip(e.target.checked)}
+                className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+              />
+              <label htmlFor="saveTrip" className="text-sm text-slate-700">
+                Save this trip for quick rebooking
+              </label>
+            </div>
           </div>
 
           {/* Submit Button */}

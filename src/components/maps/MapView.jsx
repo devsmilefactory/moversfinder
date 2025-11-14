@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getCurrentLocation } from '../../utils/locationServices';
 
 /**
  * MapView Component - Using Google Maps JavaScript API with Dynamic Library Import
@@ -462,27 +463,17 @@ const MapView = ({
 
 
 
-  const handleGetCurrentLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const pos = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          };
-          setCurrentLocation(pos);
-          if (mapInstanceRef.current) {
-            mapInstanceRef.current.panTo(pos);
-            mapInstanceRef.current.setZoom(15);
-          }
-        },
-        (error) => {
-          console.error('Error getting location:', error);
-          alert('Unable to get your current location. Please check your browser permissions.');
-        }
-      );
-    } else {
-      alert('Geolocation is not supported by your browser.');
+  const handleGetCurrentLocation = async () => {
+    try {
+      const coords = await getCurrentLocation();
+      setCurrentLocation(coords);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.panTo(coords);
+        mapInstanceRef.current.setZoom(15);
+      }
+    } catch (error) {
+      console.error('Error getting location:', error);
+      alert(error.message || 'Unable to get your current location. Please check your browser permissions.');
     }
   };
 

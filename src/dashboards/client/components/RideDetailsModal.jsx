@@ -15,11 +15,18 @@ import RatingModal from './RatingModal';
  * - Ability to accept or reject each offer
  * - Rating functionality for completed rides
  */
-const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted }) => {
+const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = false }) => {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [processingOfferId, setProcessingOfferId] = useState(null);
   const [showRatingModal, setShowRatingModal] = useState(false);
+
+  // Auto-open rating modal when requested and ride is completed without rating
+  useEffect(() => {
+    if (isOpen && autoOpenRating && ride?.ride_status === 'completed' && !ride?.rating) {
+      setShowRatingModal(true);
+    }
+  }, [isOpen, autoOpenRating, ride?.id, ride?.ride_status, ride?.rating]);
 
   // Load offers when modal opens
   useEffect(() => {

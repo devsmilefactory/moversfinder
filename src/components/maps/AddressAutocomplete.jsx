@@ -72,7 +72,17 @@ const AddressAutocomplete = ({
     loadPlaces();
   }, []);
 
-  useEffect(() => { setInputValue(value); }, [value]);
+  // Sync inputValue with value prop when it changes externally
+  // Don't clear inputValue when user is typing (prevents auto-clearing issue)
+  useEffect(() => {
+    // Only update inputValue if:
+    // 1. value prop has actual content (not empty), OR
+    // 2. value is empty AND inputValue is also empty (initial state)
+    // This prevents clearing the input while user is typing
+    if (value || (!value && !inputValue)) {
+      setInputValue(value);
+    }
+  }, [value]);
 
   useEffect(() => {
     if (useWidget) {

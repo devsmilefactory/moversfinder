@@ -58,13 +58,29 @@ const useAuthStore = create(
         isAuthenticated: false,
         authLoading: false,
         authError: null,
+        _initialized: false, // Internal flag to track if initialization has completed
 
         // Initialize auth state from Supabase session
         initialize: async () => {
           console.log('🔄 AuthStore: Starting initialization...');
 
-          // Reset to a safe unauthenticated baseline while checking session to avoid stale persisted state
-          set({ authLoading: true, isAuthenticated: false, user: null, authError: null });
+          // Check if we're already in the middle of initialization
+          const currentState = get();
+          if (currentState.authLoading) {
+            console.log('⚠️ AuthStore: Already initializing, skipping...');
+            return;
+          }
+
+          // If already initialized and we have a user, skip re-initialization
+          // This prevents clearing the state after successful login
+          if (currentState._initialized && currentState.isAuthenticated && currentState.user) {
+            console.log('✅ AuthStore: Already initialized with user, skipping...');
+            return;
+          }
+
+          // Set loading state but DON'T clear user/isAuthenticated yet
+          // This prevents clearing the state during login flow
+          set({ authLoading: true, authError: null });
 
           try {
             // Add timeout to session check to prevent hanging
@@ -163,7 +179,7 @@ const useAuthStore = create(
                 console.warn('⚠️ Failed to increment login count:', rpcError);
               }
 
-              set({ user: profile, isAuthenticated: true, authLoading: false, authError: null });
+              set({ user: profile, isAuthenticated: true, authLoading: false, authError: null, _initialized: true });
 
               // Load available profiles for multi-profile system
               // Import dynamically to avoid circular dependency
@@ -175,7 +191,7 @@ const useAuthStore = create(
               }
             } else {
               console.log('ℹ️ No session found - user not authenticated');
-              set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
+              set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _initialized: true });
             }
           } catch (error) {
             console.error('❌ Auth initialization error:', error);
@@ -459,7 +475,7 @@ const useAuthStore = create(
               .eq('id', data.user.id);
 
             const updatedProfile = { ...profile, login_count: newLoginCount };
-            set({ user: updatedProfile, isAuthenticated: true, authLoading: false });
+            set({ user: updatedProfile, isAuthenticated: true, authLoading: false, _initialized: true });
 
             // Load available profiles for multi-profile system
             const { default: useProfileStore } = await import('./profileStore');
@@ -609,7 +625,7 @@ const useAuthStore = create(
             const { default: useProfileStore } = await import('./profileStore');
             useProfileStore.getState().reset();
 
-            set({ user: null, isAuthenticated: false, authLoading: false });
+            set({ user: null, isAuthenticated: false, authLoading: false, _initialized: false });
             return { success: true };
           } catch (error) {
             const friendlyError = getUserFriendlyError(error);

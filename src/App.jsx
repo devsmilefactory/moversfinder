@@ -46,12 +46,8 @@ function App() {
 
         if (wasUpdated) {
           console.log('✅ App was updated - caches cleared');
-          // Force re-authentication after update to ensure fresh state
-          const currentState = useAuthStore.getState();
-          if (currentState.isAuthenticated) {
-            console.log('🔄 Re-initializing auth after update...');
-            await initialize();
-          }
+          // Don't re-initialize auth here - it will be done by the main initialization below
+          // Re-initializing here can interfere with the login flow
         }
       } catch (error) {
         console.error('❌ Error checking for updates:', error);

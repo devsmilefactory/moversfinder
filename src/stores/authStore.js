@@ -58,128 +58,56 @@ const useAuthStore = create(
         isAuthenticated: false,
         authLoading: false,
         authError: null,
-        _initialized: false, // Internal flag to track if initialization has completed
+        _isInitializing: false, // Guard to prevent concurrent initialization
 
-        // Initialize auth state from Supabase session
+        // Initialize auth state from Supabase session - ONLY call this once on app mount
         initialize: async () => {
-          console.log('🔄 AuthStore: Starting initialization...');
-
-          // Check if we're already in the middle of initialization
           const currentState = get();
-          if (currentState.authLoading) {
+
+          // Prevent concurrent initialization calls
+          if (currentState._isInitializing) {
             console.log('⚠️ AuthStore: Already initializing, skipping...');
             return;
           }
 
-          // If already initialized and we have a user, skip re-initialization
-          // This prevents clearing the state after successful login
-          if (currentState._initialized && currentState.isAuthenticated && currentState.user) {
-            console.log('✅ AuthStore: Already initialized with user, skipping...');
+          // If we already have a user, don't re-initialize (prevents clearing state after login)
+          if (currentState.user && currentState.isAuthenticated) {
+            console.log('✅ AuthStore: Already authenticated, skipping initialization');
             return;
           }
 
-          // Set loading state but DON'T clear user/isAuthenticated yet
-          // This prevents clearing the state during login flow
-          set({ authLoading: true, authError: null });
+          console.log('🔄 AuthStore: Starting initialization...');
+          set({ _isInitializing: true, authLoading: true, authError: null });
 
           try {
-            // Add timeout to session check to prevent hanging
-            const sessionPromise = supabase.auth.getSession();
-            const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Session check timeout')), 5000)
-            );
+            // Simple session check without complicated timeout logic
+            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-            const { data: { session }, error: sessionError } = await Promise.race([
-              sessionPromise,
-              timeoutPromise
-            ]);
-
-            // If there's a session error, check if it's a network error
             if (sessionError) {
               console.error('❌ Session error:', sessionError);
-
-              // Check for timeout error
-              if (sessionError.message === 'Session check timeout') {
-                console.warn('⏱️ Session check timed out - proceeding without auth');
-                set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
-                return;
-              }
-
-              // If it's a network error, don't clear session - just stop loading
-              if (isNetworkError(sessionError)) {
-                console.warn('🌐 Network error during auth initialization - will retry when online');
-                set({
-                  authLoading: false,
-                  authError: 'NETWORK_ERROR',
-                  // Keep existing user/auth state from persisted storage
-                });
-                return;
-              }
-
-              // For non-network errors, clear auth
-              console.log('🔓 Clearing auth due to session error');
-              await supabase.auth.signOut();
-              set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
+              // Clear auth and stop loading
+              set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
               return;
             }
 
             if (session?.user) {
               console.log('✅ Session found, fetching profile...');
 
-              // Fetch full profile with timeout
-              const profilePromise = supabase
+              // Simple profile fetch without timeout
+              const { data: profile, error } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', session.user.id)
                 .single();
 
-              const profileTimeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
-              );
-
-              const { data: profile, error } = await Promise.race([
-                profilePromise,
-                profileTimeoutPromise
-              ]);
-
               if (error) {
                 console.error('❌ Profile fetch error:', error);
-
-                // Check for timeout error
-                if (error.message === 'Profile fetch timeout') {
-                  console.warn('⏱️ Profile fetch timed out - signing out');
-                  await supabase.auth.signOut();
-                  set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
-                  return;
-                }
-
-                // If it's a network error, don't clear session
-                if (isNetworkError(error)) {
-                  console.warn('🌐 Network error fetching profile - will retry when online');
-                  set({
-                    authLoading: false,
-                    authError: 'NETWORK_ERROR',
-                  });
-                  return;
-                }
-
-                // For non-network errors, sign out to prevent infinite loop
-                console.log('🔓 Signing out due to profile fetch error');
-                await supabase.auth.signOut();
-                set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
+                set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
                 return;
               }
 
               console.log('✅ Profile fetched successfully');
-
-              // Increment login count (non-critical, don't fail if this errors)
-              try {
-                await supabase.rpc('increment_login_count', { user_id: session.user.id });
-              } catch (rpcError) {
-                console.warn('⚠️ Failed to increment login count:', rpcError);
-              }
-
-              set({ user: profile, isAuthenticated: true, authLoading: false, authError: null, _initialized: true });
+              set({ user: profile, isAuthenticated: true, authLoading: false, authError: null, _isInitializing: false });
 
               // Load available profiles for multi-profile system
               // Import dynamically to avoid circular dependency
@@ -191,36 +119,12 @@ const useAuthStore = create(
               }
             } else {
               console.log('ℹ️ No session found - user not authenticated');
-              set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _initialized: true });
+              set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
             }
           } catch (error) {
             console.error('❌ Auth initialization error:', error);
-
-            // Check for timeout error
-            if (error.message === 'Session check timeout' || error.message === 'Profile fetch timeout') {
-              console.warn('⏱️ Auth initialization timed out - proceeding without auth');
-              set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
-              return;
-            }
-
-            // If it's a network error, don't clear session
-            if (isNetworkError(error)) {
-              console.warn('🌐 Network error during auth initialization - will retry when online');
-              set({
-                authLoading: false,
-                authError: 'NETWORK_ERROR',
-              });
-              return;
-            }
-
-            // For non-network errors, clear any stale session data to prevent infinite retry loops
-            console.log('🔓 Clearing session due to initialization error');
-            try {
-              await supabase.auth.signOut();
-            } catch (signOutError) {
-              console.error('❌ Failed to sign out during error recovery:', signOutError);
-            }
-            set({ user: null, isAuthenticated: false, authLoading: false, authError: null });
+            // On any error, clear loading and initialization flag
+            set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
           }
 
           console.log('✅ AuthStore: Initialization complete');
@@ -475,7 +379,7 @@ const useAuthStore = create(
               .eq('id', data.user.id);
 
             const updatedProfile = { ...profile, login_count: newLoginCount };
-            set({ user: updatedProfile, isAuthenticated: true, authLoading: false, _initialized: true });
+            set({ user: updatedProfile, isAuthenticated: true, authLoading: false });
 
             // Load available profiles for multi-profile system
             const { default: useProfileStore } = await import('./profileStore');
@@ -625,7 +529,7 @@ const useAuthStore = create(
             const { default: useProfileStore } = await import('./profileStore');
             useProfileStore.getState().reset();
 
-            set({ user: null, isAuthenticated: false, authLoading: false, _initialized: false });
+            set({ user: null, isAuthenticated: false, authLoading: false, _isInitializing: false });
             return { success: true };
           } catch (error) {
             const friendlyError = getUserFriendlyError(error);

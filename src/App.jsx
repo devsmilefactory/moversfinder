@@ -58,76 +58,26 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
-  // Initialize auth on mount with timeout to prevent infinite loading
+  // Initialize auth on mount - simple, no complicated timeouts
   useEffect(() => {
     console.log('🔄 App.jsx: Initializing auth...');
-    let timeoutId;
-    let isTimedOut = false;
 
-    const initAuth = async () => {
-      try {
-        // Set a timeout to force-stop auth loading after 8 seconds
-        timeoutId = setTimeout(() => {
-          console.warn('⏱️ Auth initialization timeout - forcing authLoading to false');
-          isTimedOut = true;
-          // Force clear loading state if it's still true
-          const currentState = useAuthStore.getState();
-          if (currentState.authLoading) {
-            useAuthStore.setState({ authLoading: false });
-          }
-          setShowSplash(false);
-        }, 8000); // 8 second timeout
+    initialize().then(() => {
+      console.log('✅ App.jsx: Auth initialization complete');
+    }).catch((error) => {
+      console.error('❌ App.jsx: Failed to initialize auth:', error);
+    });
 
-        await initialize();
-
-        if (!isTimedOut) {
-          console.log('✅ App.jsx: Auth initialization complete');
-          clearTimeout(timeoutId);
-        }
-      } catch (error) {
-        console.error('❌ App.jsx: Failed to initialize auth:', error);
-        // Ensure loading state is cleared on error
-        useAuthStore.setState({ authLoading: false });
-        if (timeoutId) clearTimeout(timeoutId);
-      }
-    };
-
-    initAuth();
-
-    // Cleanup function
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
-  // Handle splash screen - force hide after 2 seconds
+  // Handle splash screen - hide after 1.5 seconds
   useEffect(() => {
-    console.log('⏰ App.jsx: Starting 2-second splash timer');
     const timer = setTimeout(() => {
-      console.log('✅ App.jsx: 2-second timer complete - hiding splash');
       setShowSplash(false);
-    }, 2000);
+    }, 1500);
 
-    return () => {
-      console.log('🧹 App.jsx: Cleaning up splash timer');
-      clearTimeout(timer);
-    };
-  }, []);
-
-  // Safety mechanism: Force clear authLoading after 10 seconds to prevent infinite loading
-  useEffect(() => {
-    const safetyTimer = setTimeout(() => {
-      const currentState = useAuthStore.getState();
-      if (currentState.authLoading) {
-        console.warn('⚠️ Safety timeout: Force clearing authLoading after 10 seconds');
-        useAuthStore.setState({ authLoading: false });
-      }
-    }, 10000);
-
-    return () => clearTimeout(safetyTimer);
+    return () => clearTimeout(timer);
   }, []);
 
   // Handle network status and show offline page when needed
@@ -140,22 +90,12 @@ function App() {
     }
   }, [authError, isConnected]);
 
-  // Retry auth initialization when connection is restored
-  useEffect(() => {
-    if (isConnected && authError === 'NETWORK_ERROR') {
-      console.log('Connection restored - retrying auth initialization');
-      initialize();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, authError]); // Don't include initialize to prevent infinite loop
-
   // Handle retry from offline page
   const handleOfflineRetry = async () => {
     const connected = await checkConnectivity();
     if (connected) {
       setShowOfflinePage(false);
-      // Retry auth initialization
-      await initialize();
+      // Don't retry initialization - user can manually login if needed
     }
   };
 

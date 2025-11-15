@@ -79,13 +79,22 @@ const useAuthStore = create(
           console.log('🔄 AuthStore: Starting initialization...');
           set({ _isInitializing: true, authLoading: true, authError: null });
 
+          // Add a simple timeout to ensure initialization always completes
+          const timeoutId = setTimeout(() => {
+            console.warn('⏱️ AuthStore: Initialization timeout - clearing loading state');
+            set({ authLoading: false, _isInitializing: false });
+          }, 10000); // 10 second max
+
           try {
-            // Simple session check without complicated timeout logic
+            // Simple session check
             const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+            // Clear timeout since we got a response
+            clearTimeout(timeoutId);
 
             if (sessionError) {
               console.error('❌ Session error:', sessionError);
-              // Clear auth and stop loading
+              clearTimeout(timeoutId);
               set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
               return;
             }
@@ -93,7 +102,7 @@ const useAuthStore = create(
             if (session?.user) {
               console.log('✅ Session found, fetching profile...');
 
-              // Simple profile fetch without timeout
+              // Simple profile fetch
               const { data: profile, error } = await supabase
                 .from('profiles')
                 .select('*')
@@ -102,11 +111,13 @@ const useAuthStore = create(
 
               if (error) {
                 console.error('❌ Profile fetch error:', error);
+                clearTimeout(timeoutId);
                 set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
                 return;
               }
 
               console.log('✅ Profile fetched successfully');
+              clearTimeout(timeoutId);
               set({ user: profile, isAuthenticated: true, authLoading: false, authError: null, _isInitializing: false });
 
               // Load available profiles for multi-profile system
@@ -119,11 +130,12 @@ const useAuthStore = create(
               }
             } else {
               console.log('ℹ️ No session found - user not authenticated');
+              clearTimeout(timeoutId);
               set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
             }
           } catch (error) {
             console.error('❌ Auth initialization error:', error);
-            // On any error, clear loading and initialization flag
+            clearTimeout(timeoutId);
             set({ user: null, isAuthenticated: false, authLoading: false, authError: null, _isInitializing: false });
           }
 

@@ -26,6 +26,7 @@ const AdminDashboardContent = () => {
     taxicabStats,
     bmtoaStats,
     ecosystemStats,
+    pendingActions,
     statsLoading,
     loadAllStats,
   } = useAdminStore();
@@ -249,26 +250,44 @@ const AdminDashboardContent = () => {
           <div className="space-y-3">
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Driver Verifications</span>
-              <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium">
-                5 pending
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                pendingActions.driverVerifications > 0 
+                  ? 'bg-yellow-100 text-yellow-700' 
+                  : 'bg-green-100 text-green-700'
+              }`}>
+                {pendingActions.driverVerifications} pending
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-slate-600">Support Tickets</span>
-              <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm font-medium">
-                12 open
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                pendingActions.supportTickets > 10 
+                  ? 'bg-red-100 text-red-700' 
+                  : pendingActions.supportTickets > 0
+                  ? 'bg-yellow-100 text-yellow-700'
+                  : 'bg-green-100 text-green-700'
+              }`}>
+                {pendingActions.supportTickets} open
               </span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-slate-600">Refund Requests</span>
-              <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium">
-                3 pending
+              <span className="text-slate-600">Payment Verifications</span>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                pendingActions.paymentVerifications > 0 
+                  ? 'bg-yellow-100 text-yellow-700' 
+                  : 'bg-green-100 text-green-700'
+              }`}>
+                {pendingActions.paymentVerifications} pending
               </span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-slate-600">Content Reports</span>
-              <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
-                0 pending
+              <span className="text-slate-600">Member Requests</span>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                pendingActions.memberRequests > 0 
+                  ? 'bg-yellow-100 text-yellow-700' 
+                  : 'bg-green-100 text-green-700'
+              }`}>
+                {pendingActions.memberRequests} pending
               </span>
             </div>
           </div>

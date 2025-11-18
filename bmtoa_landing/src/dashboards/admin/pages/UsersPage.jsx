@@ -41,6 +41,18 @@ const UsersPage = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editFormData, setEditFormData] = useState({});
+  const [editFormErrors, setEditFormErrors] = useState({});
+  const [updating, setUpdating] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createFormData, setCreateFormData] = useState({});
+  const [createFormErrors, setCreateFormErrors] = useState({});
+  const [creating, setCreating] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteRelatedRecords, setDeleteRelatedRecords] = useState({});
 
   // Load users from database
   useEffect(() => {
@@ -51,7 +63,7 @@ const UsersPage = () => {
     try {
       setLoading(true);
 
-      // Fetch all users from profiles table
+      // Fetch all users from profiles table with ride count
       const { data, error } = await supabase
         .from('profiles')
         .select(`
@@ -61,9 +73,10 @@ const UsersPage = () => {
           phone,
           user_type,
           platform,
-          verification_status,
+          account_status,
           created_at,
-          last_login_at
+          last_login_at,
+          rides:rides(count)
         `)
         .order('created_at', { ascending: false });
 
@@ -77,11 +90,10 @@ const UsersPage = () => {
         phone: user.phone || 'N/A',
         userType: user.user_type === 'taxi_operator' ? 'operator' : user.user_type,
         platform: user.platform,
-        status: user.verification_status === 'approved' ? 'active' :
-                user.verification_status === 'suspended' ? 'suspended' : 'pending',
+        status: user.account_status || 'active',
         registeredAt: user.created_at ? new Date(user.created_at).toISOString().split('T')[0] : 'N/A',
         lastActive: user.last_login_at ? new Date(user.last_login_at).toLocaleString() : 'Never',
-        totalRides: 0 // Will be calculated from rides table if needed
+        totalRides: user.rides?.[0]?.count || 0
       }));
 
       setUsers(transformedUsers);
@@ -156,8 +168,8 @@ const UsersPage = () => {
       const { error } = await supabase
         .from('profiles')
         .update({
-          verification_status: 'approved',
-          verified_at: new Date().toISOString()
+          account_status: 'active',
+          updated_at: new Date().toISOString()
         })
         .eq('id', userId);
 
@@ -179,7 +191,8 @@ const UsersPage = () => {
       const { error } = await supabase
         .from('profiles')
         .update({
-          verification_status: 'suspended'
+          account_status: 'suspended',
+          updated_at: new Date().toISOString()
         })
         .eq('id', userId);
 
@@ -199,8 +212,8 @@ const UsersPage = () => {
       const { error } = await supabase
         .from('profiles')
         .update({
-          verification_status: 'approved',
-          verified_at: new Date().toISOString()
+          account_status: 'active',
+          updated_at: new Date().toISOString()
         })
         .eq('id', userId);
 
@@ -214,10 +227,512 @@ const UsersPage = () => {
     }
   };
 
-  // View user details
-  const viewUserDetails = (user) => {
+  // View user details with complete profile information
+  const viewUserDetails = async (user) => {
+    try {
+      setLoading(true);
+      
+      // Fetch complete profile based on user type
+      let profileData = null;
+      
+      if (user.userType === 'corporate') {
+        const { data, error } = await supabase
+          .from('corporate_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (!error && data) {
+          profileData = {
+            type: 'corporate',
+            companyName: data.company_name,
+            businessRegistration: data.business_registration,
+            industry: data.industry,
+            companySize: data.company_size,
+            totalEmployees: data.total_employees,
+            accountTier: data.account_tier,
+            creditBalance: data.credit_balance,
+            monthlySpend: data.monthly_spend,
+            verificationStatus: data.verification_status,
+            creditBookingApproved: data.credit_booking_approved,
+            primaryContactName: data.primary_contact_name,
+            primaryContactPhone: data.primary_contact_phone,
+            primaryContactEmail: data.primary_contact_email
+          };
+        }
+      } else if (user.userType === 'driver') {
+        const { data, error } = await supabase
+          .from('driver_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (!error && data) {
+          profileData = {
+            type: 'driver',
+            fullName: data.full_name,
+            licenseNumber: data.license_number,
+            licenseExpiry: data.license_expiry,
+            verificationStatus: data.verification_status,
+            approvalStatus: data.approval_status,
+            submissionStatus: data.submission_status,
+            operatorId: data.operator_id,
+            totalEarnings: data.total_earnings,
+            rating: data.rating,
+            totalTrips: data.total_trips
+          };
+        }
+      } else if (user.userType === 'operator') {
+        const { data, error } = await supabase
+          .from('operator_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (!error && data) {
+          profileData = {
+            type: 'operator',
+            companyName: data.company_name,
+            businessRegistration: data.business_registration,
+            fleetSize: data.fleet_size,
+            totalDrivers: data.total_drivers,
+            membershipTier: data.membership_tier,
+            bmtoaVerified: data.bmtoa_verified,
+            bmtoaMemberNumber: data.bmtoa_member_number,
+            monthlyRevenue: data.monthly_revenue,
+            approvalStatus: data.approval_status,
+            profileStatus: data.profile_status
+          };
+        }
+      } else if (user.userType === 'individual') {
+        const { data, error } = await supabase
+          .from('individual_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (!error && data) {
+          profileData = {
+            type: 'individual',
+            totalRides: data.total_rides,
+            totalSpent: data.total_spent,
+            profileStatus: data.profile_status,
+            completionPercentage: data.completion_percentage,
+            servicePreferences: data.service_preferences,
+            savedPlaces: data.saved_places
+          };
+        }
+      }
+      
+      setSelectedUser({
+        ...user,
+        profileData
+      });
+      setShowDetailsModal(true);
+    } catch (error) {
+      console.error('Error loading user profile details:', error);
+      // Still show modal with basic info
+      setSelectedUser(user);
+      setShowDetailsModal(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Open edit modal
+  const openEditModal = (user) => {
     setSelectedUser(user);
-    setShowDetailsModal(true);
+    setEditFormData({
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      platform: user.platform,
+      account_status: user.status
+    });
+    setEditFormErrors({});
+    setShowEditModal(true);
+  };
+
+  // Validate form data against database schema
+  const validateUserForm = (formData) => {
+    const errors = {};
+
+    // Name validation (required, text)
+    if (!formData.name || formData.name.trim() === '') {
+      errors.name = 'Name is required';
+    }
+
+    // Email validation (required, valid email format, unique)
+    if (!formData.email || formData.email.trim() === '') {
+      errors.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      errors.email = 'Invalid email format';
+    }
+
+    // Phone validation (optional, but if provided should be valid)
+    if (formData.phone && formData.phone.trim() !== '') {
+      // Basic phone validation - adjust regex based on your requirements
+      if (!/^[\d\s\-\+\(\)]+$/.test(formData.phone)) {
+        errors.phone = 'Invalid phone number format';
+      }
+    }
+
+    // Platform validation (must be one of the allowed values)
+    const validPlatforms = ['taxicab', 'bmtoa', 'both'];
+    if (!formData.platform || !validPlatforms.includes(formData.platform)) {
+      errors.platform = 'Platform must be taxicab, bmtoa, or both';
+    }
+
+    // Account status validation (must be one of the allowed values)
+    const validStatuses = ['active', 'disabled', 'suspended'];
+    if (!formData.account_status || !validStatuses.includes(formData.account_status)) {
+      errors.account_status = 'Status must be active, disabled, or suspended';
+    }
+
+    return errors;
+  };
+
+  // Handle update user
+  const handleUpdateUser = async () => {
+    try {
+      setUpdating(true);
+      setEditFormErrors({});
+
+      // Validate form data
+      const errors = validateUserForm(editFormData);
+      if (Object.keys(errors).length > 0) {
+        setEditFormErrors(errors);
+        setUpdating(false);
+        return;
+      }
+
+      // Check if email is being changed and if it's unique
+      if (editFormData.email !== selectedUser.email) {
+        const { data: existingUser, error: checkError } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', editFormData.email)
+          .neq('id', selectedUser.id)
+          .single();
+
+        if (existingUser) {
+          setEditFormErrors({ email: 'Email already exists' });
+          setUpdating(false);
+          return;
+        }
+      }
+
+      // Update user in database
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          name: editFormData.name.trim(),
+          email: editFormData.email.trim(),
+          phone: editFormData.phone?.trim() || null,
+          platform: editFormData.platform,
+          account_status: editFormData.account_status,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', selectedUser.id);
+
+      if (error) throw error;
+
+      alert('User updated successfully!');
+      setShowEditModal(false);
+      setSelectedUser(null);
+      setEditFormData({});
+      loadUsers(); // Reload users
+    } catch (error) {
+      console.error('Error updating user:', error);
+      alert(`Failed to update user: ${error.message}`);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  // Open create modal
+  const openCreateModal = () => {
+    setCreateFormData({
+      name: '',
+      email: '',
+      phone: '',
+      password: '',
+      user_type: '',
+      platform: '',
+      account_status: 'active'
+    });
+    setCreateFormErrors({});
+    setShowCreateModal(true);
+  };
+
+  // Validate create form data
+  const validateCreateForm = (formData) => {
+    const errors = {};
+
+    // Name validation
+    if (!formData.name || formData.name.trim() === '') {
+      errors.name = 'Name is required';
+    }
+
+    // Email validation
+    if (!formData.email || formData.email.trim() === '') {
+      errors.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      errors.email = 'Invalid email format';
+    }
+
+    // Password validation
+    if (!formData.password || formData.password.length < 6) {
+      errors.password = 'Password must be at least 6 characters';
+    }
+
+    // User type validation
+    const validUserTypes = ['individual', 'corporate', 'driver', 'operator', 'admin'];
+    if (!formData.user_type || !validUserTypes.includes(formData.user_type)) {
+      errors.user_type = 'Please select a valid user type';
+    }
+
+    // Platform validation
+    const validPlatforms = ['taxicab', 'bmtoa', 'both'];
+    if (!formData.platform || !validPlatforms.includes(formData.platform)) {
+      errors.platform = 'Please select a valid platform';
+    }
+
+    // Phone validation (optional)
+    if (formData.phone && formData.phone.trim() !== '') {
+      if (!/^[\d\s\-\+\(\)]+$/.test(formData.phone)) {
+        errors.phone = 'Invalid phone number format';
+      }
+    }
+
+    return errors;
+  };
+
+  // Handle create user
+  const handleCreateUser = async () => {
+    try {
+      setCreating(true);
+      setCreateFormErrors({});
+
+      // Validate form data
+      const errors = validateCreateForm(createFormData);
+      if (Object.keys(errors).length > 0) {
+        setCreateFormErrors(errors);
+        setCreating(false);
+        return;
+      }
+
+      // Check if email already exists
+      const { data: existingUser, error: checkError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', createFormData.email.trim())
+        .single();
+
+      if (existingUser) {
+        setCreateFormErrors({ email: 'Email already exists' });
+        setCreating(false);
+        return;
+      }
+
+      // Create user in auth.users using Supabase Admin API
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        email: createFormData.email.trim(),
+        password: createFormData.password,
+        email_confirm: true, // Auto-confirm email
+        user_metadata: {
+          name: createFormData.name.trim()
+        }
+      });
+
+      if (authError) throw authError;
+
+      // Create profile in profiles table
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          id: authData.user.id,
+          email: createFormData.email.trim(),
+          name: createFormData.name.trim(),
+          phone: createFormData.phone?.trim() || null,
+          user_type: createFormData.user_type,
+          platform: createFormData.platform,
+          account_status: createFormData.account_status,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+
+      if (profileError) {
+        // If profile creation fails, we should delete the auth user
+        // However, this requires admin privileges
+        console.error('Profile creation failed:', profileError);
+        throw new Error('Failed to create user profile. Please contact support.');
+      }
+
+      alert('User created successfully! A confirmation email has been sent.');
+      setShowCreateModal(false);
+      setCreateFormData({});
+      loadUsers(); // Reload users
+    } catch (error) {
+      console.error('Error creating user:', error);
+      alert(`Failed to create user: ${error.message}`);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Check related records before delete
+  const checkRelatedRecords = async (userId) => {
+    try {
+      const related = {};
+
+      // Check rides (NO ACTION constraint)
+      const { count: ridesCount } = await supabase
+        .from('rides')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+      related.rides = ridesCount || 0;
+
+      // Check documents (NO ACTION constraint)
+      const { count: documentsCount } = await supabase
+        .from('documents')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+      related.documents = documentsCount || 0;
+
+      // Check payments (NO ACTION constraint)
+      const { count: paymentsCount } = await supabase
+        .from('payments')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+      related.payments = paymentsCount || 0;
+
+      // Check notifications (NO ACTION constraint)
+      const { count: notificationsCount } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+      related.notifications = notificationsCount || 0;
+
+      // Check complaints (NO ACTION constraint)
+      const { count: complaintsCount } = await supabase
+        .from('complaints')
+        .select('*', { count: 'exact', head: true })
+        .or(`complainant_id.eq.${userId},against_id.eq.${userId}`);
+      related.complaints = complaintsCount || 0;
+
+      return related;
+    } catch (error) {
+      console.error('Error checking related records:', error);
+      return {};
+    }
+  };
+
+  // Open delete confirmation modal
+  const openDeleteModal = async (user) => {
+    setUserToDelete(user);
+    const related = await checkRelatedRecords(user.id);
+    setDeleteRelatedRecords(related);
+    setShowDeleteModal(true);
+  };
+
+  // Handle delete user
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    try {
+      setDeleting(true);
+
+      // Delete related records with NO ACTION constraints first
+      // This prevents foreign key constraint violations
+
+      // Delete documents
+      if (deleteRelatedRecords.documents > 0) {
+        const { error: docsError } = await supabase
+          .from('documents')
+          .delete()
+          .eq('user_id', userToDelete.id);
+        if (docsError) throw docsError;
+      }
+
+      // Delete notifications
+      if (deleteRelatedRecords.notifications > 0) {
+        const { error: notifsError } = await supabase
+          .from('notifications')
+          .delete()
+          .eq('user_id', userToDelete.id);
+        if (notifsError) throw notifsError;
+      }
+
+      // Delete payments
+      if (deleteRelatedRecords.payments > 0) {
+        const { error: paymentsError } = await supabase
+          .from('payments')
+          .delete()
+          .eq('user_id', userToDelete.id);
+        if (paymentsError) throw paymentsError;
+      }
+
+      // Delete complaints
+      if (deleteRelatedRecords.complaints > 0) {
+        const { error: complaintsError } = await supabase
+          .from('complaints')
+          .delete()
+          .or(`complainant_id.eq.${userToDelete.id},against_id.eq.${userToDelete.id}`);
+        if (complaintsError) throw complaintsError;
+      }
+
+      // Delete rides (NO ACTION constraint)
+      if (deleteRelatedRecords.rides > 0) {
+        const { error: ridesError } = await supabase
+          .from('rides')
+          .delete()
+          .eq('user_id', userToDelete.id);
+        if (ridesError) throw ridesError;
+      }
+
+      // Delete profile-specific tables (these have CASCADE or NO ACTION)
+      // Individual profile
+      await supabase.from('individual_profiles').delete().eq('user_id', userToDelete.id);
+      
+      // Corporate profile
+      await supabase.from('corporate_profiles').delete().eq('user_id', userToDelete.id);
+      
+      // Driver profile (CASCADE)
+      await supabase.from('driver_profiles').delete().eq('user_id', userToDelete.id);
+      
+      // Operator profile
+      await supabase.from('operator_profiles').delete().eq('user_id', userToDelete.id);
+
+      // Delete from profiles table
+      // This will CASCADE delete: memberships, operators, subscriptions, support_tickets, 
+      // scheduled_trips, recurring_trip_series, trip_reminders, ride_offers, 
+      // driver_operator_assignments, corporate_passengers
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', userToDelete.id);
+
+      if (profileError) throw profileError;
+
+      // Delete from auth.users using Admin API
+      const { error: authError } = await supabase.auth.admin.deleteUser(userToDelete.id);
+      if (authError) {
+        console.error('Error deleting auth user:', authError);
+        // Continue anyway as profile is already deleted
+      }
+
+      alert('User deleted successfully!');
+      setShowDeleteModal(false);
+      setUserToDelete(null);
+      setDeleteRelatedRecords({});
+      loadUsers(); // Reload users
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      alert(`Failed to delete user: ${error.message}`);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   // Calculate stats
@@ -233,11 +748,16 @@ const UsersPage = () => {
   return (
     <>
       <div className="p-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-slate-700">Users Management</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Manage all users across TaxiCab and BMTOA platforms
-          </p>
+        <div className="mb-6 flex justify-between items-start">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-700">Users Management</h1>
+            <p className="text-sm text-slate-500 mt-1">
+              Manage all users across TaxiCab and BMTOA platforms
+            </p>
+          </div>
+          <Button variant="primary" onClick={openCreateModal}>
+            ➕ Create User
+          </Button>
         </div>
 
         {/* Stats Cards */}
@@ -405,6 +925,12 @@ const UsersPage = () => {
                         <Button variant="outline" size="sm" onClick={() => viewUserDetails(user)}>
                           View
                         </Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditModal(user)}>
+                          Edit
+                        </Button>
+                        <Button variant="danger" size="sm" onClick={() => openDeleteModal(user)}>
+                          Delete
+                        </Button>
                         {user.status === 'pending' && (
                           <Button variant="primary" size="sm" onClick={() => handleApprove(user.id)}>
                             Approve
@@ -493,6 +1019,171 @@ const UsersPage = () => {
               </div>
             </div>
 
+            {/* Profile-Specific Information */}
+            {selectedUser.profileData && (
+              <div>
+                <h3 className="font-semibold text-slate-700 mb-3">
+                  {selectedUser.profileData.type === 'corporate' && 'Corporate Profile'}
+                  {selectedUser.profileData.type === 'driver' && 'Driver Profile'}
+                  {selectedUser.profileData.type === 'operator' && 'Operator Profile'}
+                  {selectedUser.profileData.type === 'individual' && 'Individual Profile'}
+                </h3>
+                <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+                  {/* Corporate Profile Details */}
+                  {selectedUser.profileData.type === 'corporate' && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Company Name:</span>
+                        <span className="font-medium">{selectedUser.profileData.companyName || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Business Registration:</span>
+                        <span className="font-medium">{selectedUser.profileData.businessRegistration || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Industry:</span>
+                        <span className="font-medium">{selectedUser.profileData.industry || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Company Size:</span>
+                        <span className="font-medium">{selectedUser.profileData.companySize || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Total Employees:</span>
+                        <span className="font-medium">{selectedUser.profileData.totalEmployees || 0}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Account Tier:</span>
+                        <span className="font-medium capitalize">{selectedUser.profileData.accountTier || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Credit Balance:</span>
+                        <span className="font-medium text-green-600">${parseFloat(selectedUser.profileData.creditBalance || 0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Monthly Spend:</span>
+                        <span className="font-medium">${parseFloat(selectedUser.profileData.monthlySpend || 0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Credit Booking:</span>
+                        <span className={`font-medium ${selectedUser.profileData.creditBookingApproved ? 'text-green-600' : 'text-red-600'}`}>
+                          {selectedUser.profileData.creditBookingApproved ? 'Approved' : 'Not Approved'}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Driver Profile Details */}
+                  {selectedUser.profileData.type === 'driver' && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Full Name:</span>
+                        <span className="font-medium">{selectedUser.profileData.fullName || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">License Number:</span>
+                        <span className="font-medium">{selectedUser.profileData.licenseNumber || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">License Expiry:</span>
+                        <span className="font-medium">{selectedUser.profileData.licenseExpiry || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Verification Status:</span>
+                        <span className="font-medium capitalize">{selectedUser.profileData.verificationStatus || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Approval Status:</span>
+                        <span className="font-medium capitalize">{selectedUser.profileData.approvalStatus || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Submission Status:</span>
+                        <span className="font-medium capitalize">{selectedUser.profileData.submissionStatus || 'N/A'}</span>
+                      </div>
+                      {selectedUser.profileData.totalEarnings && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Total Earnings:</span>
+                          <span className="font-medium text-green-600">${parseFloat(selectedUser.profileData.totalEarnings).toFixed(2)}</span>
+                        </div>
+                      )}
+                      {selectedUser.profileData.rating && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Rating:</span>
+                          <span className="font-medium">⭐ {selectedUser.profileData.rating.toFixed(1)}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Operator Profile Details */}
+                  {selectedUser.profileData.type === 'operator' && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Company Name:</span>
+                        <span className="font-medium">{selectedUser.profileData.companyName || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Business Registration:</span>
+                        <span className="font-medium">{selectedUser.profileData.businessRegistration || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Fleet Size:</span>
+                        <span className="font-medium">{selectedUser.profileData.fleetSize || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Total Drivers:</span>
+                        <span className="font-medium">{selectedUser.profileData.totalDrivers || 0}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Membership Tier:</span>
+                        <span className="font-medium capitalize">{selectedUser.profileData.membershipTier || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">BMTOA Verified:</span>
+                        <span className={`font-medium ${selectedUser.profileData.bmtoaVerified ? 'text-green-600' : 'text-red-600'}`}>
+                          {selectedUser.profileData.bmtoaVerified ? 'Yes' : 'No'}
+                        </span>
+                      </div>
+                      {selectedUser.profileData.bmtoaMemberNumber && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">BMTOA Member #:</span>
+                          <span className="font-medium">{selectedUser.profileData.bmtoaMemberNumber}</span>
+                        </div>
+                      )}
+                      {selectedUser.profileData.monthlyRevenue && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Monthly Revenue:</span>
+                          <span className="font-medium text-green-600">${parseFloat(selectedUser.profileData.monthlyRevenue).toFixed(2)}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Individual Profile Details */}
+                  {selectedUser.profileData.type === 'individual' && (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Total Rides:</span>
+                        <span className="font-medium">{selectedUser.profileData.totalRides || 0}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Total Spent:</span>
+                        <span className="font-medium">${parseFloat(selectedUser.profileData.totalSpent || 0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Profile Status:</span>
+                        <span className="font-medium capitalize">{selectedUser.profileData.profileStatus?.replace('_', ' ') || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">Completion:</span>
+                        <span className="font-medium">{selectedUser.profileData.completionPercentage || 0}%</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-3 justify-end">
               <Button
                 variant="outline"
@@ -502,6 +1193,463 @@ const UsersPage = () => {
                 }}
               >
                 Close
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit User Modal */}
+      {selectedUser && (
+        <Modal
+          isOpen={showEditModal}
+          onClose={() => {
+            setShowEditModal(false);
+            setSelectedUser(null);
+            setEditFormData({});
+            setEditFormErrors({});
+          }}
+          title={`Edit User - ${selectedUser.name}`}
+          size="lg"
+        >
+          <div className="space-y-4">
+            {/* Name Field */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={editFormData.name || ''}
+                onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                  editFormErrors.name
+                    ? 'border-red-500 focus:ring-red-400'
+                    : 'border-slate-300 focus:ring-yellow-400'
+                }`}
+                placeholder="Enter user name"
+              />
+              {editFormErrors.name && (
+                <p className="text-red-500 text-sm mt-1">{editFormErrors.name}</p>
+              )}
+            </div>
+
+            {/* Email Field */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Email <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="email"
+                value={editFormData.email || ''}
+                onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                  editFormErrors.email
+                    ? 'border-red-500 focus:ring-red-400'
+                    : 'border-slate-300 focus:ring-yellow-400'
+                }`}
+                placeholder="Enter email address"
+              />
+              {editFormErrors.email && (
+                <p className="text-red-500 text-sm mt-1">{editFormErrors.email}</p>
+              )}
+            </div>
+
+            {/* Phone Field */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Phone
+              </label>
+              <input
+                type="tel"
+                value={editFormData.phone || ''}
+                onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                  editFormErrors.phone
+                    ? 'border-red-500 focus:ring-red-400'
+                    : 'border-slate-300 focus:ring-yellow-400'
+                }`}
+                placeholder="Enter phone number"
+              />
+              {editFormErrors.phone && (
+                <p className="text-red-500 text-sm mt-1">{editFormErrors.phone}</p>
+              )}
+            </div>
+
+            {/* Platform Field */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Platform <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={editFormData.platform || ''}
+                onChange={(e) => setEditFormData({ ...editFormData, platform: e.target.value })}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                  editFormErrors.platform
+                    ? 'border-red-500 focus:ring-red-400'
+                    : 'border-slate-300 focus:ring-yellow-400'
+                }`}
+              >
+                <option value="">Select platform</option>
+                <option value="taxicab">TaxiCab</option>
+                <option value="bmtoa">BMTOA</option>
+                <option value="both">Both</option>
+              </select>
+              {editFormErrors.platform && (
+                <p className="text-red-500 text-sm mt-1">{editFormErrors.platform}</p>
+              )}
+            </div>
+
+            {/* Account Status Field */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Account Status <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={editFormData.account_status || ''}
+                onChange={(e) => setEditFormData({ ...editFormData, account_status: e.target.value })}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                  editFormErrors.account_status
+                    ? 'border-red-500 focus:ring-red-400'
+                    : 'border-slate-300 focus:ring-yellow-400'
+                }`}
+              >
+                <option value="">Select status</option>
+                <option value="active">Active</option>
+                <option value="disabled">Disabled</option>
+                <option value="suspended">Suspended</option>
+              </select>
+              {editFormErrors.account_status && (
+                <p className="text-red-500 text-sm mt-1">{editFormErrors.account_status}</p>
+              )}
+            </div>
+
+            {/* User Type Display (Read-only) */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                User Type (Read-only)
+              </label>
+              <div className="px-4 py-2 bg-slate-100 rounded-lg">
+                {getUserTypeBadge(selectedUser.userType)}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">User type cannot be changed after creation</p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowEditModal(false);
+                  setSelectedUser(null);
+                  setEditFormData({});
+                  setEditFormErrors({});
+                }}
+                disabled={updating}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleUpdateUser}
+                disabled={updating}
+              >
+                {updating ? 'Updating...' : 'Update User'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Create User Modal */}
+      <Modal
+        isOpen={showCreateModal}
+        onClose={() => {
+          setShowCreateModal(false);
+          setCreateFormData({});
+          setCreateFormErrors({});
+        }}
+        title="Create New User"
+        size="lg"
+      >
+        <div className="space-y-4">
+          {/* Name Field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={createFormData.name || ''}
+              onChange={(e) => setCreateFormData({ ...createFormData, name: e.target.value })}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                createFormErrors.name
+                  ? 'border-red-500 focus:ring-red-400'
+                  : 'border-slate-300 focus:ring-yellow-400'
+              }`}
+              placeholder="Enter user name"
+            />
+            {createFormErrors.name && (
+              <p className="text-red-500 text-sm mt-1">{createFormErrors.name}</p>
+            )}
+          </div>
+
+          {/* Email Field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Email <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="email"
+              value={createFormData.email || ''}
+              onChange={(e) => setCreateFormData({ ...createFormData, email: e.target.value })}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                createFormErrors.email
+                  ? 'border-red-500 focus:ring-red-400'
+                  : 'border-slate-300 focus:ring-yellow-400'
+              }`}
+              placeholder="Enter email address"
+            />
+            {createFormErrors.email && (
+              <p className="text-red-500 text-sm mt-1">{createFormErrors.email}</p>
+            )}
+          </div>
+
+          {/* Password Field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Password <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="password"
+              value={createFormData.password || ''}
+              onChange={(e) => setCreateFormData({ ...createFormData, password: e.target.value })}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                createFormErrors.password
+                  ? 'border-red-500 focus:ring-red-400'
+                  : 'border-slate-300 focus:ring-yellow-400'
+              }`}
+              placeholder="Enter password (min 6 characters)"
+            />
+            {createFormErrors.password && (
+              <p className="text-red-500 text-sm mt-1">{createFormErrors.password}</p>
+            )}
+            <p className="text-xs text-slate-500 mt-1">Password must be at least 6 characters</p>
+          </div>
+
+          {/* Phone Field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Phone
+            </label>
+            <input
+              type="tel"
+              value={createFormData.phone || ''}
+              onChange={(e) => setCreateFormData({ ...createFormData, phone: e.target.value })}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                createFormErrors.phone
+                  ? 'border-red-500 focus:ring-red-400'
+                  : 'border-slate-300 focus:ring-yellow-400'
+              }`}
+              placeholder="Enter phone number (optional)"
+            />
+            {createFormErrors.phone && (
+              <p className="text-red-500 text-sm mt-1">{createFormErrors.phone}</p>
+            )}
+          </div>
+
+          {/* User Type Field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              User Type <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={createFormData.user_type || ''}
+              onChange={(e) => setCreateFormData({ ...createFormData, user_type: e.target.value })}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                createFormErrors.user_type
+                  ? 'border-red-500 focus:ring-red-400'
+                  : 'border-slate-300 focus:ring-yellow-400'
+              }`}
+            >
+              <option value="">Select user type</option>
+              <option value="individual">Individual</option>
+              <option value="corporate">Corporate</option>
+              <option value="driver">Driver</option>
+              <option value="operator">Operator</option>
+              <option value="admin">Admin</option>
+            </select>
+            {createFormErrors.user_type && (
+              <p className="text-red-500 text-sm mt-1">{createFormErrors.user_type}</p>
+            )}
+          </div>
+
+          {/* Platform Field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Platform <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={createFormData.platform || ''}
+              onChange={(e) => setCreateFormData({ ...createFormData, platform: e.target.value })}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 ${
+                createFormErrors.platform
+                  ? 'border-red-500 focus:ring-red-400'
+                  : 'border-slate-300 focus:ring-yellow-400'
+              }`}
+            >
+              <option value="">Select platform</option>
+              <option value="taxicab">TaxiCab</option>
+              <option value="bmtoa">BMTOA</option>
+              <option value="both">Both</option>
+            </select>
+            {createFormErrors.platform && (
+              <p className="text-red-500 text-sm mt-1">{createFormErrors.platform}</p>
+            )}
+          </div>
+
+          {/* Account Status Field */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Account Status <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={createFormData.account_status || 'active'}
+              onChange={(e) => setCreateFormData({ ...createFormData, account_status: e.target.value })}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            >
+              <option value="active">Active</option>
+              <option value="disabled">Disabled</option>
+              <option value="suspended">Suspended</option>
+            </select>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3 justify-end pt-4 border-t">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCreateModal(false);
+                setCreateFormData({});
+                setCreateFormErrors({});
+              }}
+              disabled={creating}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleCreateUser}
+              disabled={creating}
+            >
+              {creating ? 'Creating...' : 'Create User'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete User Confirmation Modal */}
+      {userToDelete && (
+        <Modal
+          isOpen={showDeleteModal}
+          onClose={() => {
+            setShowDeleteModal(false);
+            setUserToDelete(null);
+            setDeleteRelatedRecords({});
+          }}
+          title="⚠️ Delete User"
+          size="lg"
+        >
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <p className="text-red-800 font-semibold mb-2">
+                Are you sure you want to delete this user?
+              </p>
+              <p className="text-red-700 text-sm">
+                This action cannot be undone. The user and all related data will be permanently deleted.
+              </p>
+            </div>
+
+            {/* User Info */}
+            <div className="bg-slate-50 rounded-lg p-4">
+              <h4 className="font-semibold text-slate-700 mb-2">User Information</h4>
+              <div className="space-y-1 text-sm">
+                <p><span className="font-medium">Name:</span> {userToDelete.name}</p>
+                <p><span className="font-medium">Email:</span> {userToDelete.email}</p>
+                <p><span className="font-medium">User Type:</span> {userToDelete.userType}</p>
+                <p><span className="font-medium">Platform:</span> {userToDelete.platform}</p>
+              </div>
+            </div>
+
+            {/* Related Records Warning */}
+            {Object.keys(deleteRelatedRecords).length > 0 && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-semibold text-yellow-800 mb-2">⚠️ Related Records</h4>
+                <p className="text-yellow-700 text-sm mb-2">
+                  The following related records will also be deleted:
+                </p>
+                <ul className="text-sm text-yellow-700 space-y-1">
+                  {deleteRelatedRecords.rides > 0 && (
+                    <li>• {deleteRelatedRecords.rides} ride(s)</li>
+                  )}
+                  {deleteRelatedRecords.documents > 0 && (
+                    <li>• {deleteRelatedRecords.documents} document(s)</li>
+                  )}
+                  {deleteRelatedRecords.payments > 0 && (
+                    <li>• {deleteRelatedRecords.payments} payment(s)</li>
+                  )}
+                  {deleteRelatedRecords.notifications > 0 && (
+                    <li>• {deleteRelatedRecords.notifications} notification(s)</li>
+                  )}
+                  {deleteRelatedRecords.complaints > 0 && (
+                    <li>• {deleteRelatedRecords.complaints} complaint(s)</li>
+                  )}
+                </ul>
+                <p className="text-yellow-700 text-sm mt-2">
+                  Plus any memberships, subscriptions, support tickets, and profile-specific data.
+                </p>
+              </div>
+            )}
+
+            {/* Confirmation Input */}
+            <div className="bg-slate-50 rounded-lg p-4">
+              <p className="text-sm text-slate-700 mb-2">
+                Type <span className="font-mono font-bold">DELETE</span> to confirm:
+              </p>
+              <input
+                type="text"
+                id="deleteConfirmation"
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400"
+                placeholder="Type DELETE to confirm"
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setUserToDelete(null);
+                  setDeleteRelatedRecords({});
+                }}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  const confirmation = document.getElementById('deleteConfirmation').value;
+                  if (confirmation === 'DELETE') {
+                    handleDeleteUser();
+                  } else {
+                    alert('Please type DELETE to confirm');
+                  }
+                }}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting...' : 'Delete User'}
               </Button>
             </div>
           </div>

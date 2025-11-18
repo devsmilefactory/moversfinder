@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Button from '../../shared/Button';
 import Modal from '../../shared/Modal';
+import Pagination from '../../shared/Pagination';
 import { FormTextarea, FormSelect } from '../../shared/FormInput';
 import { supabase } from '../../../lib/supabase';
 
@@ -36,184 +37,120 @@ import { supabase } from '../../../lib/supabase';
 const SupportTicketsPage = () => {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [platformFilter, setPlatformFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [adminUsers, setAdminUsers] = useState([]);
+
+  // Load admin users for assignment
+  useEffect(() => {
+    loadAdminUsers();
+  }, []);
 
   // Load tickets from Supabase
   useEffect(() => {
     loadTickets();
-  }, []);
+  }, [statusFilter, priorityFilter, platformFilter, categoryFilter, currentPage, pageSize]);
+
+  const loadAdminUsers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, name, full_name, email')
+        .eq('user_type', 'admin')
+        .eq('account_status', 'active')
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+      setAdminUsers(data || []);
+    } catch (error) {
+      console.error('Error loading admin users:', error);
+      setAdminUsers([]);
+    }
+  };
 
   const loadTickets = async () => {
     try {
       setLoading(true);
 
-      const { data, error } = await supabase
+      let query = supabase
         .from('support_tickets')
         .select(`
           *,
-          profiles!support_tickets_user_id_fkey (
+          user:profiles!support_tickets_user_id_fkey (
             name,
             full_name,
             email,
             user_type,
             platform
+          ),
+          assigned_admin:profiles!support_tickets_assigned_to_fkey (
+            name,
+            full_name
           )
-        `)
+        `, { count: 'exact' });
+
+      // Apply filters
+      if (statusFilter && statusFilter !== 'all') {
+        query = query.eq('status', statusFilter);
+      }
+      if (priorityFilter && priorityFilter !== 'all') {
+        query = query.eq('priority', priorityFilter);
+      }
+      if (categoryFilter && categoryFilter !== 'all') {
+        query = query.eq('category', categoryFilter);
+      }
+
+      // Apply pagination
+      const from = (currentPage - 1) * pageSize;
+      const to = from + pageSize - 1;
+      query = query.range(from, to);
+
+      // Order by priority (urgent first) then by creation date
+      query = query
+        .order('priority', { ascending: true })
         .order('created_at', { ascending: false });
+
+      const { data, error, count } = await query;
 
       if (error) throw error;
 
       const transformedTickets = (data || []).map(ticket => ({
         id: ticket.id,
         ticketNumber: `TKT-${ticket.id.substring(0, 8)}`,
-        platform: ticket.profiles?.platform || 'N/A',
-        userType: ticket.profiles?.user_type || 'N/A',
-        userName: ticket.profiles?.full_name || ticket.profiles?.name || 'Unknown',
-        userEmail: ticket.profiles?.email || 'N/A',
+        platform: ticket.user?.platform || 'N/A',
+        userType: ticket.user?.user_type || 'N/A',
+        userName: ticket.user?.full_name || ticket.user?.name || 'Unknown',
+        userEmail: ticket.user?.email || 'N/A',
         subject: ticket.subject || 'No Subject',
         message: ticket.message || '',
+        category: ticket.category || 'general',
         status: ticket.status || 'open',
         priority: ticket.priority || 'medium',
-        assignedTo: ticket.assigned_to || null,
+        assignedTo: ticket.assigned_admin?.full_name || ticket.assigned_admin?.name || null,
+        assignedToId: ticket.assigned_to || null,
         createdAt: ticket.created_at ? new Date(ticket.created_at).toLocaleString() : 'N/A',
         updatedAt: ticket.updated_at ? new Date(ticket.updated_at).toLocaleString() : 'N/A',
+        resolvedAt: ticket.resolved_at ? new Date(ticket.resolved_at).toLocaleString() : null,
         replies: [] // TODO: Add replies from a separate table if needed
       }));
 
       setTickets(transformedTickets);
+      setTotalCount(count || 0);
     } catch (error) {
       console.error('Error loading support tickets:', error);
       setTickets([]);
+      setTotalCount(0);
     } finally {
       setLoading(false);
     }
   };
 
-  // Mock tickets data - will be removed
-  const mockTickets = [
-    {
-      id: 1,
-      ticketNumber: 'TKT-2025-001',
-      platform: 'TaxiCab',
-      userType: 'Individual',
-      userName: 'John Doe',
-      userEmail: 'john@example.com',
-      subject: 'Payment not processed',
-      message: 'I made a payment via EcoCash but it shows as pending for 2 days now.',
-      status: 'open',
-      priority: 'high',
-      assignedTo: null,
-      createdAt: '2025-01-02 10:30',
-      updatedAt: '2025-01-02 10:30',
-      replies: []
-    },
-    {
-      id: 2,
-      ticketNumber: 'TKT-2025-002',
-      platform: 'BMTOA',
-      userType: 'Driver',
-      userName: 'Michael Ncube',
-      userEmail: 'michael@example.com',
-      subject: 'Cannot upload documents',
-      message: 'Getting an error when trying to upload my PSV license. File size is under 5MB.',
-      status: 'in_progress',
-      priority: 'medium',
-      assignedTo: 'Support Team A',
-      createdAt: '2025-01-01 14:20',
-      updatedAt: '2025-01-02 09:15',
-      replies: [
-        {
-          id: 1,
-          message: 'We are investigating this issue. Can you try a different browser?',
-          isInternal: false,
-          createdAt: '2025-01-02 09:15',
-          author: 'Support Team A'
-        }
-      ]
-    },
-    {
-      id: 3,
-      ticketNumber: 'TKT-2025-003',
-      platform: 'TaxiCab',
-      userType: 'Corporate',
-      userName: 'ABC Company',
-      userEmail: 'admin@abc.com',
-      subject: 'Invoice discrepancy',
-      message: 'Invoice INV-2025-002 shows 32 rides but our records show 30 rides.',
-      status: 'resolved',
-      priority: 'high',
-      assignedTo: 'Support Team B',
-      createdAt: '2024-12-30 11:45',
-      updatedAt: '2025-01-01 16:30',
-      replies: [
-        {
-          id: 1,
-          message: 'Checking ride logs...',
-          isInternal: true,
-          createdAt: '2024-12-30 12:00',
-          author: 'Support Team B'
-        },
-        {
-          id: 2,
-          message: 'We found the discrepancy. 2 rides were cancelled but still counted. We have issued a corrected invoice.',
-          isInternal: false,
-          createdAt: '2025-01-01 16:30',
-          author: 'Support Team B'
-        }
-      ]
-    },
-    {
-      id: 4,
-      ticketNumber: 'TKT-2024-052',
-      platform: 'BMTOA',
-      userType: 'Operator',
-      userName: 'Fleet Services Ltd',
-      userEmail: 'fleet@example.com',
-      subject: 'Driver not showing in fleet',
-      message: 'Added a new driver yesterday but they are not appearing in my fleet management.',
-      status: 'closed',
-      priority: 'low',
-      assignedTo: 'Support Team A',
-      createdAt: '2024-12-28 09:00',
-      updatedAt: '2024-12-29 10:15',
-      replies: [
-        {
-          id: 1,
-          message: 'Driver needs to complete their profile and upload documents first.',
-          isInternal: false,
-          createdAt: '2024-12-28 10:00',
-          author: 'Support Team A'
-        },
-        {
-          id: 2,
-          message: 'Thank you, that resolved it!',
-          isInternal: false,
-          createdAt: '2024-12-29 10:15',
-          author: 'Fleet Services Ltd'
-        }
-      ]
-    },
-    {
-      id: 5,
-      ticketNumber: 'TKT-2025-004',
-      platform: 'TaxiCab',
-      userType: 'Individual',
-      userName: 'Sarah Moyo',
-      userEmail: 'sarah@example.com',
-      subject: 'Driver was rude',
-      message: 'My driver on ride #1234 was very rude and unprofessional. I would like to file a complaint.',
-      status: 'open',
-      priority: 'urgent',
-      assignedTo: null,
-      createdAt: '2025-01-02 15:45',
-      updatedAt: '2025-01-02 15:45',
-      replies: []
-    }
-  ];
-
   // State management
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [priorityFilter, setPriorityFilter] = useState('all');
-  const [platformFilter, setPlatformFilter] = useState('all');
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showReplyModal, setShowReplyModal] = useState(false);
@@ -252,10 +189,8 @@ const SupportTicketsPage = () => {
     );
   };
 
-  // Filter tickets
+  // Apply platform filter client-side since it's on the user profile
   const filteredTickets = tickets.filter(ticket => {
-    if (statusFilter !== 'all' && ticket.status !== statusFilter) return false;
-    if (priorityFilter !== 'all' && ticket.priority !== priorityFilter) return false;
     if (platformFilter !== 'all' && ticket.platform !== platformFilter) return false;
     return true;
   });
@@ -275,25 +210,60 @@ const SupportTicketsPage = () => {
   };
 
   // Update ticket status
-  const updateTicketStatus = (ticketId, newStatus) => {
-    // Database integration:
-    // await supabase
-    //   .from('support_tickets')
-    //   .update({ status: newStatus, updated_at: new Date() })
-    //   .eq('id', ticketId);
+  const updateTicketStatus = async (ticketId, newStatus) => {
+    try {
+      const updateData = {
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      };
 
-    alert(`Ticket status updated to: ${newStatus}`);
+      // If status is resolved, record the resolved_at timestamp
+      if (newStatus === 'resolved') {
+        updateData.resolved_at = new Date().toISOString();
+      }
+
+      const { error } = await supabase
+        .from('support_tickets')
+        .update(updateData)
+        .eq('id', ticketId);
+
+      if (error) throw error;
+
+      // Reload tickets to reflect changes
+      await loadTickets();
+      
+      alert(`Ticket status updated to: ${newStatus}`);
+    } catch (error) {
+      console.error('Error updating ticket status:', error);
+      alert('Failed to update ticket status: ' + error.message);
+    }
   };
 
   // Assign ticket
-  const assignTicket = (ticketId, assignee) => {
-    // Database integration:
-    // await supabase
-    //   .from('support_tickets')
-    //   .update({ assigned_to: assignee, updated_at: new Date() })
-    //   .eq('id', ticketId);
+  const assignTicket = async (ticketId, assigneeId) => {
+    try {
+      const { error } = await supabase
+        .from('support_tickets')
+        .update({ 
+          assigned_to: assigneeId || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', ticketId);
 
-    alert(`Ticket assigned to: ${assignee}`);
+      if (error) throw error;
+
+      // Reload tickets to reflect changes
+      await loadTickets();
+      
+      if (assigneeId) {
+        alert('Ticket assigned successfully');
+      } else {
+        alert('Ticket unassigned successfully');
+      }
+    } catch (error) {
+      console.error('Error assigning ticket:', error);
+      alert('Failed to assign ticket: ' + error.message);
+    }
   };
 
   // Send reply
@@ -352,7 +322,7 @@ const SupportTicketsPage = () => {
 
         {/* Filters */}
         <div className="bg-white rounded-lg shadow-lg p-4 mb-6">
-          <div className="grid md:grid-cols-3 gap-4">
+          <div className="grid md:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Platform</label>
               <select
@@ -391,6 +361,21 @@ const SupportTicketsPage = () => {
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
                 <option value="urgent">Urgent</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">Category</label>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="all">All Categories</option>
+                <option value="general">General</option>
+                <option value="technical">Technical</option>
+                <option value="billing">Billing</option>
+                <option value="account">Account</option>
+                <option value="complaint">Complaint</option>
               </select>
             </div>
           </div>
@@ -469,6 +454,17 @@ const SupportTicketsPage = () => {
             </tbody>
           </table>
           )}
+          
+          {/* Pagination */}
+          {!loading && totalCount > 0 && (
+            <Pagination
+              currentPage={currentPage}
+              pageSize={pageSize}
+              totalCount={totalCount}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={setPageSize}
+            />
+          )}
         </div>
       </div>
 
@@ -496,8 +492,16 @@ const SupportTicketsPage = () => {
                 }`}>
                   {selectedTicket.platform}
                 </span>
+                <span className="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-700">
+                  {selectedTicket.category}
+                </span>
               </div>
-              <span className="text-sm text-slate-500">{selectedTicket.createdAt}</span>
+              <div className="text-right">
+                <p className="text-sm text-slate-500">Created: {selectedTicket.createdAt}</p>
+                {selectedTicket.resolvedAt && (
+                  <p className="text-sm text-green-600">Resolved: {selectedTicket.resolvedAt}</p>
+                )}
+              </div>
             </div>
 
             {/* User Info */}
@@ -573,16 +577,18 @@ const SupportTicketsPage = () => {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Assign To</label>
-                <FormSelect
-                  value={selectedTicket.assignedTo || ''}
+                <select
+                  value={selectedTicket.assignedToId || ''}
                   onChange={(e) => assignTicket(selectedTicket.id, e.target.value)}
-                  options={[
-                    { value: '', label: 'Unassigned' },
-                    { value: 'Support Team A', label: 'Support Team A' },
-                    { value: 'Support Team B', label: 'Support Team B' },
-                    { value: 'Technical Team', label: 'Technical Team' }
-                  ]}
-                />
+                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                >
+                  <option value="">Unassigned</option>
+                  {adminUsers.map(admin => (
+                    <option key={admin.id} value={admin.id}>
+                      {admin.full_name || admin.name || admin.email}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

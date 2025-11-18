@@ -18,6 +18,9 @@ const PaymentVerificationPage = () => {
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('pending');
+  const [filterMethod, setFilterMethod] = useState('all');
+  const [filterStartDate, setFilterStartDate] = useState('');
+  const [filterEndDate, setFilterEndDate] = useState('');
   const [selectedPayment, setSelectedPayment] = useState(null);
   const [showVerifyModal, setShowVerifyModal] = useState(false);
   const [verificationAction, setVerificationAction] = useState(null); // 'approve' or 'reject'
@@ -201,8 +204,25 @@ const PaymentVerificationPage = () => {
   };
 
   const filteredPayments = payments.filter(p => {
-    if (filterStatus === 'all') return true;
-    return p.verificationStatus === filterStatus;
+    // Status filter
+    if (filterStatus !== 'all' && p.verificationStatus !== filterStatus) {
+      return false;
+    }
+    
+    // Payment method filter
+    if (filterMethod !== 'all' && p.paymentMethod !== filterMethod) {
+      return false;
+    }
+    
+    // Date range filter
+    if (filterStartDate && p.paymentDate < filterStartDate) {
+      return false;
+    }
+    if (filterEndDate && p.paymentDate > filterEndDate) {
+      return false;
+    }
+    
+    return true;
   });
 
   const getStatusBadge = (status) => {
@@ -314,6 +334,45 @@ const PaymentVerificationPage = () => {
           >
             All ({payments.length})
           </button>
+        </div>
+
+        {/* Additional Filters */}
+        <div className="mt-4 grid md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method</label>
+            <select
+              value={filterMethod}
+              onChange={(e) => setFilterMethod(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            >
+              <option value="all">All Methods</option>
+              <option value="ecocash">EcoCash</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="cash">Cash</option>
+              <option value="onemoney">OneMoney</option>
+              <option value="usd_card">USD Card</option>
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Start Date</label>
+            <input
+              type="date"
+              value={filterStartDate}
+              onChange={(e) => setFilterStartDate(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">End Date</label>
+            <input
+              type="date"
+              value={filterEndDate}
+              onChange={(e) => setFilterEndDate(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            />
+          </div>
         </div>
       </div>
 
@@ -460,6 +519,23 @@ const PaymentVerificationPage = () => {
                 </div>
               </div>
             </div>
+
+            {/* Proof of Payment Document */}
+            {selectedPayment.proofDocumentUrl && (
+              <div className="border-2 border-slate-200 rounded-lg p-4">
+                <h3 className="font-semibold text-slate-700 mb-3">Proof of Payment</h3>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-600">Document uploaded</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(selectedPayment.proofDocumentUrl, '_blank')}
+                  >
+                    📄 View Document
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">

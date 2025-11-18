@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Button from '../../shared/Button';
 import DataTable from '../../shared/DataTable';
 import Modal from '../../shared/Modal';
+import Pagination from '../../shared/Pagination';
 import { useMembersStore } from '../../../stores';
 import AdminAddMemberForm from '../components/AdminAddMemberForm';
 
@@ -37,7 +38,15 @@ const MembersPage = () => {
   const [selectedMember, setSelectedMember] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterTier, setFilterTier] = useState('all');
+  const [filterSubscription, setFilterSubscription] = useState('all');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [relatedVehicles, setRelatedVehicles] = useState([]);
+  const [relatedDrivers, setRelatedDrivers] = useState([]);
+  const [loadingRelated, setLoadingRelated] = useState(false);
 
   // Load members on mount
   useEffect(() => {
@@ -49,9 +58,48 @@ const MembersPage = () => {
     setStoreSearchQuery(searchQuery);
   }, [searchQuery, setStoreSearchQuery]);
 
-  const handleViewDetails = (member) => {
+  const handleViewDetails = async (member) => {
     setSelectedMember(member);
     setShowDetailsModal(true);
+    setLoadingRelated(true);
+    
+    try {
+      // Only fetch related data for operators
+      if (member.memberType === 'operator') {
+        // Import supabase
+        const { supabase } = await import('../../../lib/supabase');
+        
+        // Fetch related vehicles
+        const { data: vehicles, error: vehiclesError } = await supabase
+          .from('operator_vehicles')
+          .select('*')
+          .eq('operator_id', member.id);
+        
+        if (vehiclesError) throw vehiclesError;
+        setRelatedVehicles(vehicles || []);
+        
+        // Fetch related drivers
+        const { data: drivers, error: driversError } = await supabase
+          .from('driver_profiles')
+          .select(`
+            *,
+            profiles!driver_profiles_user_id_fkey(name, email, phone)
+          `)
+          .eq('operator_id', member.id);
+        
+        if (driversError) throw driversError;
+        setRelatedDrivers(drivers || []);
+      } else {
+        setRelatedVehicles([]);
+        setRelatedDrivers([]);
+      }
+    } catch (error) {
+      console.error('Error loading related data:', error);
+      setRelatedVehicles([]);
+      setRelatedDrivers([]);
+    } finally {
+      setLoadingRelated(false);
+    }
   };
 
   const handleToggleStatus = async (member) => {
@@ -66,14 +114,31 @@ const MembersPage = () => {
   };
 
   // Filter members
-  const filteredMembers = members.filter(member => {
+  const allFilteredMembers = members.filter(member => {
     const matchesStatus = filterStatus === 'all' || member.status === filterStatus;
     const matchesTier = filterTier === 'all' || member.membershipTier.toLowerCase() === filterTier.toLowerCase();
+    const matchesSubscription = filterSubscription === 'all' || member.subscriptionStatus === filterSubscription;
+    
+    // Date range filter for bmtoa_member_since (joinedDate)
+    let matchesDateRange = true;
+    if (filterDateFrom && member.joinedDate) {
+      matchesDateRange = matchesDateRange && member.joinedDate >= filterDateFrom;
+    }
+    if (filterDateTo && member.joinedDate) {
+      matchesDateRange = matchesDateRange && member.joinedDate <= filterDateTo;
+    }
+    
     const matchesSearch = member.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (member.id && member.id.toString().toLowerCase().includes(searchQuery.toLowerCase())) ||
                          member.email.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesTier && matchesSearch;
+    return matchesStatus && matchesTier && matchesSubscription && matchesDateRange && matchesSearch;
   });
+  
+  // Apply pagination
+  const totalCount = allFilteredMembers.length;
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const filteredMembers = allFilteredMembers.slice(startIndex, endIndex);
 
   const getStatusBadge = (status) => {
     const badges = {
@@ -215,8 +280,8 @@ const MembersPage = () => {
 
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-        <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-          <div className="flex gap-4 flex-1">
+        <div className="flex flex-col gap-4">
+          <div className="flex gap-4 items-center">
             <input
               type="text"
               placeholder="🔍 Search by name, ID, or email..."
@@ -224,31 +289,92 @@ const MembersPage = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
             />
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="suspended">Suspended</option>
-              <option value="pending">Pending</option>
-            </select>
-            <select
-              value={filterTier}
-              onChange={(e) => setFilterTier(e.target.value)}
-              className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
-            >
-              <option value="all">All Tiers</option>
-              <option value="Platinum">Platinum</option>
-              <option value="Gold">Gold</option>
-              <option value="Silver">Silver</option>
-              <option value="Bronze">Bronze</option>
-            </select>
+            <Button>
+              📊 Export Data
+            </Button>
           </div>
-          <Button>
-            📊 Export Data
-          </Button>
+          
+          <div className="grid md:grid-cols-5 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+                <option value="pending">Pending</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Membership Tier</label>
+              <select
+                value={filterTier}
+                onChange={(e) => setFilterTier(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="all">All Tiers</option>
+                <option value="platinum">Platinum</option>
+                <option value="gold">Gold</option>
+                <option value="silver">Silver</option>
+                <option value="bronze">Bronze</option>
+                <option value="basic">Basic</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Subscription Status</label>
+              <select
+                value={filterSubscription}
+                onChange={(e) => setFilterSubscription(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="expired">Expired</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Member Since (From)</label>
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Member Since (To)</label>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              />
+            </div>
+          </div>
+          
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFilterStatus('all');
+                setFilterTier('all');
+                setFilterSubscription('all');
+                setFilterDateFrom('');
+                setFilterDateTo('');
+                setSearchQuery('');
+              }}
+            >
+              Clear Filters
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -266,6 +392,20 @@ const MembersPage = () => {
             columns={columns}
             data={filteredMembers}
             emptyMessage="No members found"
+          />
+        )}
+        
+        {/* Pagination */}
+        {!membersLoading && totalCount > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            onPageChange={(page) => setCurrentPage(page)}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setCurrentPage(1);
+            }}
           />
         )}
       </div>
@@ -337,6 +477,84 @@ const MembersPage = () => {
                 <p className="text-lg font-bold text-yellow-600">${selectedMember.monthlyRevenue.toFixed(2)}</p>
               </div>
             </div>
+            
+            {/* Related Vehicles (for operators only) */}
+            {selectedMember.memberType === 'operator' && (
+              <div className="border-t pt-4">
+                <h4 className="font-semibold text-slate-700 mb-3">🚗 Vehicles ({relatedVehicles.length})</h4>
+                {loadingRelated ? (
+                  <p className="text-sm text-slate-500">Loading vehicles...</p>
+                ) : relatedVehicles.length > 0 ? (
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Vehicle Number</th>
+                          <th className="px-3 py-2 text-left">Type</th>
+                          <th className="px-3 py-2 text-left">Model</th>
+                          <th className="px-3 py-2 text-left">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {relatedVehicles.map((vehicle) => (
+                          <tr key={vehicle.id}>
+                            <td className="px-3 py-2">{vehicle.vehicle_number}</td>
+                            <td className="px-3 py-2">{vehicle.vehicle_type || 'N/A'}</td>
+                            <td className="px-3 py-2">{vehicle.vehicle_model || 'N/A'}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-1 rounded text-xs ${vehicle.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
+                                {vehicle.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">No vehicles registered yet</p>
+                )}
+              </div>
+            )}
+            
+            {/* Related Drivers (for operators only) */}
+            {selectedMember.memberType === 'operator' && (
+              <div className="border-t pt-4">
+                <h4 className="font-semibold text-slate-700 mb-3">👤 Drivers ({relatedDrivers.length})</h4>
+                {loadingRelated ? (
+                  <p className="text-sm text-slate-500">Loading drivers...</p>
+                ) : relatedDrivers.length > 0 ? (
+                  <div className="max-h-48 overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Name</th>
+                          <th className="px-3 py-2 text-left">Email</th>
+                          <th className="px-3 py-2 text-left">Phone</th>
+                          <th className="px-3 py-2 text-left">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {relatedDrivers.map((driver) => (
+                          <tr key={driver.id}>
+                            <td className="px-3 py-2">{driver.profiles?.name || 'N/A'}</td>
+                            <td className="px-3 py-2">{driver.profiles?.email || 'N/A'}</td>
+                            <td className="px-3 py-2">{driver.profiles?.phone || 'N/A'}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-2 py-1 rounded text-xs ${driver.approval_status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                {driver.approval_status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">No drivers assigned yet</p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </Modal>

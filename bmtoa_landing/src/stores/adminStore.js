@@ -33,6 +33,12 @@ const useAdminStore = create(
         totalRides: 0,
         totalRevenue: 0,
       },
+      pendingActions: {
+        driverVerifications: 0,
+        supportTickets: 0,
+        paymentVerifications: 0,
+        memberRequests: 0,
+      },
       statsLoading: false,
       statsError: null,
 
@@ -66,7 +72,7 @@ const useAdminStore = create(
           const { count: ridesCount, error: ridesError } = await supabase
             .from('rides')
             .select('*', { count: 'exact', head: true })
-            .eq('platform', 'taxicab')
+            .in('platform', ['taxicab', 'both'])
             .gte('created_at', startOfMonth);
 
           if (ridesError) throw ridesError;
@@ -75,8 +81,8 @@ const useAdminStore = create(
           const { data: revenueData, error: revenueError } = await supabase
             .from('rides')
             .select('fare')
-            .eq('platform', 'taxicab')
-            .eq('status', 'completed')
+            .in('platform', ['taxicab', 'both'])
+            .eq('ride_status', 'trip_completed')
             .eq('payment_status', 'paid')
             .gte('created_at', startOfMonth);
 
@@ -89,8 +95,8 @@ const useAdminStore = create(
           const { count: pendingCount, error: pendingError } = await supabase
             .from('rides')
             .select('*', { count: 'exact', head: true })
-            .eq('platform', 'taxicab')
-            .eq('status', 'pending');
+            .in('platform', ['taxicab', 'both'])
+            .eq('ride_status', 'pending');
 
           if (pendingError) throw pendingError;
 
@@ -118,13 +124,13 @@ const useAdminStore = create(
           const now = new Date();
           const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-          // Count operators
+          // Count operators (use operator or taxi_operator)
           const { count: operatorsCount, error: operatorsError } = await supabase
             .from('profiles')
             .select('*', { count: 'exact', head: true })
-            .eq('user_type', 'taxi_operator')
-            .eq('platform', 'bmtoa')
-            .eq('verification_status', 'verified');
+            .in('user_type', ['taxi_operator', 'operator'])
+            .in('platform', ['bmtoa', 'both'])
+            .eq('account_status', 'active');
 
           if (operatorsError) throw operatorsError;
 
@@ -133,8 +139,8 @@ const useAdminStore = create(
             .from('profiles')
             .select('*', { count: 'exact', head: true })
             .eq('user_type', 'driver')
-            .eq('platform', 'bmtoa')
-            .eq('verification_status', 'verified');
+            .in('platform', ['bmtoa', 'both'])
+            .eq('account_status', 'active');
 
           if (driversError) throw driversError;
 
@@ -157,15 +163,22 @@ const useAdminStore = create(
 
           const subscriptionRevenue = (subscriptionsData || []).reduce((sum, sub) => sum + parseFloat(sub.monthly_fee || 0), 0);
 
-          // Count pending onboarding requests
-          const { count: pendingCount, error: pendingError } = await supabase
-            .from('profiles')
+          // Count pending onboarding requests (check operator_profiles and driver_profiles)
+          const { count: operatorPendingCount, error: operatorPendingError } = await supabase
+            .from('operator_profiles')
             .select('*', { count: 'exact', head: true })
-            .eq('platform', 'bmtoa')
-            .eq('verification_status', 'pending')
-            .in('user_type', ['taxi_operator', 'driver']);
+            .eq('approval_status', 'pending');
 
-          if (pendingError) throw pendingError;
+          if (operatorPendingError) throw operatorPendingError;
+
+          const { count: driverPendingCount, error: driverPendingError } = await supabase
+            .from('driver_profiles')
+            .select('*', { count: 'exact', head: true })
+            .eq('approval_status', 'pending');
+
+          if (driverPendingError) throw driverPendingError;
+
+          const pendingCount = (operatorPendingCount || 0) + (driverPendingCount || 0);
 
           const bmtoaStats = {
             operators: operatorsCount || 0,
@@ -184,10 +197,58 @@ const useAdminStore = create(
         }
       },
 
+      loadPendingActions: async () => {
+        try {
+          // Count pending driver verifications
+          const { count: driverVerifications, error: driverError } = await supabase
+            .from('driver_profiles')
+            .select('*', { count: 'exact', head: true })
+            .eq('approval_status', 'pending');
+
+          if (driverError) throw driverError;
+
+          // Count open support tickets
+          const { count: supportTickets, error: ticketsError } = await supabase
+            .from('support_tickets')
+            .select('*', { count: 'exact', head: true })
+            .in('status', ['open', 'in_progress']);
+
+          if (ticketsError) throw ticketsError;
+
+          // Count pending payment verifications
+          const { count: paymentVerifications, error: paymentsError } = await supabase
+            .from('payment_proofs')
+            .select('*', { count: 'exact', head: true })
+            .eq('verification_status', 'pending');
+
+          if (paymentsError) throw paymentsError;
+
+          // Count pending member requests
+          const { count: memberRequests, error: memberError } = await supabase
+            .from('operator_profiles')
+            .select('*', { count: 'exact', head: true })
+            .eq('approval_status', 'pending');
+
+          if (memberError) throw memberError;
+
+          set({
+            pendingActions: {
+              driverVerifications: driverVerifications || 0,
+              supportTickets: supportTickets || 0,
+              paymentVerifications: paymentVerifications || 0,
+              memberRequests: memberRequests || 0,
+            }
+          });
+        } catch (error) {
+          console.error('Error loading pending actions:', error);
+        }
+      },
+
       loadAllStats: async () => {
         await Promise.all([
           get().loadTaxiCabStats(),
           get().loadBMTOAStats(),
+          get().loadPendingActions(),
         ]);
       },
 

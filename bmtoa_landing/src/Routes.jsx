@@ -64,6 +64,12 @@ import PaymentVerificationPage from './dashboards/admin/pages/PaymentVerificatio
 import InvoicesPage from './dashboards/admin/pages/InvoicesPage';
 import CorporateReportsPage from './dashboards/admin/pages/CorporateReportsPage';
 
+// User Guide Pages
+import UserGuideLayout from './pages/UserGuide/UserGuideLayout';
+import GuideCategoryList from './pages/UserGuide/GuideCategoryList';
+import GuideArticle from './pages/UserGuide/GuideArticle';
+import GuideSearch from './pages/UserGuide/GuideSearch';
+
 const Routes = () => {
   return (
     <BrowserRouter
@@ -159,6 +165,14 @@ const Routes = () => {
           <Route path="financial" element={<Navigate to="/admin/dashboard" replace />} />
           <Route path="reports" element={<Navigate to="/admin/bmtoa-reports" replace />} />
           <Route path="settings" element={<Navigate to="/admin/dashboard" replace />} />
+        </Route>
+
+        {/* User Guide Routes - Public */}
+        <Route path="/user-guide" element={<UserGuideLayout />}>
+          <Route index element={<GuideCategoryList />} />
+          <Route path=":category" element={<GuideCategoryList />} />
+          <Route path="article/:slug" element={<GuideArticle />} />
+          <Route path="search" element={<GuideSearch />} />
         </Route>
 
         <Route path="*" element={<NotFound />} />

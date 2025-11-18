@@ -8,19 +8,24 @@ import { supabase } from '../../../lib/supabase';
  */
 const AdminAddCorporateForm = ({ onSuccess, onCancel }) => {
   const [formData, setFormData] = useState({
-    // Basic Information
+    // Basic Information (profiles table)
     name: '',
     email: '',
     phone: '',
     password: '', // Optional - will generate if empty
     
-    // Company Information
+    // Company Information (corporate_profiles table)
     company_name: '',
     company_size: '1-10',
     business_registration: '',
-    company_address: '',
-    billing_method: 'prepaid_credits',
-    selected_services: ['pre-booked', 'on-demand']
+    industry: '',
+    primary_contact_name: '',
+    primary_contact_phone: '',
+    primary_contact_email: '',
+    account_tier: 'standard',
+    total_employees: 0,
+    credit_balance: 0,
+    credit_booking_approved: false
   });
 
   const [submitting, setSubmitting] = useState(false);
@@ -33,16 +38,23 @@ const AdminAddCorporateForm = ({ onSuccess, onCancel }) => {
     { value: '500+', label: '500+ employees' },
   ];
 
-  const BILLING_METHODS = [
-    { value: 'prepaid_credits', label: 'Prepaid Credits' },
-    { value: 'cash', label: 'Cash Payment' },
+  const ACCOUNT_TIERS = [
+    { value: 'standard', label: 'Standard' },
+    { value: 'premium', label: 'Premium' },
+    { value: 'enterprise', label: 'Enterprise' },
   ];
 
-  const SERVICE_TYPES = [
-    { id: 'pre-booked', label: 'Pre-Booked Rides' },
-    { id: 'staff-transport', label: 'Staff Transportation' },
-    { id: 'recurring', label: 'Recurring Trips' },
-    { id: 'on-demand', label: 'On-Demand Rides' },
+  const INDUSTRIES = [
+    'Technology',
+    'Finance',
+    'Healthcare',
+    'Manufacturing',
+    'Retail',
+    'Education',
+    'Hospitality',
+    'Transportation',
+    'Real Estate',
+    'Other'
   ];
 
   const handleInputChange = (e) => {
@@ -50,14 +62,7 @@ const AdminAddCorporateForm = ({ onSuccess, onCancel }) => {
     setFormData({ ...formData, [name]: value });
   };
 
-  const toggleService = (serviceId) => {
-    setFormData(prev => ({
-      ...prev,
-      selected_services: prev.selected_services.includes(serviceId)
-        ? prev.selected_services.filter(s => s !== serviceId)
-        : [...prev.selected_services, serviceId]
-    }));
-  };
+
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -66,10 +71,15 @@ const AdminAddCorporateForm = ({ onSuccess, onCancel }) => {
       setSubmitting(true);
 
       // Validate required fields
-      if (!formData.name || !formData.email || !formData.company_name || !formData.business_registration) {
-        alert('Please fill in all required fields');
+      if (!formData.name || !formData.email || !formData.company_name || !formData.business_registration || !formData.industry) {
+        alert('Please fill in all required fields (Name, Email, Company Name, Business Registration, Industry)');
         return;
       }
+
+      // Set primary contact fields from basic info if not provided
+      const primaryContactName = formData.primary_contact_name || formData.name;
+      const primaryContactPhone = formData.primary_contact_phone || formData.phone;
+      const primaryContactEmail = formData.primary_contact_email || formData.email;
 
       // Check if email already exists
       const { data: existingUser } = await supabase
@@ -131,9 +141,17 @@ const AdminAddCorporateForm = ({ onSuccess, onCancel }) => {
           company_name: formData.company_name,
           company_size: formData.company_size,
           business_registration: formData.business_registration,
-          company_address: formData.company_address,
-          billing_method: formData.billing_method,
-          selected_services: formData.selected_services,
+          industry: formData.industry,
+          primary_contact_name: primaryContactName,
+          primary_contact_phone: primaryContactPhone,
+          primary_contact_email: primaryContactEmail,
+          account_tier: formData.account_tier,
+          total_employees: parseInt(formData.total_employees) || 0,
+          credit_balance: parseFloat(formData.credit_balance) || 0,
+          monthly_spend: 0,
+          verification_status: 'verified', // Admin-created accounts are pre-verified
+          credit_booking_approved: formData.credit_booking_approved,
+          platform: 'taxicab'
         });
 
       if (corporateError) {
@@ -158,9 +176,14 @@ Temporary Password: ${password}
         company_name: '',
         company_size: '1-10',
         business_registration: '',
-        company_address: '',
-        billing_method: 'prepaid_credits',
-        selected_services: ['pre-booked', 'on-demand']
+        industry: '',
+        primary_contact_name: '',
+        primary_contact_phone: '',
+        primary_contact_email: '',
+        account_tier: 'standard',
+        total_employees: 0,
+        credit_balance: 0,
+        credit_booking_approved: false
       });
 
       if (onSuccess) onSuccess();
@@ -294,62 +317,140 @@ Temporary Password: ${password}
 
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
-              Billing Method
+              Industry *
             </label>
             <select
-              name="billing_method"
-              value={formData.billing_method}
+              name="industry"
+              required
+              value={formData.industry}
               onChange={handleInputChange}
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
             >
-              {BILLING_METHODS.map(method => (
-                <option key={method.value} value={method.value}>{method.label}</option>
+              <option value="">Select Industry</option>
+              {INDUSTRIES.map(industry => (
+                <option key={industry} value={industry}>{industry}</option>
               ))}
             </select>
           </div>
 
-          <div className="md:col-span-2">
+          <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
-              Company Address *
+              Account Tier
             </label>
-            <textarea
-              name="company_address"
-              required
-              value={formData.company_address}
+            <select
+              name="account_tier"
+              value={formData.account_tier}
               onChange={handleInputChange}
-              placeholder="123 Main Street, Bulawayo"
-              rows="2"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            >
+              {ACCOUNT_TIERS.map(tier => (
+                <option key={tier.value} value={tier.value}>{tier.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Total Employees
+            </label>
+            <input
+              type="number"
+              name="total_employees"
+              min="0"
+              value={formData.total_employees}
+              onChange={handleInputChange}
+              placeholder="0"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Initial Credit Balance
+            </label>
+            <input
+              type="number"
+              name="credit_balance"
+              min="0"
+              step="0.01"
+              value={formData.credit_balance}
+              onChange={handleInputChange}
+              placeholder="0.00"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            />
+            <p className="text-xs text-slate-500 mt-1">
+              Starting credit balance for the account
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Primary Contact (Optional - defaults to basic info) */}
+      <div>
+        <h3 className="text-lg font-semibold text-slate-800 mb-2">Primary Contact (Optional)</h3>
+        <p className="text-sm text-slate-500 mb-4">
+          If different from the account holder above, specify the primary contact person
+        </p>
+        <div className="grid md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Contact Name
+            </label>
+            <input
+              type="text"
+              name="primary_contact_name"
+              value={formData.primary_contact_name}
+              onChange={handleInputChange}
+              placeholder="Leave empty to use account holder name"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Contact Phone
+            </label>
+            <input
+              type="tel"
+              name="primary_contact_phone"
+              value={formData.primary_contact_phone}
+              onChange={handleInputChange}
+              placeholder="Leave empty to use account holder phone"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Contact Email
+            </label>
+            <input
+              type="email"
+              name="primary_contact_email"
+              value={formData.primary_contact_email}
+              onChange={handleInputChange}
+              placeholder="Leave empty to use account holder email"
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
             />
           </div>
         </div>
       </div>
 
-      {/* Service Selection */}
+      {/* Credit Booking Approval */}
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-2">
-          Selected Services
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            name="credit_booking_approved"
+            checked={formData.credit_booking_approved}
+            onChange={(e) => setFormData({ ...formData, credit_booking_approved: e.target.checked })}
+            className="w-5 h-5 text-yellow-600 border-slate-300 rounded focus:ring-yellow-400"
+          />
+          <div>
+            <span className="font-medium text-slate-700">Approve Credit Booking</span>
+            <p className="text-sm text-slate-500">Allow this account to book rides on credit</p>
+          </div>
         </label>
-        <div className="grid md:grid-cols-2 gap-3">
-          {SERVICE_TYPES.map(service => (
-            <div
-              key={service.id}
-              onClick={() => toggleService(service.id)}
-              className={`p-3 border rounded-lg cursor-pointer transition-all ${
-                formData.selected_services.includes(service.id)
-                  ? 'border-yellow-400 bg-yellow-50'
-                  : 'border-slate-200 hover:border-slate-300'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-slate-700">{service.label}</span>
-                {formData.selected_services.includes(service.id) && (
-                  <span className="text-yellow-500">✓</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
       </div>
 
       {/* Action Buttons */}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Button from '../../shared/Button';
 import Modal from '../../shared/Modal';
+import Pagination from '../../shared/Pagination';
 import { supabase } from '../../../lib/supabase';
 
 /**
@@ -31,13 +32,18 @@ const DriverVerificationPage = () => {
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('pending');
+  const [filterApprovalStatus, setFilterApprovalStatus] = useState('all');
+  const [filterSubmissionStatus, setFilterSubmissionStatus] = useState('all');
   const [rejectReason, setRejectReason] = useState('');
   const [documentRejectReason, setDocumentRejectReason] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
 
   // Load drivers
   useEffect(() => {
     loadDrivers();
-  }, [filterStatus]);
+  }, [filterStatus, filterApprovalStatus, filterSubmissionStatus, currentPage, pageSize]);
 
   const loadDrivers = async () => {
     setLoading(true);
@@ -59,14 +65,31 @@ const DriverVerificationPage = () => {
       if (filterStatus !== 'all') {
         query = query.eq('verification_status', filterStatus);
       }
+      
+      if (filterApprovalStatus !== 'all') {
+        query = query.eq('approval_status', filterApprovalStatus);
+      }
+      
+      if (filterSubmissionStatus !== 'all') {
+        query = query.eq('submission_status', filterSubmissionStatus);
+      }
 
-      const { data, error } = await query.order('created_at', { ascending: false });
+      // Add pagination
+      const from = (currentPage - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      const { data, error, count } = await query
+        .order('created_at', { ascending: false })
+        .range(from, to)
+        .select('*', { count: 'exact' });
 
       if (error) throw error;
 
+      setTotalCount(count || 0);
+
       // Fetch documents for each driver
       const driversWithDocs = await Promise.all(
-        data.map(async (driver) => {
+        (data || []).map(async (driver) => {
           const { data: docs } = await supabase
             .from('documents')
             .select('*')
@@ -98,9 +121,16 @@ const DriverVerificationPage = () => {
     if (!confirm('Are you sure you want to approve this driver?')) return;
 
     try {
+      // Get current admin user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
       const { error } = await supabase
         .from('driver_profiles')
         .update({
+          approval_status: 'approved',
+          approved_by: user.id,
+          approved_at: new Date().toISOString(),
           verification_status: 'approved',
           verified_at: new Date().toISOString(),
           documents_verified: true,
@@ -241,20 +271,63 @@ const DriverVerificationPage = () => {
 
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-lg p-4 mb-6">
-        <div className="flex gap-4">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-slate-700 mb-2">Filter by Status</label>
+        <div className="grid md:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Verification Status</label>
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
             >
-              <option value="all">All Drivers</option>
-              <option value="pending">Pending Verification</option>
+              <option value="all">All</option>
+              <option value="pending">Pending</option>
               <option value="under_review">Under Review</option>
               <option value="approved">Approved</option>
               <option value="rejected">Rejected</option>
             </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Approval Status</label>
+            <select
+              value={filterApprovalStatus}
+              onChange={(e) => setFilterApprovalStatus(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
+            >
+              <option value="all">All</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">Submission Status</label>
+            <select
+              value={filterSubmissionStatus}
+              onChange={(e) => setFilterSubmissionStatus(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-yellow-400"
+            >
+              <option value="all">All</option>
+              <option value="draft">Draft</option>
+              <option value="submitted">Submitted</option>
+              <option value="incomplete">Incomplete</option>
+              <option value="complete">Complete</option>
+            </select>
+          </div>
+          
+          <div className="flex items-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setFilterStatus('pending');
+                setFilterApprovalStatus('all');
+                setFilterSubmissionStatus('all');
+              }}
+              className="w-full"
+            >
+              Clear Filters
+            </Button>
           </div>
         </div>
       </div>
@@ -343,6 +416,20 @@ const DriverVerificationPage = () => {
               })}
             </tbody>
           </table>
+        )}
+        
+        {/* Pagination */}
+        {!loading && totalCount > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            onPageChange={(page) => setCurrentPage(page)}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setCurrentPage(1);
+            }}
+          />
         )}
       </div>
 

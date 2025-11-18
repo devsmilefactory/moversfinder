@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Button from '../../shared/Button';
 import DataTable from '../../shared/DataTable';
 import Modal from '../../shared/Modal';
+import Pagination from '../../shared/Pagination';
 import { supabase } from '../../../lib/supabase';
 import Papa from 'papaparse';
 import ManageTiersModal from '../components/ManageTiersModal';
@@ -39,6 +40,8 @@ const SubscriptionsPage = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ active: 0, expiring: 0, overdue: 0, revenue: 0 });
   const [members, setMembers] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const csvFileInputRef = useRef(null);
 
   // Payment form state
@@ -124,7 +127,7 @@ const SubscriptionsPage = () => {
     try {
       setLoading(true);
 
-      // Fetch memberships with user profiles and payment data
+      // Fetch memberships with user profiles, operator profiles, and payment data
       const { data: membershipsData, error } = await supabase
         .from('memberships')
         .select(`
@@ -144,40 +147,68 @@ const SubscriptionsPage = () => {
             user_type
           )
         `)
-        .order('created_at', { ascending: false });
+        .order('joined_date', { ascending: false });
 
       if (error) throw error;
 
-      // Fetch latest payment for each membership
-      const { data: paymentsData } = await supabase
-        .from('subscription_payments')
-        .select('user_id, payment_date, payment_method, amount')
-        .order('payment_date', { ascending: false });
+      // Fetch operator profiles for company names
+      const { data: operatorProfiles } = await supabase
+        .from('operator_profiles')
+        .select('user_id, company_name');
 
-      // Create a map of latest payments by user_id
-      const latestPayments = {};
-      (paymentsData || []).forEach(payment => {
-        if (!latestPayments[payment.user_id]) {
-          latestPayments[payment.user_id] = payment;
+      const operatorMap = {};
+      (operatorProfiles || []).forEach(op => {
+        operatorMap[op.user_id] = op.company_name;
+      });
+
+      // Fetch payment counts and totals for each membership
+      const { data: paymentStats } = await supabase
+        .from('subscription_payments')
+        .select('membership_id, amount, payment_date, payment_method');
+
+      // Aggregate payment data by membership_id
+      const paymentsByMembership = {};
+      (paymentStats || []).forEach(payment => {
+        if (!paymentsByMembership[payment.membership_id]) {
+          paymentsByMembership[payment.membership_id] = {
+            count: 0,
+            total: 0,
+            latest: null
+          };
+        }
+        paymentsByMembership[payment.membership_id].count += 1;
+        paymentsByMembership[payment.membership_id].total += parseFloat(payment.amount || 0);
+        
+        if (!paymentsByMembership[payment.membership_id].latest || 
+            payment.payment_date > paymentsByMembership[payment.membership_id].latest.payment_date) {
+          paymentsByMembership[payment.membership_id].latest = payment;
         }
       });
 
-      const transformedSubscriptions = (membershipsData || []).map(membership => ({
-        id: membership.id,
-        membershipId: membership.id,
-        userId: membership.user_id,
-        memberName: membership.profiles?.name || 'Unknown',
-        memberId: membership.bmtoa_member_number || 'N/A',
-        tier: membership.membership_tier || 'basic',
-        status: membership.status || 'active',
-        startDate: membership.joined_date || membership.created_at?.split('T')[0] || 'N/A',
-        renewalDate: membership.expiry_date || 'N/A',
-        monthlyFee: parseFloat(membership.monthly_fee || 50),
-        paymentMethod: latestPayments[membership.user_id]?.payment_method || 'N/A',
-        lastPayment: latestPayments[membership.user_id]?.payment_date || 'N/A',
-        lastPaymentAmount: latestPayments[membership.user_id]?.amount || 0,
-        userType: membership.profiles?.user_type || 'N/A'
-      }));
+      const transformedSubscriptions = (membershipsData || []).map(membership => {
+        const paymentData = paymentsByMembership[membership.id] || { count: 0, total: 0, latest: null };
+        const companyName = operatorMap[membership.user_id];
+        
+        return {
+          id: membership.id,
+          membershipId: membership.id,
+          userId: membership.user_id,
+          memberName: companyName || membership.profiles?.name || 'Unknown',
+          companyName: companyName || 'N/A',
+          memberId: membership.bmtoa_member_number || 'N/A',
+          tier: membership.membership_tier || 'basic',
+          status: membership.status || 'active',
+          startDate: membership.joined_date || membership.created_at?.split('T')[0] || 'N/A',
+          renewalDate: membership.expiry_date || 'N/A',
+          monthlyFee: parseFloat(membership.monthly_fee || 50),
+          paymentMethod: paymentData.latest?.payment_method || 'N/A',
+          lastPayment: paymentData.latest?.payment_date || 'N/A',
+          lastPaymentAmount: paymentData.latest?.amount || 0,
+          paymentCount: paymentData.count,
+          totalPaid: paymentData.total,
+          userType: membership.profiles?.user_type || 'N/A'
+        };
+      });
 
       setSubscriptions(transformedSubscriptions);
 
@@ -501,6 +532,13 @@ const SubscriptionsPage = () => {
     return matchesStatus && matchesTier && matchesSearch;
   });
 
+  // Apply pagination to filtered results
+  const totalCount = filteredSubscriptions.length;
+  const paginatedSubscriptions = filteredSubscriptions.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  );
+
   const getStatusBadge = (status) => {
     const badges = {
       active: 'bg-green-100 text-green-700',
@@ -795,11 +833,22 @@ const SubscriptionsPage = () => {
             </div>
           </div>
         ) : (
-          <DataTable
-            columns={columns}
-            data={filteredSubscriptions}
-            emptyMessage="No subscriptions found"
-          />
+          <>
+            <DataTable
+              columns={columns}
+              data={paginatedSubscriptions}
+              emptyMessage="No subscriptions found"
+            />
+            {totalCount > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                pageSize={pageSize}
+                totalCount={totalCount}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={setPageSize}
+              />
+            )}
+          </>
         )}
       </div>
 

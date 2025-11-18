@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Button from '../../shared/Button';
 import DataTable from '../../shared/DataTable';
 import Modal from '../../shared/Modal';
+import Pagination from '../../shared/Pagination';
 import { supabase } from '../../../lib/supabase';
 import AdminAddCorporateForm from '../components/AdminAddCorporateForm';
 
@@ -27,6 +28,15 @@ const CorporateAccountsPage = () => {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [rejectReason, setRejectReason] = useState('');
+  const [filterTier, setFilterTier] = useState('all');
+  const [filterVerificationStatus, setFilterVerificationStatus] = useState('all');
+  const [filterCreditBooking, setFilterCreditBooking] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [relatedPassengers, setRelatedPassengers] = useState([]);
+  const [relatedInvoices, setRelatedInvoices] = useState([]);
+  const [loadingRelated, setLoadingRelated] = useState(false);
   const [creditAdjustment, setCreditAdjustment] = useState({ amount: '', type: 'top_up', description: '' });
   const [accounts, setAccounts] = useState([]);
   const [activeAccounts, setActiveAccounts] = useState([]);
@@ -50,14 +60,18 @@ const CorporateAccountsPage = () => {
       loadActiveAccounts();
     }
     loadStats();
-  }, [activeTab]);
+  }, [activeTab, currentPage, pageSize]);
 
   const loadAccounts = async () => {
     try {
       setLoading(true);
 
+      // Calculate pagination offset
+      const from = (currentPage - 1) * pageSize;
+      const to = from + pageSize - 1;
+
       // Fetch corporate accounts with complete profiles awaiting approval
-      const { data, error } = await supabase
+      const { data, error, count } = await supabase
         .from('profiles')
         .select(`
           id,
@@ -65,8 +79,7 @@ const CorporateAccountsPage = () => {
           email,
           phone,
           created_at,
-          verification_status,
-          profile_completion_status,
+          account_status,
           corporate_profiles (
             company_name,
             company_size,
@@ -76,15 +89,22 @@ const CorporateAccountsPage = () => {
             primary_contact_phone,
             primary_contact_email,
             account_tier,
-            total_employees
+            total_employees,
+            credit_balance,
+            monthly_spend,
+            verification_status,
+            credit_booking_approved
           )
-        `)
+        `, { count: 'exact' })
         .eq('user_type', 'corporate')
         .eq('platform', 'taxicab')
         .eq('profile_completion_status', 'complete')
-        .eq('verification_status', 'pending');
+        .eq('verification_status', 'pending')
+        .range(from, to);
 
       if (error) throw error;
+
+      setTotalCount(count || 0);
 
       // Transform data
       const transformedAccounts = (data || []).map(account => ({
@@ -116,8 +136,12 @@ const CorporateAccountsPage = () => {
     try {
       setLoading(true);
 
+      // Calculate pagination offset
+      const from = (currentPage - 1) * pageSize;
+      const to = from + pageSize - 1;
+
       // Fetch active corporate accounts with credit balance info
-      const { data, error } = await supabase
+      const { data, error, count } = await supabase
         .from('profiles')
         .select(`
           id,
@@ -132,14 +156,18 @@ const CorporateAccountsPage = () => {
             low_balance_threshold,
             auto_invoice,
             account_tier,
-            total_employees
+            total_employees,
+            credit_booking_approved
           )
-        `)
+        `, { count: 'exact' })
         .eq('user_type', 'corporate')
         .eq('platform', 'taxicab')
-        .eq('verification_status', 'verified');
+        .eq('verification_status', 'verified')
+        .range(from, to);
 
       if (error) throw error;
+
+      setTotalCount(count || 0);
 
       // Transform data
       const transformedAccounts = (data || []).map(account => ({
@@ -154,7 +182,8 @@ const CorporateAccountsPage = () => {
         accountTier: account.corporate_profiles?.account_tier || 'standard',
         totalEmployees: account.corporate_profiles?.total_employees || 0,
         registrationDate: account.created_at?.split('T')[0] || 'N/A',
-        isLowBalance: parseFloat(account.corporate_profiles?.credit_balance || 0) < parseFloat(account.corporate_profiles?.low_balance_threshold || 100)
+        isLowBalance: parseFloat(account.corporate_profiles?.credit_balance || 0) < parseFloat(account.corporate_profiles?.low_balance_threshold || 100),
+        creditBookingApproved: account.corporate_profiles?.credit_booking_approved || false
       }));
 
       setActiveAccounts(transformedAccounts);
@@ -263,9 +292,38 @@ const CorporateAccountsPage = () => {
     }
   };
 
-  const handleViewDetails = (account) => {
+  const handleViewDetails = async (account) => {
     setSelectedAccount(account);
     setShowDetailsModal(true);
+    setLoadingRelated(true);
+    
+    try {
+      // Fetch corporate passengers
+      const { data: passengers, error: passengersError } = await supabase
+        .from('corporate_passengers')
+        .select('*')
+        .eq('company_id', account.id);
+      
+      if (passengersError) throw passengersError;
+      setRelatedPassengers(passengers || []);
+      
+      // Fetch invoices
+      const { data: invoices, error: invoicesError } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('company_id', account.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (invoicesError) throw invoicesError;
+      setRelatedInvoices(invoices || []);
+    } catch (error) {
+      console.error('Error loading related data:', error);
+      setRelatedPassengers([]);
+      setRelatedInvoices([]);
+    } finally {
+      setLoadingRelated(false);
+    }
   };
 
   const handleApproveClick = (account) => {
@@ -447,14 +505,30 @@ const CorporateAccountsPage = () => {
     const matchesSearch = account.companyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          account.contactPerson.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          account.email.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSearch;
+    
+    // Account tier filter
+    const matchesTier = filterTier === 'all' || account.accountTier === filterTier;
+    
+    // Verification status filter (for pending tab, this is mostly 'pending')
+    const matchesVerification = filterVerificationStatus === 'all' || account.verificationStatus === filterVerificationStatus;
+    
+    return matchesSearch && matchesTier && matchesVerification;
   });
 
   const filteredActiveAccounts = activeAccounts.filter(account => {
     const matchesSearch = account.companyName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          account.contactPerson.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          account.email.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesSearch;
+    
+    // Account tier filter
+    const matchesTier = filterTier === 'all' || account.accountTier === filterTier;
+    
+    // Credit booking approved filter
+    const matchesCreditBooking = filterCreditBooking === 'all' || 
+                                 (filterCreditBooking === 'approved' && account.creditBookingApproved) ||
+                                 (filterCreditBooking === 'not_approved' && !account.creditBookingApproved);
+    
+    return matchesSearch && matchesTier && matchesCreditBooking;
   });
 
   const getTierBadge = (tier) => {
@@ -685,15 +759,76 @@ const CorporateAccountsPage = () => {
         </div>
       )}
 
-      {/* Search */}
+      {/* Search and Filters */}
       <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
         <input
           type="text"
           placeholder="🔍 Search by company name, contact person, or email..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+          className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400 mb-4"
         />
+        
+        {/* Filter Controls */}
+        <div className="grid md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Account Tier</label>
+            <select
+              value={filterTier}
+              onChange={(e) => setFilterTier(e.target.value)}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            >
+              <option value="all">All Tiers</option>
+              <option value="standard">Standard</option>
+              <option value="premium">Premium</option>
+              <option value="enterprise">Enterprise</option>
+            </select>
+          </div>
+          
+          {activeTab === 'pending' ? (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Verification Status</label>
+              <select
+                value={filterVerificationStatus}
+                onChange={(e) => setFilterVerificationStatus(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="verified">Verified</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Credit Booking</label>
+              <select
+                value={filterCreditBooking}
+                onChange={(e) => setFilterCreditBooking(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="all">All Accounts</option>
+                <option value="approved">Credit Booking Approved</option>
+                <option value="not_approved">Not Approved</option>
+              </select>
+            </div>
+          )}
+          
+          <div className="flex items-end">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearchQuery('');
+                setFilterTier('all');
+                setFilterVerificationStatus('all');
+                setFilterCreditBooking('all');
+              }}
+              className="w-full"
+            >
+              Clear Filters
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* Accounts Table */}
@@ -710,6 +845,20 @@ const CorporateAccountsPage = () => {
             columns={columns}
             data={displayAccounts}
             emptyMessage={activeTab === 'pending' ? 'No pending corporate accounts' : 'No active corporate accounts'}
+          />
+        )}
+        
+        {/* Pagination */}
+        {!loading && totalCount > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            onPageChange={(page) => setCurrentPage(page)}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setCurrentPage(1);
+            }}
           />
         )}
       </div>
@@ -769,6 +918,85 @@ const CorporateAccountsPage = () => {
                 <p className="font-semibold text-slate-700">{selectedAccount.registrationDate}</p>
               </div>
             </div>
+            
+            {/* Corporate Passengers Section */}
+            <div className="border-t pt-4">
+              <h4 className="font-semibold text-slate-700 mb-3">👥 Corporate Passengers ({relatedPassengers.length})</h4>
+              {loadingRelated ? (
+                <p className="text-sm text-slate-500">Loading passengers...</p>
+              ) : relatedPassengers.length > 0 ? (
+                <div className="max-h-48 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Name</th>
+                        <th className="px-3 py-2 text-left">Email</th>
+                        <th className="px-3 py-2 text-left">Phone</th>
+                        <th className="px-3 py-2 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {relatedPassengers.map((passenger) => (
+                        <tr key={passenger.id}>
+                          <td className="px-3 py-2">{passenger.name}</td>
+                          <td className="px-3 py-2">{passenger.email}</td>
+                          <td className="px-3 py-2">{passenger.phone || 'N/A'}</td>
+                          <td className="px-3 py-2">
+                            <span className={`px-2 py-1 rounded text-xs ${passenger.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
+                              {passenger.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No passengers registered yet</p>
+              )}
+            </div>
+            
+            {/* Invoices Section */}
+            <div className="border-t pt-4">
+              <h4 className="font-semibold text-slate-700 mb-3">📄 Recent Invoices ({relatedInvoices.length})</h4>
+              {loadingRelated ? (
+                <p className="text-sm text-slate-500">Loading invoices...</p>
+              ) : relatedInvoices.length > 0 ? (
+                <div className="max-h-48 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Invoice #</th>
+                        <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">Amount</th>
+                        <th className="px-3 py-2 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {relatedInvoices.map((invoice) => (
+                        <tr key={invoice.id}>
+                          <td className="px-3 py-2">{invoice.invoice_number}</td>
+                          <td className="px-3 py-2">{new Date(invoice.created_at).toLocaleDateString()}</td>
+                          <td className="px-3 py-2">${parseFloat(invoice.total_amount || 0).toFixed(2)}</td>
+                          <td className="px-3 py-2">
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              invoice.status === 'paid' ? 'bg-green-100 text-green-700' :
+                              invoice.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {invoice.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No invoices generated yet</p>
+              )}
+            </div>
+            
             <div className="border-t pt-4 flex gap-3">
               <Button
                 variant="primary"

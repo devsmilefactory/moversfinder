@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Button from '../../shared/Button';
 import DataTable from '../../shared/DataTable';
 import Modal from '../../shared/Modal';
+import Pagination from '../../shared/Pagination';
 import { supabase } from '../../../lib/supabase';
 import AdminAddMemberForm from '../components/AdminAddMemberForm';
 
@@ -37,12 +38,18 @@ const MemberRequestsPage = () => {
     approvedThisMonth: 0,
     rejectedThisMonth: 0
   });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [requestDocuments, setRequestDocuments] = useState([]);
+  const [detailedProfile, setDetailedProfile] = useState(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Load pending requests and stats from Supabase
   useEffect(() => {
     loadRequests();
     loadStats();
-  }, [filterType]);
+  }, [filterType, currentPage, pageSize]);
 
   const loadRequests = async () => {
     try {
@@ -146,7 +153,15 @@ const MemberRequestsPage = () => {
         );
       }
 
-      setRequests(allRequests);
+      // Set total count for pagination
+      setTotalCount(allRequests.length);
+
+      // Apply pagination
+      const startIndex = (currentPage - 1) * pageSize;
+      const endIndex = startIndex + pageSize;
+      const paginatedRequests = allRequests.slice(startIndex, endIndex);
+
+      setRequests(paginatedRequests);
     } catch (error) {
       console.error('Error loading requests:', error);
       setRequests([]);
@@ -191,9 +206,48 @@ const MemberRequestsPage = () => {
     }
   };
 
-  const handleViewDetails = (request) => {
+  const handleViewDetails = async (request) => {
     setSelectedRequest(request);
     setShowDetailsModal(true);
+    setLoadingDetails(true);
+    
+    try {
+      // Fetch detailed profile data
+      if (request.type === 'operator') {
+        const { data: operatorProfile, error: profileError } = await supabase
+          .from('operator_profiles')
+          .select('*')
+          .eq('user_id', request.id)
+          .single();
+        
+        if (profileError) throw profileError;
+        setDetailedProfile(operatorProfile);
+      } else {
+        const { data: driverProfile, error: profileError } = await supabase
+          .from('driver_profiles')
+          .select('*')
+          .eq('user_id', request.id)
+          .single();
+        
+        if (profileError) throw profileError;
+        setDetailedProfile(driverProfile);
+      }
+      
+      // Fetch documents from documents table
+      const { data: documents, error: docsError } = await supabase
+        .from('documents')
+        .select('*')
+        .eq('user_id', request.id);
+      
+      if (docsError) throw docsError;
+      setRequestDocuments(documents || []);
+    } catch (error) {
+      console.error('Error loading request details:', error);
+      setDetailedProfile(null);
+      setRequestDocuments([]);
+    } finally {
+      setLoadingDetails(false);
+    }
   };
 
   const handleApproveClick = (request) => {
@@ -440,6 +494,20 @@ const MemberRequestsPage = () => {
             emptyMessage="No pending requests"
           />
         )}
+        
+        {/* Pagination */}
+        {!loading && totalCount > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            onPageChange={(page) => setCurrentPage(page)}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setCurrentPage(1);
+            }}
+          />
+        )}
       </div>
 
       {/* Request Details Modal */}
@@ -499,16 +567,67 @@ const MemberRequestsPage = () => {
                 <p className="font-semibold text-slate-700">{selectedRequest.submittedDate}</p>
               </div>
             </div>
-            <div className="border-t pt-4">
-              <p className="text-sm text-slate-600 mb-2">Submitted Documents</p>
-              <div className="space-y-2">
-                {selectedRequest.documents.map((doc, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-slate-700">
-                    <span className="text-green-500">📄</span>
-                    <span>{doc}</span>
-                  </div>
-                ))}
+            
+            {/* Detailed Profile Information */}
+            {loadingDetails ? (
+              <div className="border-t pt-4">
+                <p className="text-sm text-slate-500">Loading detailed information...</p>
               </div>
+            ) : detailedProfile && (
+              <div className="border-t pt-4">
+                <h4 className="font-semibold text-slate-700 mb-3">📝 Complete Profile Information</h4>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  {Object.entries(detailedProfile).map(([key, value]) => {
+                    // Skip internal fields
+                    if (key === 'id' || key === 'user_id' || key === 'created_at' || key === 'updated_at') return null;
+                    
+                    return (
+                      <div key={key}>
+                        <p className="text-slate-600 capitalize">{key.replace(/_/g, ' ')}</p>
+                        <p className="font-medium text-slate-700">
+                          {value === null || value === undefined ? 'N/A' : 
+                           typeof value === 'boolean' ? (value ? 'Yes' : 'No') :
+                           typeof value === 'object' ? JSON.stringify(value) :
+                           value.toString()}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            
+            {/* Submitted Documents */}
+            <div className="border-t pt-4">
+              <h4 className="font-semibold text-slate-700 mb-3">📄 Submitted Documents ({requestDocuments.length})</h4>
+              {loadingDetails ? (
+                <p className="text-sm text-slate-500">Loading documents...</p>
+              ) : requestDocuments.length > 0 ? (
+                <div className="space-y-2">
+                  {requestDocuments.map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">📄</span>
+                        <div>
+                          <p className="font-medium text-slate-700">{doc.document_type}</p>
+                          <p className="text-xs text-slate-500">Uploaded: {new Date(doc.created_at).toLocaleDateString()}</p>
+                        </div>
+                      </div>
+                      {doc.document_url && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => window.open(doc.document_url, '_blank')}
+                        >
+                          View
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">No documents uploaded yet</p>
+              )}
             </div>
           </div>
         )}

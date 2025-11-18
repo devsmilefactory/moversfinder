@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Button from '../../shared/Button';
 import DataTable from '../../shared/DataTable';
 import Modal from '../../shared/Modal';
+import Pagination from '../../shared/Pagination';
 import { supabase } from '../../../lib/supabase';
 import FormInput from '../../shared/FormInput';
 
@@ -28,9 +29,13 @@ const AdminUsersPage = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [adminUsers, setAdminUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Load admin users from Supabase
   useEffect(() => {
@@ -288,12 +293,28 @@ const AdminUsersPage = () => {
     });
   };
 
-  const filteredUsers = adminUsers.filter(user => {
+  const allFilteredUsers = adminUsers.filter(user => {
     const matchesStatus = filterStatus === 'all' || user.status === filterStatus;
+    
+    // Date range filter for created_at
+    let matchesDateRange = true;
+    if (filterDateFrom && user.createdAt) {
+      matchesDateRange = matchesDateRange && user.createdAt >= filterDateFrom;
+    }
+    if (filterDateTo && user.createdAt) {
+      matchesDateRange = matchesDateRange && user.createdAt <= filterDateTo;
+    }
+    
     const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          user.email.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesStatus && matchesSearch;
+    return matchesStatus && matchesDateRange && matchesSearch;
   });
+  
+  // Apply pagination
+  const totalCount = allFilteredUsers.length;
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const filteredUsers = allFilteredUsers.slice(startIndex, endIndex);
 
   const getStatusBadge = (status) => {
     const badges = {
@@ -359,8 +380,8 @@ const AdminUsersPage = () => {
 
       {/* Filters and Actions */}
       <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-        <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-          <div className="flex gap-4 flex-1">
+        <div className="flex flex-col gap-4">
+          <div className="flex gap-4 items-center">
             <input
               type="text"
               placeholder="🔍 Search by name or email..."
@@ -368,20 +389,61 @@ const AdminUsersPage = () => {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
             />
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
-            >
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="suspended">Suspended</option>
-              <option value="draft">Draft</option>
-            </select>
+            <Button onClick={() => setShowCreateModal(true)}>
+              ➕ Create Admin User
+            </Button>
           </div>
-          <Button onClick={() => setShowCreateModal(true)}>
-            ➕ Create Admin User
-          </Button>
+          
+          <div className="grid md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Account Status</label>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+                <option value="draft">Draft</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Created From</label>
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Created To</label>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              />
+            </div>
+            
+            <div className="flex items-end">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setFilterStatus('all');
+                  setFilterDateFrom('');
+                  setFilterDateTo('');
+                  setSearchQuery('');
+                }}
+                className="w-full"
+              >
+                Clear Filters
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -399,6 +461,20 @@ const AdminUsersPage = () => {
             columns={columns}
             data={filteredUsers}
             emptyMessage="No admin users found"
+          />
+        )}
+        
+        {/* Pagination */}
+        {!loading && totalCount > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            onPageChange={(page) => setCurrentPage(page)}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setCurrentPage(1);
+            }}
           />
         )}
       </div>

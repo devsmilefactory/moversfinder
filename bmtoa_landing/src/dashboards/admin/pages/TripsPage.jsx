@@ -30,53 +30,68 @@ const TripsPage = () => {
   const [activeTab, setActiveTab] = useState('individual'); // 'individual' or 'corporate'
   const [filterCompany, setFilterCompany] = useState('all');
   const [filterPaymentMethod, setFilterPaymentMethod] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [totalCount, setTotalCount] = useState(0);
+  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [tripToUpdate, setTripToUpdate] = useState(null);
+  const [newStatus, setNewStatus] = useState('');
+  const [statusNotes, setStatusNotes] = useState('');
+  const [updating, setUpdating] = useState(false);
 
   // Load trips from database
   useEffect(() => {
     loadTrips();
-  }, []);
+  }, [currentPage, pageSize]);
 
   const loadTrips = async () => {
     try {
       setLoading(true);
 
-      // Fetch trips with user, driver, and company information
-      const { data, error } = await supabase
+      // Calculate pagination offset
+      const from = (currentPage - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      // Fetch trips with user, driver, company, and vehicle information
+      const { data, error, count } = await supabase
         .from('rides')
         .select(`
           id,
           pickup_location,
           dropoff_location,
           service_type,
-          status,
+          ride_status,
           fare,
           payment_method,
+          payment_status,
           created_at,
-          start_time,
-          end_time,
+          trip_started_at,
+          trip_completed_at,
           platform,
           company_id,
+          vehicle_id,
           user:profiles!rides_user_id_fkey(name, user_type),
-          driver:driver_profiles!rides_driver_id_fkey(
-            full_name,
-            profiles(name)
-          ),
+          driver:profiles!rides_driver_id_fkey(name),
           company:corporate_profiles!rides_company_id_fkey(
             company_name,
             credit_balance
-          )
-        `)
-        .order('created_at', { ascending: false });
+          ),
+          vehicle:vehicles(vehicle_number)
+        `, { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
       if (error) throw error;
 
+      setTotalCount(count || 0);
+
       // Transform data to match UI expectations
       const transformedTrips = (data || []).map(trip => {
-        const duration = trip.start_time && trip.end_time
-          ? Math.round((new Date(trip.end_time) - new Date(trip.start_time)) / 60000) + ' mins'
-          : trip.status === 'in_progress' ? 'Ongoing'
-          : trip.status === 'scheduled' ? 'Scheduled'
-          : trip.status === 'cancelled' ? 'Cancelled'
+        const duration = trip.trip_started_at && trip.trip_completed_at
+          ? Math.round((new Date(trip.trip_completed_at) - new Date(trip.trip_started_at)) / 60000) + ' mins'
+          : trip.ride_status === 'trip_started' ? 'Ongoing'
+          : trip.ride_status === 'pending' ? 'Pending'
+          : trip.ride_status === 'cancelled' ? 'Cancelled'
           : 'N/A';
 
         return {
@@ -89,10 +104,12 @@ const TripsPage = () => {
           serviceType: trip.service_type || 'taxi',
           pickup: trip.pickup_location || 'N/A',
           dropoff: trip.dropoff_location || 'N/A',
-          driver: trip.driver?.profiles?.name || trip.driver?.full_name || 'Unassigned',
-          status: trip.status,
+          driver: trip.driver?.name || 'Unassigned',
+          vehicleNumber: trip.vehicle?.vehicle_number || 'N/A',
+          status: trip.ride_status,
           fare: parseFloat(trip.fare || 0),
           paymentMethod: trip.payment_method || 'N/A',
+          paymentStatus: trip.payment_status || 'pending',
           date: trip.created_at ? new Date(trip.created_at).toLocaleString() : 'N/A',
           duration: duration,
           platform: trip.platform
@@ -115,6 +132,69 @@ const TripsPage = () => {
     setShowDetailsModal(true);
   };
 
+  // Open status update modal
+  const openStatusModal = (trip) => {
+    setTripToUpdate(trip);
+    setNewStatus(trip.status);
+    setStatusNotes('');
+    setShowStatusModal(true);
+  };
+
+  // Handle status update
+  const handleUpdateStatus = async () => {
+    if (!tripToUpdate || !newStatus) return;
+
+    if (newStatus === tripToUpdate.status) {
+      alert('Please select a different status');
+      return;
+    }
+
+    try {
+      setUpdating(true);
+
+      // Get current admin user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+
+      // Update ride status
+      const { error: updateError } = await supabase
+        .from('rides')
+        .update({
+          ride_status: newStatus,
+          status_updated_at: new Date().toISOString()
+        })
+        .eq('id', tripToUpdate.id);
+
+      if (updateError) throw updateError;
+
+      // Create status history record
+      const { error: historyError } = await supabase
+        .from('ride_status_history')
+        .insert({
+          ride_id: tripToUpdate.id,
+          old_status: tripToUpdate.status,
+          new_status: newStatus,
+          changed_by: user.id,
+          changed_at: new Date().toISOString(),
+          notes: statusNotes || null
+        });
+
+      if (historyError) throw historyError;
+
+      alert('Trip status updated successfully!');
+      setShowStatusModal(false);
+      setTripToUpdate(null);
+      setNewStatus('');
+      setStatusNotes('');
+      loadTrips(); // Reload trips
+    } catch (error) {
+      console.error('Error updating trip status:', error);
+      alert(`Failed to update status: ${error.message}`);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const filteredTrips = trips.filter(trip => {
     // Filter by tab (corporate vs individual)
     const matchesTab = activeTab === 'individual'
@@ -135,9 +215,12 @@ const TripsPage = () => {
 
   const getStatusBadge = (status) => {
     const badges = {
-      completed: 'bg-green-100 text-green-700',
-      in_progress: 'bg-blue-100 text-blue-700',
-      scheduled: 'bg-yellow-100 text-yellow-700',
+      trip_completed: 'bg-green-100 text-green-700',
+      trip_started: 'bg-blue-100 text-blue-700',
+      driver_on_way: 'bg-blue-100 text-blue-700',
+      driver_arrived: 'bg-blue-100 text-blue-700',
+      accepted: 'bg-yellow-100 text-yellow-700',
+      pending: 'bg-yellow-100 text-yellow-700',
       cancelled: 'bg-red-100 text-red-700'
     };
     return badges[status] || 'bg-gray-100 text-gray-700';
@@ -187,13 +270,22 @@ const TripsPage = () => {
       key: 'actions',
       label: 'Actions',
       render: (_, trip) => (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleViewDetails(trip)}
-        >
-          👁️ View
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleViewDetails(trip)}
+          >
+            👁️ View
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => openStatusModal(trip)}
+          >
+            🔄 Update
+          </Button>
+        </div>
       )
     }
   ];
@@ -247,13 +339,22 @@ const TripsPage = () => {
       key: 'actions',
       label: 'Actions',
       render: (_, trip) => (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => handleViewDetails(trip)}
-        >
-          👁️ View
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleViewDetails(trip)}
+          >
+            👁️ View
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => openStatusModal(trip)}
+          >
+            🔄 Update
+          </Button>
+        </div>
       )
     }
   ];
@@ -317,7 +418,7 @@ const TripsPage = () => {
             <div>
               <p className="text-sm text-slate-600">In Progress</p>
               <p className="text-2xl font-bold text-blue-600">
-                {filteredTrips.filter(t => t.status === 'in_progress').length}
+                {filteredTrips.filter(t => ['trip_started', 'driver_on_way', 'driver_arrived'].includes(t.status)).length}
               </p>
             </div>
             <div className="text-3xl">🔄</div>
@@ -328,7 +429,7 @@ const TripsPage = () => {
             <div>
               <p className="text-sm text-slate-600">Completed</p>
               <p className="text-2xl font-bold text-green-600">
-                {filteredTrips.filter(t => t.status === 'completed').length}
+                {filteredTrips.filter(t => t.status === 'trip_completed').length}
               </p>
             </div>
             <div className="text-3xl">✅</div>
@@ -339,7 +440,7 @@ const TripsPage = () => {
             <div>
               <p className="text-sm text-slate-600">Total Revenue</p>
               <p className="text-2xl font-bold text-yellow-600">
-                ${filteredTrips.filter(t => t.status === 'completed').reduce((sum, t) => sum + t.fare, 0).toFixed(2)}
+                ${filteredTrips.filter(t => t.status === 'trip_completed' && t.paymentStatus === 'paid').reduce((sum, t) => sum + t.fare, 0).toFixed(2)}
               </p>
             </div>
             <div className="text-3xl">💰</div>
@@ -410,9 +511,10 @@ const TripsPage = () => {
               className="px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
             >
               <option value="all">All Status</option>
-              <option value="completed">Completed</option>
-              <option value="in_progress">In Progress</option>
-              <option value="scheduled">Scheduled</option>
+              <option value="trip_completed">Completed</option>
+              <option value="trip_started">In Progress</option>
+              <option value="accepted">Accepted</option>
+              <option value="pending">Pending</option>
               <option value="cancelled">Cancelled</option>
             </select>
             <select
@@ -485,11 +587,57 @@ const TripsPage = () => {
             </div>
           </div>
         ) : (
-          <DataTable
-            columns={columns}
-            data={filteredTrips}
-            emptyMessage="No trips found"
-          />
+          <>
+            <DataTable
+              columns={columns}
+              data={filteredTrips}
+              emptyMessage="No trips found"
+            />
+            
+            {/* Pagination Controls */}
+            <div className="bg-white border-t border-slate-200 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <span className="text-sm text-slate-600">
+                  Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, totalCount)} of {totalCount} trips
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="px-3 py-1 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                >
+                  <option value="10">10 per page</option>
+                  <option value="20">20 per page</option>
+                  <option value="50">50 per page</option>
+                  <option value="100">100 per page</option>
+                </select>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-slate-600">
+                  Page {currentPage} of {Math.ceil(totalCount / pageSize)}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(prev => Math.min(Math.ceil(totalCount / pageSize), prev + 1))}
+                  disabled={currentPage >= Math.ceil(totalCount / pageSize)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </>
         )}
       </div>
 
@@ -583,6 +731,87 @@ const TripsPage = () => {
           </div>
         )}
       </Modal>
+
+      {/* Status Update Modal */}
+      {tripToUpdate && (
+        <Modal
+          isOpen={showStatusModal}
+          onClose={() => {
+            setShowStatusModal(false);
+            setTripToUpdate(null);
+            setNewStatus('');
+            setStatusNotes('');
+          }}
+          title={`🔄 Update Trip Status - ${tripToUpdate.id}`}
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="bg-slate-50 rounded-lg p-4">
+              <h4 className="font-semibold text-slate-700 mb-2">Current Status</h4>
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusBadge(tripToUpdate.status)}`}>
+                {tripToUpdate.status.replace('_', ' ').charAt(0).toUpperCase() + tripToUpdate.status.replace('_', ' ').slice(1)}
+              </span>
+            </div>
+
+            {/* New Status Selection */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                New Status <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={newStatus}
+                onChange={(e) => setNewStatus(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              >
+                <option value="pending">Pending</option>
+                <option value="accepted">Accepted</option>
+                <option value="driver_on_way">Driver On Way</option>
+                <option value="driver_arrived">Driver Arrived</option>
+                <option value="trip_started">Trip Started</option>
+                <option value="trip_completed">Trip Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+
+            {/* Notes */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Notes (Optional)
+              </label>
+              <textarea
+                value={statusNotes}
+                onChange={(e) => setStatusNotes(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                rows="3"
+                placeholder="Add any notes about this status change..."
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowStatusModal(false);
+                  setTripToUpdate(null);
+                  setNewStatus('');
+                  setStatusNotes('');
+                }}
+                disabled={updating}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleUpdateStatus}
+                disabled={updating}
+              >
+                {updating ? 'Updating...' : 'Update Status'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

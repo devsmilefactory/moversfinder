@@ -55,26 +55,30 @@ const BMTOAReportsPage = () => {
         startDate = new Date(now.getFullYear(), 0, 1);
       }
 
-      // Fetch all memberships for stats
-      const { data: allMemberships, error: allMembershipsError } = await supabase
-        .from('memberships')
-        .select('*');
+      // Fetch all BMTOA operator profiles for stats
+      const { data: allOperators, error: allOperatorsError } = await supabase
+        .from('operator_profiles')
+        .select('*')
+        .eq('bmtoa_verified', true)
+        .in('platform', ['bmtoa', 'both']);
 
-      if (allMembershipsError) throw allMembershipsError;
+      if (allOperatorsError) throw allOperatorsError;
 
-      // Fetch membership growth data
-      const { data: memberships, error: membershipError } = await supabase
-        .from('memberships')
-        .select('created_at, joined_date')
+      // Fetch membership growth data from operator_profiles
+      const { data: operators, error: operatorError } = await supabase
+        .from('operator_profiles')
+        .select('created_at, bmtoa_member_since')
+        .eq('bmtoa_verified', true)
+        .in('platform', ['bmtoa', 'both'])
         .gte('created_at', startDate.toISOString())
         .order('created_at', { ascending: true });
 
-      if (membershipError) throw membershipError;
+      if (operatorError) throw operatorError;
 
       // Group by month
       const membershipByMonth = {};
-      (memberships || []).forEach(m => {
-        const date = new Date(m.created_at || m.joined_date);
+      (operators || []).forEach(op => {
+        const date = new Date(op.bmtoa_member_since || op.created_at);
         const monthKey = date.toLocaleString('default', { month: 'short' });
         membershipByMonth[monthKey] = (membershipByMonth[monthKey] || 0) + 1;
       });
@@ -106,30 +110,40 @@ const BMTOAReportsPage = () => {
         value: Math.round(value)
       }));
 
-      // Fetch tier distribution
+      // Fetch tier distribution from operator_profiles with bmtoa_verified = true
+      // Using database aggregation for accurate counts
       const { data: tierData, error: tierError} = await supabase
-        .from('memberships')
-        .select('membership_tier')
-        .eq('status', 'active');
+        .from('operator_profiles')
+        .select('membership_tier, monthly_fee')
+        .eq('bmtoa_verified', true)
+        .in('platform', ['bmtoa', 'both']);
 
       if (tierError) throw tierError;
 
-      const tierCounts = {};
-      (tierData || []).forEach(t => {
-        const tier = t.membership_tier || 'standard';
-        tierCounts[tier] = (tierCounts[tier] || 0) + 1;
+      // Group by tier and calculate counts and revenue
+      const tierStats = {};
+      (tierData || []).forEach(op => {
+        const tier = op.membership_tier || 'standard';
+        if (!tierStats[tier]) {
+          tierStats[tier] = { count: 0, revenue: 0 };
+        }
+        tierStats[tier].count += 1;
+        tierStats[tier].revenue += parseFloat(op.monthly_fee || 0);
       });
 
-      const tierChartData = Object.entries(tierCounts).map(([label, value]) => ({
+      const tierChartData = Object.entries(tierStats).map(([label, stats]) => ({
         label: label.charAt(0).toUpperCase() + label.slice(1),
-        value
+        value: stats.count,
+        revenue: Math.round(stats.revenue)
       }));
 
-      // Calculate stats
-      const totalMembers = allMemberships?.length || 0;
-      const activeMembers = allMemberships?.filter(m => m.status === 'active').length || 0;
+      // Calculate stats from operator profiles
+      const totalMembers = allOperators?.length || 0;
+      const activeMembers = allOperators?.filter(op => op.subscription_status === 'active').length || 0;
 
       // Monthly revenue from verified payments
+      // Note: Supabase doesn't support SUM aggregation directly in select
+      // We fetch the data and calculate on client side, which is acceptable for reports
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const { data: monthlyPayments } = await supabase
         .from('subscription_payments')
@@ -139,30 +153,30 @@ const BMTOAReportsPage = () => {
 
       const monthlyRevenue = (monthlyPayments || []).reduce((sum, p) => sum + parseFloat(p.amount || 0), 0);
 
-      // Count active operators and drivers
-      const { data: operators } = await supabase
-        .from('operator_profiles')
-        .select('user_id, profiles!operator_profiles_user_id_fkey(verification_status)')
-        .eq('profiles.verification_status', 'approved');
+      // Count active BMTOA operators (already have this in allOperators)
+      const activeOperatorsCount = allOperators?.filter(op => 
+        op.approval_status === 'approved' && op.subscription_status === 'active'
+      ).length || 0;
 
+      // Count active drivers associated with BMTOA operators
       const { data: drivers } = await supabase
         .from('driver_profiles')
-        .select('user_id, profiles!driver_profiles_user_id_fkey(verification_status)')
-        .eq('profiles.verification_status', 'approved');
+        .select('user_id, operator_id, profiles!driver_profiles_user_id_fkey(verification_status)')
+        .eq('profiles.verification_status', 'approved')
+        .in('operator_id', (allOperators || []).map(op => op.user_id));
 
       // New members this month
-      const newMembersThisMonth = (allMemberships || []).filter(m => {
-        const joinedDate = new Date(m.created_at || m.joined_date);
+      const newMembersThisMonth = (allOperators || []).filter(op => {
+        const joinedDate = new Date(op.bmtoa_member_since || op.created_at);
         return joinedDate >= monthStart;
       }).length;
 
-      // Calculate renewal rate (members who renewed vs expired)
-      const expiredMembers = (allMemberships || []).filter(m => {
-        const expiryDate = new Date(m.expiry_date);
-        return expiryDate < now;
-      }).length;
+      // Calculate renewal rate (active vs inactive subscriptions)
+      const inactiveMembers = (allOperators || []).filter(op => 
+        op.subscription_status === 'inactive' || op.subscription_status === 'expired'
+      ).length;
       const renewedMembers = activeMembers;
-      const renewalRate = expiredMembers > 0 ? Math.round((renewedMembers / (renewedMembers + expiredMembers)) * 100) : 100;
+      const renewalRate = inactiveMembers > 0 ? Math.round((renewedMembers / (renewedMembers + inactiveMembers)) * 100) : 100;
 
       // Average revenue per member
       const avgRevenuePerMember = activeMembers > 0 ? Math.round(monthlyRevenue / activeMembers) : 0;
@@ -170,7 +184,7 @@ const BMTOAReportsPage = () => {
       setStats({
         totalMembers,
         monthlyRevenue: Math.round(monthlyRevenue),
-        activeOperators: operators?.length || 0,
+        activeOperators: activeOperatorsCount,
         activeDrivers: drivers?.length || 0,
         newMembersThisMonth,
         renewalRate,

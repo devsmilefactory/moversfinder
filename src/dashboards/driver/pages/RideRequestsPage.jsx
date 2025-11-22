@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import DriverRidesHub from '../components/DriverRidesHub';
+import DriverRidesPage from '../DriverRidesPage';
 import ProfileSwitcher from '../../../components/profiles/ProfileSwitcher';
 import useAuthStore from '../../../stores/authStore';
 import useProfileStore from '../../../stores/profileStore';
@@ -9,10 +9,11 @@ import useProfileStore from '../../../stores/profileStore';
  * Ride Requests Page (Driver)
  *
  * Primary interface for drivers after login
- * Now uses DriverRidesHub with inDrive-style bidding system:
- * - Available Rides: Rides to bid on
+ * Now uses DriverRidesPage with unified ride feed system:
+ * - Available Rides: Rides to bid on (within 5km radius)
  * - My Bids: Pending bids waiting for passenger acceptance
  * - Active Rides: Accepted rides in progress
+ * - Completed Rides: Historical ride data
  */
 const RideRequestsPage = () => {
   const navigate = useNavigate();
@@ -99,7 +100,7 @@ const RideRequestsPage = () => {
         {/* Main Content */}
         <div className="py-8">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <DriverRidesHub />
+            <DriverRidesPage />
           </div>
         </div>
       </div>

@@ -3,6 +3,8 @@ import DashboardLayout from '../shared/DashboardLayout';
 import StatsCard from '../shared/StatsCard';
 import DataTable from '../shared/DataTable';
 import { LineChart, BarChart, PieChart } from '../shared/Charts';
+import useAuthStore from '../../stores/authStore';
+import { useActiveRideCheck } from '../../hooks/useActiveRideCheck';
 
 /**
  * Corporate User Dashboard
@@ -11,17 +13,11 @@ import { LineChart, BarChart, PieChart } from '../shared/Charts';
  * Supabase-ready with multi-user access control
  */
 const CorporateDashboard = () => {
-  // Mock user data - will be replaced with Supabase auth
-  const user = {
-    id: 1,
-    name: 'Jane Smith',
-    email: 'jane.smith@company.com',
-    userType: 'corporate',
-    companyName: 'Tech Solutions Ltd',
-    phone: '+263 912 345 678',
-    memberSince: '2024-01-15',
-    accountTier: 'Professional', // Starter, Professional, Enterprise
-  };
+  // Get authenticated user from store
+  const { user } = useAuthStore();
+  
+  // Check for active rides on mount and show toast notification
+  const { activeRide } = useActiveRideCheck(user?.id);
 
   // Mock stats - will be replaced with Supabase queries
   const stats = {

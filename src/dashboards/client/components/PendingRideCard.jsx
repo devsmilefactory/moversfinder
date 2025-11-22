@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Bell, MapPin, Calendar, DollarSign, XCircle, Loader2, Car, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Repeat } from 'lucide-react';
-import { supabase } from '../../../lib/supabase';
 import Button from '../../shared/Button';
+import { useCancelRide } from '../../../hooks/useCancelRide';
 
 /**
  * Card component for pending rides (awaiting driver offers)
  */
 const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled }) => {
   const [cancelling, setCancelling] = useState(false);
+  const { cancelRide } = useCancelRide();
 
   // Get service type icon and label
   const getServiceTypeInfo = () => {
@@ -48,24 +49,15 @@ const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled }) => {
 
     setCancelling(true);
     try {
-      const { error } = await supabase
-        .from('rides')
-        .update({
-          ride_status: 'cancelled',
-          cancelled_at: new Date().toISOString(),
-          cancelled_by: 'passenger',
-          cancellation_reason: 'Cancelled by passenger',
-          status_updated_at: new Date().toISOString()
-        })
-        .eq('id', ride.id);
+      const result = await cancelRide({
+        rideId: ride.id,
+        role: 'passenger',
+        reason: 'Cancelled by passenger',
+      });
 
-      if (error) throw error;
-
-      alert('✅ Ride cancelled successfully');
-      if (onCancelled) onCancelled();
-    } catch (error) {
-      console.error('Error cancelling ride:', error);
-      alert('❌ Failed to cancel ride: ' + error.message);
+      if (result?.success && onCancelled) {
+        onCancelled();
+      }
     } finally {
       setCancelling(false);
     }
@@ -149,15 +141,39 @@ const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled }) => {
         </div>
       )}
 
-      {/* Offer Notification */}
+      {/* Offer Notification - Prominent with Animation */}
       {offerCount > 0 && (
-        <div className="mb-3 flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-2.5 border border-blue-200">
-          <Bell className="w-5 h-5 text-blue-600 animate-pulse" />
-          <div className="flex-1">
-            <div className="text-sm font-bold text-blue-700">
-              {offerCount} Driver Offer{offerCount !== 1 ? 's' : ''} Received!
+        <div className="mb-3 relative overflow-hidden">
+          {/* Animated background gradient */}
+          <div className="absolute inset-0 bg-gradient-to-r from-green-400 via-blue-500 to-purple-500 animate-pulse opacity-20"></div>
+          
+          {/* Main notification content */}
+          <div className="relative flex items-center gap-3 bg-gradient-to-r from-green-50 to-blue-50 rounded-xl px-4 py-4 border-2 border-green-400 shadow-lg">
+            {/* Animated bell icon */}
+            <div className="flex-shrink-0">
+              <div className="relative">
+                <Bell className="w-7 h-7 text-green-600 animate-bounce" />
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping"></div>
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full"></div>
+              </div>
             </div>
-            <div className="text-xs text-blue-600">Tap to view and accept</div>
+            
+            {/* Text content */}
+            <div className="flex-1">
+              <div className="text-base font-bold text-green-700 mb-0.5">
+                🎉 {offerCount} Driver Offer{offerCount !== 1 ? 's' : ''} Received!
+              </div>
+              <div className="text-sm text-green-600 font-medium">
+                Tap card to view details and accept
+              </div>
+            </div>
+            
+            {/* Count badge */}
+            <div className="flex-shrink-0">
+              <div className="bg-green-500 text-white font-bold text-lg px-3 py-2 rounded-full shadow-md">
+                {offerCount}
+              </div>
+            </div>
           </div>
         </div>
       )}

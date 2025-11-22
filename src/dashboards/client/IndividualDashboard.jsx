@@ -5,6 +5,11 @@ import DataTable from '../shared/DataTable';
 import { LineChart } from '../shared/Charts';
 import useAuthStore from '../../stores/authStore';
 import useSavedPlacesStore from '../../stores/savedPlacesStore';
+import { useActiveRideCheck } from '../../hooks/useActiveRideCheck';
+import { supabase } from '../../lib/supabase';
+import SeriesProgressBar from '../../components/recurring/SeriesProgressBar';
+import RecurringSeriesModal from '../../components/modals/RecurringSeriesModal';
+import { Calendar, Clock } from 'lucide-react';
 
 /**
  * Individual User Dashboard
@@ -16,16 +21,72 @@ const IndividualDashboard = () => {
   // Get authenticated user from store
   const { user } = useAuthStore();
 
+  // Check for active rides on mount and show toast notification
+  const { activeRide } = useActiveRideCheck(user?.id);
+
   // Get saved places from database-backed store
   const savedPlaces = useSavedPlacesStore((state) => state.savedPlaces);
   const loadSavedPlaces = useSavedPlacesStore((state) => state.loadSavedPlaces);
 
-  // Load saved places on mount
+  // Recurring series state
+  const [recurringSeries, setRecurringSeries] = useState([]);
+  const [selectedSeries, setSelectedSeries] = useState(null);
+  const [showSeriesModal, setShowSeriesModal] = useState(false);
+
+  // Load saved places and recurring series on mount
   useEffect(() => {
     if (user?.id) {
       loadSavedPlaces(user.id);
+      loadRecurringSeries();
     }
   }, [user?.id, loadSavedPlaces]);
+
+  // Load recurring series
+  const loadRecurringSeries = async () => {
+    if (!user?.id) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('recurring_trip_series')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('status', ['active', 'paused'])
+        .order('next_trip_date', { ascending: true, nullsFirst: false })
+        .limit(3); // Show top 3 series
+
+      if (error) throw error;
+
+      setRecurringSeries(data || []);
+    } catch (error) {
+      console.error('Error loading recurring series:', error);
+    }
+  };
+
+  // Format next trip date
+  const formatNextTripDate = (dateString) => {
+    if (!dateString) return null;
+    
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = date - now;
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+    if (diffHours < 24 && diffHours >= 0) {
+      return `Today at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) {
+      return `Tomorrow at ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    return date.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric', 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    });
+  };
 
   // Mock stats - will be replaced with Supabase queries
   const stats = {
@@ -237,6 +298,75 @@ const IndividualDashboard = () => {
         />
       </div>
 
+      {/* Recurring Series Widget */}
+      {recurringSeries.length > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-slate-700">My Recurring Trips</h2>
+            <button 
+              onClick={() => window.location.href = '/client/recurring-trips'}
+              className="text-indigo-600 hover:text-indigo-700 text-sm font-medium"
+            >
+              View All →
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {recurringSeries.map((series) => {
+              const tripsRemaining = series.total_trips - series.completed_trips - series.cancelled_trips;
+              const nextTripFormatted = formatNextTripDate(series.next_trip_date);
+              const isWithin24Hours = series.next_trip_date && new Date(series.next_trip_date) - new Date() < 24 * 60 * 60 * 1000;
+
+              return (
+                <div 
+                  key={series.id} 
+                  className="bg-white rounded-xl p-5 shadow-sm border-2 border-indigo-200 hover:border-indigo-300 transition-all cursor-pointer"
+                  onClick={() => {
+                    setSelectedSeries(series);
+                    setShowSeriesModal(true);
+                  }}
+                >
+                  {/* Series Header */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-2xl">🔄</span>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-semibold text-slate-900 truncate">
+                        {series.series_name || 'Recurring Trip'}
+                      </h3>
+                      <p className="text-xs text-slate-600 capitalize">
+                        {series.recurrence_pattern?.replace('_', ' ')}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Progress */}
+                  <div className="mb-3">
+                    <SeriesProgressBar
+                      totalTrips={series.total_trips}
+                      completedTrips={series.completed_trips}
+                      cancelledTrips={series.cancelled_trips}
+                      size="sm"
+                      showPercentage={false}
+                    />
+                  </div>
+
+                  {/* Next Trip */}
+                  {series.status === 'active' && nextTripFormatted && (
+                    <div className={`rounded-lg p-2 ${isWithin24Hours ? 'bg-yellow-50 border border-yellow-200' : 'bg-indigo-50'}`}>
+                      <div className="flex items-center gap-1.5">
+                        <Clock className={`w-3.5 h-3.5 ${isWithin24Hours ? 'text-yellow-600' : 'text-indigo-600'}`} />
+                        <p className={`text-xs font-medium ${isWithin24Hours ? 'text-yellow-900' : 'text-indigo-900'}`}>
+                          {nextTripFormatted}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         {/* Spending Chart */}
@@ -358,6 +488,20 @@ const IndividualDashboard = () => {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Recurring Series Modal */}
+      {selectedSeries && (
+        <RecurringSeriesModal
+          isOpen={showSeriesModal}
+          onClose={() => {
+            setShowSeriesModal(false);
+            setSelectedSeries(null);
+          }}
+          series={selectedSeries}
+          userId={user?.id}
+          onSeriesUpdated={loadRecurringSeries}
+        />
       )}
     </DashboardLayout>
   );

@@ -22,7 +22,7 @@ const NotificationBell = ({ className = '' }) => {
     (async () => {
       const { data } = await supabase
         .from('notifications')
-        .select('id,title,message,type,action_url,created_at,is_read,read_at')
+        .select('id,title,message,type,action_url,created_at,read,read_at')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(50);
@@ -34,7 +34,7 @@ const NotificationBell = ({ className = '' }) => {
           type: r.type,
           url: r.action_url,
           createdAt: r.created_at,
-          read: !!(r.is_read || r.read_at)
+          read: !!(r.read || r.read_at)
         })));
       }
     })();
@@ -54,45 +54,21 @@ const NotificationBell = ({ className = '' }) => {
           type: n.type,
           url: n.action_url,
           createdAt: n.created_at,
-          read: !!(n.is_read || n.read_at)
+          read: !!(n.read || n.read_at)
         }, ...prev].slice(0, 50)));
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` }, (payload) => {
         const n = payload.new;
-        setItems(prev => prev.map(i => i.id === n.id ? { ...i, read: !!(n.is_read || n.read_at) } : i));
+        setItems(prev => prev.map(i => i.id === n.id ? { ...i, read: !!(n.read || n.read_at) } : i));
       })
       .subscribe();
 
     return () => { try { supabase.removeChannel(ch); } catch {} };
   }, [user?.id]);
 
-  // Optional: watch rides status and attempt to persist notifications (best-effort)
-  useEffect(() => {
-    if (!user?.id) return;
-    const ch = supabase
-      .channel(`ride-status:${user.id}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rides', filter: `user_id=eq.${user.id}` }, async (payload) => {
-        const ride = payload.new;
-        if (!ride) return;
-        const id = ride.id;
-        const curr = ride.ride_status || ride.status;
-        const prev = lastStatusesRef.current[id];
-        if (curr && prev !== curr && STATUS_LABELS[curr]) {
-          lastStatusesRef.current[id] = curr;
-          try {
-            await supabase.from('notifications').insert({
-              user_id: user.id,
-              title: 'Ride update',
-              message: STATUS_LABELS[curr],
-              type: 'ride',
-              action_url: '/user/rides'
-            });
-          } catch {}
-        }
-      })
-      .subscribe();
-    return () => { try { supabase.removeChannel(ch); } catch {} };
-  }, [user?.id]);
+  // NOTE: ride-status → notifications persistence moved into centralized
+  // ride lifecycle logic and notificationService. The bell now only listens
+  // to the notifications table and does not create notifications on its own.
 
   const unread = useMemo(() => items.filter(i => !i.read).length, [items]);
 
@@ -101,9 +77,9 @@ const NotificationBell = ({ className = '' }) => {
     try {
       await supabase
         .from('notifications')
-        .update({ is_read: true, read_at: new Date().toISOString() })
+        .update({ read: true, read_at: new Date().toISOString() })
         .eq('user_id', user.id)
-        .is('is_read', false);
+        .is('read', false);
     } catch {}
     setItems(prev => prev.map(i => ({ ...i, read: true })));
   };
@@ -112,7 +88,7 @@ const NotificationBell = ({ className = '' }) => {
     try {
       await supabase
         .from('notifications')
-        .update({ is_read: true, read_at: new Date().toISOString() })
+        .update({ read: true, read_at: new Date().toISOString() })
         .eq('id', rowId)
         .eq('user_id', user.id);
     } catch {}

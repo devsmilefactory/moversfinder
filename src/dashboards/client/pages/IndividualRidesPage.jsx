@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Menu, RefreshCw } from 'lucide-react';
 import PWALeftDrawer from '../../../components/layouts/PWALeftDrawer';
 import RideDetailsModal from '../components/RideDetailsModal';
@@ -12,6 +12,9 @@ import SavedTripCard from '../components/SavedTripCard';
 import useAuthStore from '../../../stores/authStore';
 import useRidesStore from '../../../stores/ridesStore';
 import { supabase } from '../../../lib/supabase';
+import { useToast } from '../../../components/ui/ToastProvider';
+import useRideNotifications from '../../../hooks/useRideNotifications';
+import useRatingStore from '../../../stores/ratingStore';
 
 /**
  * Individual My Rides Page - PWA version with tabbed interface
@@ -20,6 +23,7 @@ import { supabase } from '../../../lib/supabase';
 const IndividualRidesPage = () => {
   const { user } = useAuthStore();
   const { rides, ridesLoading, loadRides } = useRidesStore();
+  const { addToast } = useToast();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedRide, setSelectedRide] = useState(null);
   const [showRideDetails, setShowRideDetails] = useState(false);
@@ -27,6 +31,13 @@ const IndividualRidesPage = () => {
   const [offerCounts, setOfferCounts] = useState({});
   const [activeTab, setActiveTab] = useState('pending');
   const [filters, setFilters] = useState({ serviceType: 'all', rideTiming: 'all' });
+  const previousOfferCountsRef = useRef({});
+
+  // Initialize ride notifications hook for real-time updates
+  useRideNotifications(user?.id);
+
+  // Shared rating store to prevent duplicate auto rating modals per ride
+  const { shouldShowRating, markRatingShown } = useRatingStore();
 
   useEffect(() => {
     if (user?.id) {
@@ -41,9 +52,9 @@ const IndividualRidesPage = () => {
     // Load initial offer counts
     loadOfferCounts();
 
-    // Set up real-time subscription for offer updates
+    // Set up real-time subscription for offer updates and ride status changes
     const channel = supabase
-      .channel(`user-ride-offers-${user.id}`)
+      .channel(`user-ride-updates-${user.id}`)
       .on(
         'postgres_changes',
         {
@@ -55,13 +66,27 @@ const IndividualRidesPage = () => {
           loadOfferCounts();
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'rides',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('🔄 Ride status updated:', payload.new);
+          // Reload rides to reflect status changes
+          loadRides(user.id, 'individual');
+        }
+      )
       .subscribe();
 
     return () => {
       channel.unsubscribe();
     };
 
-  }, [user?.id, rides.length]);
+  }, [user?.id, rides.length, loadRides]);
 
   const loadOfferCounts = async () => {
     if (!user?.id) return;
@@ -82,8 +107,6 @@ const IndividualRidesPage = () => {
       // Count pending offers for each ride
       const counts = {};
       data.forEach(offer => {
-
-
         if (!counts[offer.ride_id]) {
           counts[offer.ride_id] = { pending: 0, total: 0 };
         }
@@ -93,6 +116,36 @@ const IndividualRidesPage = () => {
         }
       });
 
+      // Check for new offers and show toast notification
+      Object.keys(counts).forEach(rideId => {
+        const previousCount = previousOfferCountsRef.current[rideId]?.pending || 0;
+        const currentCount = counts[rideId].pending;
+        
+        if (currentCount > previousCount) {
+          const newOffersCount = currentCount - previousCount;
+          const ride = rides.find(r => r.id === rideId);
+          
+          // Show toast notification for new offers
+          addToast({
+            type: 'success',
+            title: '🎉 New Driver Offer!',
+            message: `${newOffersCount} new offer${newOffersCount > 1 ? 's' : ''} received for your ${ride?.service_type || 'ride'}. Tap to view!`,
+            duration: 10000,
+            onClick: () => {
+              setSelectedRide(ride);
+              setShowRideDetails(true);
+            }
+          });
+          
+          // Play notification sound (optional)
+          try {
+            const audio = new Audio('/notification.mp3');
+            audio.play().catch(() => {});
+          } catch (e) {}
+        }
+      });
+
+      previousOfferCountsRef.current = counts;
       setOfferCounts(counts);
     } catch (error) {
       console.error('Error loading offer counts:', error);
@@ -139,7 +192,7 @@ const IndividualRidesPage = () => {
         saved.push(ride);
       } else if (status === 'cancelled') {
         cancelled.push(ride);
-      } else if (status === 'completed') {
+      } else if (status === 'trip_completed' || status === 'completed') {
         completed.push(ride);
       } else if (['accepted','driver_on_way','driver_arrived','trip_started','driver_assigned','offer_accepted','driver_en_route','in_progress','journey_started'].includes(status)) {
         active.push(ride);
@@ -172,16 +225,17 @@ const IndividualRidesPage = () => {
         (payload) => {
           const ride = payload.new;
           const status = ride?.ride_status || ride?.status;
-          if (status === 'completed' && !ride?.rating) {
+          if ((status === 'trip_completed' || status === 'completed') && shouldShowRating(ride.id, ride.rated_at)) {
             setSelectedRide(ride);
             setAutoOpenRating(true);
             setShowRideDetails(true);
+            markRatingShown(ride.id);
           }
         }
       )
       .subscribe();
     return () => { channel.unsubscribe(); };
-  }, [user?.id]);
+  }, [user?.id, shouldShowRating, markRatingShown]);
 
   // Realtime: refresh rides list on any change for this user
   useEffect(() => {

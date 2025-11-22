@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import Button from '../../../components/ui/Button';
+import { useRideStatus, RIDE_STATUSES } from '../../../hooks/useRideStatus';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../stores/authStore';
 import { getNavigationUrlTo } from '../../../utils/navigation';
+import { useRideCompletion } from '../../../hooks/useRideCompletion';
+import { notifyStatusUpdateFromOverlay } from '../../../services/notificationService';
 
 /**
  * ActiveRideOverlay Component
@@ -11,7 +14,7 @@ import { getNavigationUrlTo } from '../../../utils/navigation';
  * Displays an overlay on all tabs when driver has an active ride
  * Prevents accepting other rides and provides quick access to active ride actions
  */
-const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
+const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss, onCompleted }) => {
   if (!ride) return null;
 
   const [localRide, setLocalRide] = useState(ride);
@@ -70,6 +73,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
   const { user } = useAuthStore();
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const { completeRide, completing } = useRideCompletion();
 
   useEffect(() => {
     setLocalRide(ride);
@@ -111,10 +115,10 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
   // Allowed transitions and next-action UI
   const getNextAction = () => {
     const actions = {
-      accepted: { label: isScheduled ? 'Begin Trip' : 'Start Driving to Pickup', status: 'driver_on_way', variant: 'primary' },
-      driver_on_way: { label: 'Mark as Arrived', status: 'driver_arrived', variant: 'primary' },
-      driver_arrived: { label: 'Start Trip', status: 'trip_started', variant: 'success' },
-      trip_started: { label: 'Complete Trip', status: 'completed', variant: 'success' },
+      [RIDE_STATUSES.ACCEPTED]: { label: isScheduled ? 'Begin Trip' : 'Start Driving to Pickup', status: RIDE_STATUSES.DRIVER_ON_WAY, variant: 'primary' },
+      [RIDE_STATUSES.DRIVER_ON_WAY]: { label: 'Mark as Arrived', status: RIDE_STATUSES.DRIVER_ARRIVED, variant: 'primary' },
+      [RIDE_STATUSES.DRIVER_ARRIVED]: { label: 'Start Trip', status: RIDE_STATUSES.TRIP_STARTED, variant: 'success' },
+      [RIDE_STATUSES.TRIP_STARTED]: { label: 'Complete Trip', status: RIDE_STATUSES.TRIP_COMPLETED, variant: 'success' },
     };
     return actions[localRide.ride_status] || null;
   };
@@ -122,43 +126,123 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
   const updateTripStatus = async (newStatus) => {
     setUpdatingStatus(true);
     try {
+      const { validateTransition, RIDE_STATUSES: STATUSES } = useRideStatus();
+
       const allowedFrom = {
-        driver_on_way: 'accepted',
-        driver_arrived: 'driver_on_way',
-        trip_started: 'driver_arrived',
-        completed: 'trip_started',
+        [STATUSES.DRIVER_ON_WAY]: STATUSES.ACCEPTED,
+        [STATUSES.DRIVER_ARRIVED]: STATUSES.DRIVER_ON_WAY,
+        [STATUSES.TRIP_STARTED]: STATUSES.DRIVER_ARRIVED,
+        [STATUSES.TRIP_COMPLETED]: STATUSES.TRIP_STARTED,
       };
       const expectedCurrent = allowedFrom[newStatus];
       if (!expectedCurrent) throw new Error('Invalid status transition');
 
+      const updateData = {
+        ride_status: newStatus,
+        status_updated_at: new Date().toISOString(),
+      };
+
+      // Add status-specific fields
+      if (newStatus === 'driver_arrived') {
+        updateData.estimated_arrival_time = new Date().toISOString();
+      } else if (newStatus === 'trip_started') {
+        updateData.actual_pickup_time = new Date().toISOString();
+      } else if (newStatus === 'trip_completed') {
+        // Delegate to shared completion hook for canonical completion behavior
+        const result = await completeRide({
+          rideId: ride.id,
+          passengerId: ride.user_id,
+          notifyPassenger: true,
+          extraRideUpdates: {
+            // Preserve any additional overlay-specific fields
+            ...updateData,
+            ride_status: undefined, // handled in hook
+          },
+        });
+
+        if (!result?.success) {
+          throw result.error || new Error('Failed to complete ride');
+        }
+
+        // Optimistically update local UI so the label/stepper change immediately
+        const completedRide = { ...localRide, ride_status: newStatus };
+        setLocalRide(completedRide);
+
+        // Let parent know about completion so it can refresh feeds / show rating modal
+        try {
+          if (typeof onCompleted === 'function') {
+            onCompleted(completedRide);
+          }
+        } catch (callbackError) {
+          console.error('Error in onCompleted callback:', callbackError);
+        }
+
+        // Always dismiss overlay on completion
+        try {
+          if (onDismiss) {
+            onDismiss();
+          }
+        } catch (dismissError) {
+          console.error('Error dismissing overlay after completion:', dismissError);
+        }
+
+        addToast({ type: 'success', title: 'Trip status updated successfully' });
+        return;
+      }
+
       const { error } = await supabase
         .from('rides')
-        .update({
-          ride_status: newStatus,
-          status_updated_at: new Date().toISOString(),
-          ...(newStatus === 'driver_arrived' && { estimated_arrival_time: new Date().toISOString() }),
-          ...(newStatus === 'trip_started' && { actual_pickup_time: new Date().toISOString() }),
-          ...(newStatus === 'completed' && { actual_dropoff_time: new Date().toISOString(), payment_status: 'paid' })
-        })
+        .update(updateData)
         .eq('id', ride.id)
         .eq('driver_id', user.id)
         .eq('ride_status', expectedCurrent);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database error updating ride status:', error);
+        throw error;
+      }
 
       // Optimistically update local UI so the label/stepper change immediately
       setLocalRide((prev) => ({ ...prev, ride_status: newStatus }));
 
-      // If completed, mark driver available again
-      if (newStatus === 'completed') {
-        try { await supabase.from('driver_locations').update({ is_available: true }).eq('driver_id', user.id); } catch {}
-        try { onDismiss && onDismiss(); } catch {}
+      // Send notifications to passenger for all status changes except completion
+      const notificationMessages = {
+        driver_on_way: {
+          title: '🚗 Driver En Route',
+          message: 'Your driver is on the way to pick you up!'
+        },
+        driver_arrived: {
+          title: '📍 Driver Arrived',
+          message: 'Your driver has arrived at the pickup location.'
+        },
+        trip_started: {
+          title: '🎯 Journey Started',
+          message: 'Your trip has started. Have a safe journey!'
+        }
+      };
+
+      const notification = notificationMessages[newStatus];
+      if (notification && ride.user_id) {
+        try {
+          await notifyStatusUpdateFromOverlay({
+            userId: ride.user_id,
+            rideId: ride.id,
+            title: notification.title,
+            message: notification.message,
+          });
+        } catch (e) {
+          console.error('Error sending notification:', e);
+        }
       }
 
-      addToast({ type: 'success', title: 'Trip status updated' });
+      addToast({ type: 'success', title: 'Trip status updated successfully' });
     } catch (e) {
-      console.error(e);
-      addToast({ type: 'error', title: 'Failed to update status' });
+      console.error('Error updating trip status:', e);
+      addToast({
+        type: 'error',
+        title: 'Failed to update status',
+        message: e.message || 'Please try again or contact support if the issue persists'
+      });
     } finally {
       setUpdatingStatus(false);
     }
@@ -178,26 +262,27 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-black bg-opacity-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4 relative">
+    <div className="fixed inset-0 z-40 flex justify-center items-center p-2 sm:p-4 pointer-events-none overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-4 space-y-3 relative pointer-events-auto">
         <button
-          aria-label="Close overlay"
+          aria-label="Minimize overlay"
           onClick={onDismiss}
-          className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"
+          className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 font-bold text-xl transition-colors"
+          title="Minimize this overlay"
         >
           ✕
         </button>
 
         {/* Header */}
-        <div className={`rounded-lg p-4 border-2 ${statusDisplay.color}`}>
-          <div className="flex items-center gap-3">
-            <span className="text-3xl">{statusDisplay.icon}</span>
+        <div className={`rounded-lg p-3 border-2 ${statusDisplay.color}`}>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{statusDisplay.icon}</span>
             <div className="flex-1">
-              <h3 className={`text-lg font-bold ${statusDisplay.textColor}`}>
+              <h3 className={`text-base font-semibold ${statusDisplay.textColor}`}>
                 {statusDisplay.text}
               </h3>
               {isScheduled && ride.scheduled_datetime && (
-                <p className="text-sm text-gray-600 mt-1">
+                <p className="text-xs text-gray-600 mt-0.5">
                   📅 Scheduled for {formatScheduledTime(ride.scheduled_datetime)}
                 </p>
               )}
@@ -290,7 +375,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
         {/* View Details above stepper */}
         <Button
           variant="primary"
-          size="lg"
+          size="md"
           onClick={onViewDetails}
           className="w-full"
         >
@@ -343,7 +428,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
             return action ? (
               <Button
                 variant={action.variant}
-                size="lg"
+                size="md"
                 onClick={() => updateTripStatus(action.status)}
                 disabled={updatingStatus}
                 className="w-full"
@@ -358,7 +443,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
             <div className="relative">
               <Button
                 variant="secondary"
-                size="lg"
+                size="md"
                 onClick={() => setNavOpen(v => !v)}
                 className="w-full"
               >
@@ -395,7 +480,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
 
           <Button
             variant="danger"
-            size="md"
+            size="sm"
             onClick={onCancel}
             className="w-full"
           >
@@ -405,7 +490,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss }) => {
 
         {/* Info Text */}
         <p className="text-xs text-center text-gray-500">
-          This overlay will remain until the ride is completed or cancelled
+          Click the ✕ button to minimize this overlay. It will reappear when you navigate to a different page.
         </p>
       </div>
     </div>

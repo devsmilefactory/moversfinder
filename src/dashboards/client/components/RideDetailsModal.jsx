@@ -23,7 +23,7 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
 
   // Auto-open rating modal when requested and ride is completed without rating
   useEffect(() => {
-    if (isOpen && autoOpenRating && ride?.ride_status === 'completed' && !ride?.rating) {
+    if (isOpen && autoOpenRating && ride?.ride_status === 'trip_completed' && !ride?.rating) {
       setShowRatingModal(true);
     }
   }, [isOpen, autoOpenRating, ride?.id, ride?.ride_status, ride?.rating]);
@@ -95,7 +95,7 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
         .from('rides')
         .select('driver_id, rating')
         .in('driver_id', driverIds)
-        .eq('ride_status', 'completed')
+        .eq('ride_status', 'trip_completed')
         .not('rating', 'is', null);
 
       if (statsError) {
@@ -391,7 +391,7 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
-          {ride?.ride_status === 'completed' && !ride?.rating && (
+          {ride?.ride_status === 'trip_completed' && !ride?.rating && (
             <Button
               variant="primary"
               onClick={() => setShowRatingModal(true)}

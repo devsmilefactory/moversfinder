@@ -1,15 +1,22 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../../lib/supabase';
 import useAuthStore from '../../stores/authStore';
 import { useToast } from '../ui/ToastProvider';
+import useRideNotifications from '../../hooks/useRideNotifications';
 
-// Lightweight listener that shows clickable toasts for ride status updates
+// Centralized notification-driven toasts for ride updates
 const RideStatusToasts = () => {
   const { user } = useAuthStore();
   const { addToast } = useToast();
   const navigate = useNavigate();
-  const lastStatusesRef = useRef({}); // rideId -> last status string
+
+  // Hook now manages subscription to notifications table and basic toast
+  const { notifications } = useRideNotifications(user?.id);
+
+  // We rely on useRideNotifications to show toasts; this component can
+  // in the future be extended to add extra ride-specific behaviour.
+
+  return null;
   const channelRef = useRef(null);
 
   useEffect(() => {
@@ -30,6 +37,7 @@ const RideStatusToasts = () => {
         case 'in_progress':
         case 'journey_started':
           return 'Your ride has started';
+        case 'trip_completed':
         case 'completed':
           return 'Ride completed';
         case 'cancelled':
@@ -55,7 +63,7 @@ const RideStatusToasts = () => {
             const msg = statusLabel(curr);
             if (msg) {
               addToast({
-                type: curr === 'completed' ? 'success' : 'info',
+                type: ['trip_completed', 'completed'].includes(curr) ? 'success' : 'info',
                 title: 'Ride update',
                 message: msg,
                 duration: 7000,

@@ -4,7 +4,14 @@ import { supabase } from '../../../lib/supabase';
 import Button from '../../shared/Button';
 import MapView from '../../../components/maps/MapView';
 import PassengerOffersPanel from './PassengerOffersPanel';
-import CancelRideModal from './CancelRideModal';
+import OffersNotificationBanner from './OffersNotificationBanner';
+import SharedCancelRideModal from '../../../components/shared/SharedCancelRideModal';
+import RatingModal from './RatingModal';
+import RideDetailsModal from './RideDetailsModal';
+import { useToast } from '../../../components/ui/ToastProvider';
+import { ACTIVE_RIDE_STATUSES } from '../../../hooks/useRideStatus';
+import { useCancelRide } from '../../../hooks/useCancelRide';
+import useRatingStore from '../../../stores/ratingStore';
 
 /**
  * Active Rides View Component
@@ -22,7 +29,8 @@ import CancelRideModal from './CancelRideModal';
  */
 const ActiveRidesView = () => {
   const user = useAuthStore((state) => state.user);
-  const { rides, ridesLoading, loadRides, cancelRide } = useRidesStore();
+  const { ridesLoading } = useRidesStore();
+  const { addToast } = useToast();
   const [activeRides, setActiveRides] = useState([]);
   const [selectedRide, setSelectedRide] = useState(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -33,11 +41,26 @@ const ActiveRidesView = () => {
   const [driverInfo, setDriverInfo] = useState(null);
   const [driverInfoLoading, setDriverInfoLoading] = useState(false);
 
+  const { cancelRide } = useCancelRide();
+
+  // Rating modal state (auto-triggered rating flow)
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [rideToRate, setRideToRate] = useState(null);
+
+  // Shared rating store to prevent duplicate rating modals per ride
+  const { shouldShowRating, markRatingShown } = useRatingStore();
+
+  // Active ride modal state
+  const [showActiveRideModal, setShowActiveRideModal] = useState(false);
+  const [primaryActiveRide, setPrimaryActiveRide] = useState(null);
+  const [modalDismissed, setModalDismissed] = useState(false);
+
   // Load active rides on mount
   useEffect(() => {
     if (user?.id) {
       loadActiveRides();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // Load active rides (not completed or cancelled)
@@ -49,7 +72,7 @@ const ActiveRidesView = () => {
         .from('rides')
         .select('*')
         .eq('user_id', user.id)
-        .in('ride_status', ['accepted', 'driver_on_way', 'driver_arrived', 'trip_started'])
+        .in('ride_status', ACTIVE_RIDE_STATUSES)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -60,6 +83,49 @@ const ActiveRidesView = () => {
       if (data && data.length > 0 && !selectedRide) {
         setSelectedRide(data[0]);
       }
+      
+      // Set primary active ride and show modal automatically (if not dismissed)
+      if (data && data.length > 0) {
+        const primaryRide = data[0];
+        setPrimaryActiveRide(primaryRide);
+        
+        // Check if modal was dismissed for this ride in this session
+        try {
+          const dismissedKey = `active-ride-modal-dismissed-${primaryRide.id}`;
+          const wasDismissed = sessionStorage.getItem(dismissedKey);
+          
+          if (!wasDismissed && !modalDismissed) {
+            console.log('📋 Auto-showing active ride modal for ride:', primaryRide.id);
+            setShowActiveRideModal(true);
+          }
+        } catch (e) {
+          console.warn('Failed to check session storage:', e);
+        }
+      } else {
+        setPrimaryActiveRide(null);
+        setShowActiveRideModal(false);
+      }
+      
+      // Also check for recently completed rides that need rating
+      const { data: completedRides } = await supabase
+        .from('rides')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('ride_status', 'trip_completed')
+        .is('rated_at', null)
+        .order('actual_dropoff_time', { ascending: false })
+        .limit(1);
+
+      // Show rating modal for most recent unrated completed ride
+      if (completedRides && completedRides.length > 0) {
+        const ride = completedRides[0];
+        if (shouldShowRating(ride.id, ride.rated_at)) {
+          console.log('Found unrated completed ride on load:', ride.id);
+          setRideToRate(ride);
+          setShowRatingModal(true);
+          markRatingShown(ride.id);
+        }
+      }
     } catch (error) {
       console.error('Error loading active rides:', error);
     }
@@ -68,6 +134,8 @@ const ActiveRidesView = () => {
   // Set up real-time subscription for ride updates
   useEffect(() => {
     if (!user?.id) return;
+
+    console.log('🔌 Setting up realtime subscription for passenger rides');
 
     const subscription = supabase
       .channel('active-rides-updates')
@@ -80,16 +148,98 @@ const ActiveRidesView = () => {
           filter: `user_id=eq.${user.id}`
         },
         (payload) => {
-          console.log('Ride update received:', payload);
+          console.log('📡 Ride update received:', {
+            event: payload.eventType,
+            rideId: payload.new?.id,
+            status: payload.new?.ride_status,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Check if ride just completed and needs rating
+          if (payload.eventType === 'UPDATE' && payload.new && payload.old) {
+            const ride = payload.new;
+            const oldRide = payload.old;
+            
+            // Show toast notifications for status changes
+            if (ride.ride_status !== oldRide.ride_status) {
+              const statusMessages = {
+                'accepted': {
+                  title: '✅ Driver Accepted',
+                  message: 'Your driver has accepted the ride and will arrive shortly',
+                  type: 'success'
+                },
+                'driver_on_way': {
+                  title: '🚗 Driver On The Way',
+                  message: 'Your driver is heading to the pickup location',
+                  type: 'info'
+                },
+                'driver_arrived': {
+                  title: '📍 Driver Arrived',
+                  message: 'Your driver has arrived at the pickup location',
+                  type: 'success'
+                },
+                'trip_started': {
+                  title: '🚕 Trip Started',
+                  message: 'Your trip is now in progress',
+                  type: 'info'
+                }
+              };
+              
+              const statusConfig = statusMessages[ride.ride_status];
+              if (statusConfig) {
+                console.log('📢 Showing status toast:', ride.ride_status);
+                addToast({
+                  type: statusConfig.type,
+                  title: statusConfig.title,
+                  message: statusConfig.message,
+                  duration: 8000,
+                  onClick: () => {
+                    console.log('📋 Opening active ride modal from toast');
+                    setPrimaryActiveRide(ride);
+                    setShowActiveRideModal(true);
+                  },
+                  style: {
+                    cursor: 'pointer'
+                  }
+                });
+              }
+            }
+            
+            // Auto-close active ride modal if ride completed or cancelled
+            if (
+              primaryActiveRide?.id === ride.id &&
+              ['trip_completed', 'cancelled'].includes(ride.ride_status)
+            ) {
+              console.log('🔒 Auto-closing active ride modal - ride status:', ride.ride_status);
+              setShowActiveRideModal(false);
+              setPrimaryActiveRide(null);
+            }
+            
+            // Show rating modal if ride just completed and hasn't been rated yet
+            if (
+              ride.ride_status === 'trip_completed' &&
+              shouldShowRating(ride.id, ride.rated_at)
+            ) {
+              console.log('⭐ Trip completed, showing rating modal for ride:', ride.id);
+              setRideToRate(ride);
+              setShowRatingModal(true);
+              // Mark as shown to prevent duplicate modals
+              markRatingShown(ride.id);
+            }
+          }
+          
           loadActiveRides();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('🔌 Realtime subscription status:', status);
+      });
 
     return () => {
+      console.log('🔌 Cleaning up realtime subscription for passenger rides');
       subscription.unsubscribe();
     };
-  }, [user?.id]);
+  }, [user?.id, shouldShowRating, markRatingShown]);
 
   // Set up real-time subscription for driver location
   useEffect(() => {
@@ -180,47 +330,49 @@ const ActiveRidesView = () => {
     setShowCancelModal(true);
   };
 
-  // Confirm cancellation with reason
+  // Handle dismissing the active ride modal
+  const handleDismissActiveRideModal = () => {
+    setShowActiveRideModal(false);
+    setModalDismissed(true);
+    
+    // Store dismissal in session storage
+    if (primaryActiveRide?.id) {
+      try {
+        const dismissedKey = `active-ride-modal-dismissed-${primaryActiveRide.id}`;
+        sessionStorage.setItem(dismissedKey, 'true');
+        console.log('📋 Active ride modal dismissed for session');
+      } catch (e) {
+        console.warn('Failed to store dismissal state:', e);
+      }
+    }
+  };
+
+  // Confirm cancellation with reason (delegating to shared hook)
   const confirmCancelRide = async (reason) => {
     const rideId = cancelTargetRideId;
     if (!rideId) return;
 
     setCancellingRideId(rideId);
     try {
-      // Try extended cancellation fields first
-      const update = {
-        ride_status: 'cancelled',
-        cancel_reason: reason,
-        cancelled_by: 'passenger',
-        cancelled_at: new Date().toISOString(),
-        status_updated_at: new Date().toISOString()
-      };
-      const { error } = await supabase
-        .from('rides')
-        .update(update)
-        .eq('id', rideId);
+      const result = await cancelRide({
+        rideId,
+        role: 'passenger',
+        reason,
+        otherPartyUserId: selectedRide?.driver_id || null,
+        extraRideUpdates: {
+          cancel_reason: reason,
+        },
+      });
 
-      if (error) {
-        console.warn('Extended cancel update failed, falling back:', error.message);
-        // Fallback to minimal update in case columns do not exist
-        const { error: e2 } = await supabase
-          .from('rides')
-          .update({ ride_status: 'cancelled', status_updated_at: new Date().toISOString() })
-          .eq('id', rideId);
-        if (e2) throw e2;
+      if (result?.success) {
+        setShowCancelModal(false);
+        setCancelTargetRideId(null);
+        await loadActiveRides();
+
+        if (selectedRide?.id === rideId) {
+          setSelectedRide(null);
+        }
       }
-
-      alert('✅ Ride cancelled successfully');
-      setShowCancelModal(false);
-      setCancelTargetRideId(null);
-      loadActiveRides();
-
-      if (selectedRide?.id === rideId) {
-        setSelectedRide(null);
-      }
-    } catch (error) {
-      console.error('Error cancelling ride:', error);
-      alert('❌ Failed to cancel ride. Please try again.');
     } finally {
       setCancellingRideId(null);
     }
@@ -426,13 +578,6 @@ const ActiveRidesView = () => {
             </div>
 
             {/* Ride Details */}
-              {/* Offers Panel (when ride is pending) */}
-              {selectedRide.ride_status === 'pending' && (
-                <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
-                  <PassengerOffersPanel rideId={selectedRide.id} onAccepted={() => loadActiveRides()} />
-                </div>
-              )}
-
             <div className="p-6 space-y-4">
               {/* Locations */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -445,63 +590,43 @@ const ActiveRidesView = () => {
                   <p className="text-gray-900">{selectedRide.dropoff_address || 'Not specified'}</p>
                 </div>
               </div>
-      <CancelRideModal
-        open={showCancelModal}
-        onClose={() => { setShowCancelModal(false); setCancelTargetRideId(null); }}
-        onConfirm={confirmCancelRide}
-      />
-
-
-              {/* Driver Info (if assigned) */}
-              {selectedRide.driver_id && (
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <p className="text-sm font-medium text-gray-500 mb-2">Driver Information</p>
-                  {driverInfoLoading ? (
-                    <p className="text-sm text-gray-600">Loading driver details...</p>
-                  ) : driverInfo ? (
-                    <div>
-                      <p className="text-gray-900 font-medium">{driverInfo.full_name || 'Driver'}</p>
-                      <p className="text-sm text-gray-600 mt-1">
-                        {driverInfo.vehicle_color} {driverInfo.vehicle_make} {driverInfo.vehicle_model} • {driverInfo.license_plate}
-                      </p>
-                      {driverInfo.phone_number && (
-                        <div className="mt-2 flex items-center gap-3">
-                          <span className="text-sm text-gray-700">{driverInfo.phone_number}</span>
-                          <Button variant="outline" size="sm" onClick={() => window.location.href = `tel:${driverInfo.phone_number}`}>
-                            Call Driver
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-gray-600">Driver assigned</p>
-                  )}
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex gap-3 pt-4 border-t border-gray-200">
-                {selectedRide.ride_status === 'pending' && (
-                  <Button
-                    variant="danger"
-                    onClick={() => handleCancelRide(selectedRide.id)}
-                    disabled={cancellingRideId === selectedRide.id}
-                  >
-                    {cancellingRideId === selectedRide.id ? 'Cancelling...' : 'Cancel Ride'}
-                  </Button>
-                )}
-                <Button variant="outline" onClick={() => alert('Contact support feature coming soon!')}>
-                  Contact Support
-                </Button>
-              </div>
             </div>
           </div>
-        ) : (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-            <p className="text-gray-500">Select a ride to view details</p>
-          </div>
         )}
+
+        {/* Shared cancel modal */}
+        <SharedCancelRideModal
+          open={showCancelModal}
+          onClose={() => { setShowCancelModal(false); setCancelTargetRideId(null); }}
+          onConfirm={confirmCancelRide}
+          role="passenger"
+        />
       </div>
+
+      {/* Active Ride Modal - Shows automatically for primary active ride */}
+      {showActiveRideModal && primaryActiveRide && (
+        <RideDetailsModal
+          isOpen={showActiveRideModal}
+          onClose={handleDismissActiveRideModal}
+          ride={primaryActiveRide}
+          onAccepted={() => {
+            loadActiveRides();
+            handleDismissActiveRideModal();
+          }}
+        />
+      )}
+
+      {/* Rating Modal - Shows automatically when trip completes */}
+      {showRatingModal && rideToRate && (
+        <RatingModal
+          isOpen={showRatingModal}
+          onClose={() => {
+            setShowRatingModal(false);
+            setRideToRate(null);
+          }}
+          ride={rideToRate}
+        />
+      )}
     </div>
   );
 };

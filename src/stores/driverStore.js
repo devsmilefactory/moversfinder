@@ -387,7 +387,7 @@ const useDriverStore = create(
           const { error } = await supabase
             .from('rides')
             .update({
-              status: 'accepted',
+              ride_status: 'accepted',
               driver_status: 'accepted'
             })
             .eq('id', rideId);

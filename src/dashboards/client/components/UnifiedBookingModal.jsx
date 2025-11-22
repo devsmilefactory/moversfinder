@@ -15,7 +15,12 @@ import {
   calculateEstimatedFareV2,
   calculateRoundTripFare,
   calculateRecurringTotalFare,
-  calculateMultiPackageFare
+  calculateMultiPackageFare,
+  calculateTaxiFare,
+  calculateCourierFare,
+  calculateSchoolRunFare,
+  calculateErrandsFare,
+  calculateBulkTripsFare
 } from '../../../utils/pricingCalculator';
 
 import { getRouteWithStopsDistanceAndDuration, getRouteDistanceAndDuration, toGeoJSON, fromGeoJSON, calculateDistance, getCurrentLocation } from '../../../utils/locationServices';
@@ -530,9 +535,56 @@ const UnifiedBookingModal = ({
 
 
 
-      const finalCost = (finalDistanceKm && finalDistanceKm > 0)
-        ? (calculateEstimatedFareV2({ distanceKm: finalDistanceKm }) ?? 0)
-        : 0;
+      // Calculate final cost using new fare calculation functions with breakdowns
+      let finalCost = 0;
+      let fareBreakdown = null;
+      
+      if (selectedService === 'taxi' && finalDistanceKm && finalDistanceKm > 0) {
+        const taxiFare = calculateTaxiFare({
+          distanceKm: finalDistanceKm,
+          isRecurring: formData.isRoundTrip,
+          numberOfDates: formData.numberOfTrips || 1
+        });
+        if (taxiFare) {
+          finalCost = taxiFare.totalFare;
+          fareBreakdown = taxiFare.breakdown;
+        }
+      } else if (selectedService === 'courier' && finalDistanceKm && finalDistanceKm > 0) {
+        const courierFare = calculateCourierFare({
+          distanceKm: finalDistanceKm,
+          vehicleType: formData.vehicleType || 'sedan',
+          packageSize: formData.packages?.[0]?.packageSize || 'medium',
+          isRecurring: false,
+          numberOfDates: formData.numberOfTrips || 1
+        });
+        if (courierFare) {
+          finalCost = courierFare.totalFare;
+          fareBreakdown = courierFare.breakdown;
+        }
+      } else if (selectedService === 'school_run' && finalDistanceKm && finalDistanceKm > 0) {
+        const schoolFare = calculateSchoolRunFare({
+          distanceKm: finalDistanceKm,
+          isRoundTrip: formData.isRoundTrip,
+          numberOfDates: formData.numberOfTrips || 1
+        });
+        if (schoolFare) {
+          finalCost = schoolFare.totalFare;
+          fareBreakdown = schoolFare.breakdown;
+        }
+      } else if (selectedService === 'errands' && formData.tasks && formData.tasks.length > 0) {
+        const errandsFare = calculateErrandsFare({
+          errands: formData.tasks,
+          numberOfDates: formData.numberOfTrips || 1,
+          calculateDistance: calculateDistance
+        });
+        if (errandsFare) {
+          finalCost = errandsFare.totalFare;
+          fareBreakdown = errandsFare.breakdown;
+        }
+      } else if (finalDistanceKm && finalDistanceKm > 0) {
+        // Fallback to simple calculation
+        finalCost = calculateEstimatedFareV2({ distanceKm: finalDistanceKm }) ?? 0;
+      }
 
       // Prepare booking data with new database schema fields
       // Convert coordinates to GeoJSON Points for database
@@ -646,10 +698,23 @@ const UnifiedBookingModal = ({
         payment_method: formData.paymentMethod,
         estimated_cost: finalCost,
         payment_status: 'pending',
+        
+        // Fare breakdown for transparency
+        fare_breakdown: fareBreakdown ? JSON.stringify(fareBreakdown) : null,
 
         // Service-specific data mapping
         special_requests: formData.specialInstructions || null,
         number_of_passengers: formData.passengers || 1,
+        
+        // For errands: store number of tasks
+        ...(selectedService === 'errands' && formData.tasks && {
+          number_of_tasks: formData.tasks.length,
+          errand_tasks: JSON.stringify(formData.tasks.map(t => ({
+            description: t.description,
+            pickup_location: t.pickup_location,
+            dropoff_location: t.dropoff_location
+          })))
+        }),
 
         // Taxi-specific fields
         ...(selectedService === 'taxi' && {

@@ -64,12 +64,11 @@ secrets.json
 config.json
 credentials.json
 
-# Migration files (Supabase)
-supabase/migrations/
+# Supabase
 supabase/.temp/
+.supabase/
 
-# Database files
-*.sql
+# Database files (exclude specific migration files)
 *.db
 *.sqlite
 *.sqlite3
@@ -133,7 +132,7 @@ start.bat
 # Augment/AI tools
 .augment/
 
-# Unnecessary documentation MD files (keep README.md files)
+# Temporary/Generated documentation files
 APACHE_DEPLOYMENT_GUIDE.md
 DEPLOYMENT_SUMMARY.md
 OFFLINE_HANDLING_IMPLEMENTATION.md
@@ -145,9 +144,19 @@ PWA_TESTING_CHECKLIST.md
 STATUS_PAGE_VERIFICATION.md
 STORAGE_RLS_FIX.md
 VERIFICATION_FINDINGS.md
+FIXES_APPLIED.md
+MIGRATION_COMPLETE.md
+COLUMN_RENAME_STATUS.md
+DRIVER_RIDES_TEST_DATA_SUMMARY.md
 
-# Database migration/script files
+# Temporary SQL files
+APPLY_THIS_FIX.sql
+verify_migration.sql
+fix_column_names_consolidated.sql
 database_schema_fixes.sql
 database_type_safety_fixes.sql
-supabase/sql/*.sql
 
+# Keep important files
+!README.md
+!supabase/migrations/*.sql
+!.kiro/

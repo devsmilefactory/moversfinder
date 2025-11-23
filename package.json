@@ -1,0 +1,9 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.75.0"
+  },
+  "devDependencies": {
+    "sharp": "^0.33.0"
+  }
+}

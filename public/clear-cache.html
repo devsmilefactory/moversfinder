@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clear Cache - TaxiCab PWA</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #FFC107 0%, #FF9800 50%, #334155 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+      max-width: 600px;
+      width: 100%;
+    }
+    
+    h1 {
+      color: #334155;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+    
+    p {
+      color: #64748b;
+      margin-bottom: 30px;
+      line-height: 1.6;
+    }
+    
+    .button {
+      background: #FFC107;
+      color: #334155;
+      border: none;
+      padding: 16px 32px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 12px;
+      transition: all 0.2s;
+    }
+    
+    .button:hover {
+      background: #FFB300;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(255, 193, 7, 0.4);
+    }
+    
+    .button:active {
+      transform: translateY(0);
+    }
+    
+    .button.secondary {
+      background: #e2e8f0;
+      color: #334155;
+    }
+    
+    .button.secondary:hover {
+      background: #cbd5e1;
+    }
+    
+    .status {
+      margin-top: 20px;
+      padding: 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    
+    .status.success {
+      background: #dcfce7;
+      color: #166534;
+      border: 1px solid #86efac;
+    }
+    
+    .status.error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fca5a5;
+    }
+    
+    .status.info {
+      background: #dbeafe;
+      color: #1e40af;
+      border: 1px solid #93c5fd;
+    }
+    
+    .icon {
+      font-size: 48px;
+      margin-bottom: 20px;
+    }
+    
+    ul {
+      margin: 20px 0;
+      padding-left: 20px;
+    }
+    
+    li {
+      margin-bottom: 8px;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">🧹</div>
+    <h1>Clear Cache & Service Workers</h1>
+    <p>Use this page to completely clear all cached data and service workers. This ensures you always see the latest code changes and fresh database data.</p>
+    
+    <button class="button" onclick="clearEverything()">
+      🗑️ Clear All Cache & Service Workers
+    </button>
+    
+    <button class="button secondary" onclick="clearCacheOnly()">
+      📦 Clear Cache Only
+    </button>
+    
+    <button class="button secondary" onclick="unregisterServiceWorkers()">
+      ⚙️ Unregister Service Workers Only
+    </button>
+    
+    <button class="button secondary" onclick="window.location.href='/'">
+      🏠 Back to App
+    </button>
+    
+    <div id="status"></div>
+    
+    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+      <h3 style="color: #334155; margin-bottom: 10px; font-size: 16px;">What gets cleared:</h3>
+      <ul>
+        <li>All cached files and resources</li>
+        <li>Service worker registrations</li>
+        <li>Browser cache for this domain</li>
+      </ul>
+      <p style="margin-top: 15px; font-size: 13px; color: #94a3b8;">
+        <strong>Note:</strong> This does NOT clear your login session, localStorage, or database data.
+      </p>
+    </div>
+  </div>
+  
+  <script>
+    function showStatus(message, type = 'info') {
+      const statusDiv = document.getElementById('status');
+      statusDiv.className = `status ${type}`;
+      statusDiv.innerHTML = message;
+    }
+    
+    async function clearCacheOnly() {
+      try {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map(name => caches.delete(name)));
+        
+        showStatus(`✅ Successfully cleared ${cacheNames.length} cache(s):<br>${cacheNames.join('<br>')}`, 'success');
+      } catch (error) {
+        showStatus(`❌ Error clearing cache: ${error.message}`, 'error');
+      }
+    }
+    
+    async function unregisterServiceWorkers() {
+      try {
+        if (!('serviceWorker' in navigator)) {
+          showStatus('ℹ️ Service Workers not supported in this browser', 'info');
+          return;
+        }
+        
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map(reg => reg.unregister()));
+        
+        showStatus(`✅ Successfully unregistered ${registrations.length} service worker(s)`, 'success');
+      } catch (error) {
+        showStatus(`❌ Error unregistering service workers: ${error.message}`, 'error');
+      }
+    }
+    
+    async function clearEverything() {
+      try {
+        showStatus('🔄 Clearing everything...', 'info');
+        
+        // Clear all caches
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map(name => caches.delete(name)));
+        
+        // Unregister all service workers
+        let swCount = 0;
+        if ('serviceWorker' in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map(reg => reg.unregister()));
+          swCount = registrations.length;
+        }
+        
+        showStatus(
+          `✅ <strong>Successfully cleared everything!</strong><br><br>` +
+          `📦 Cleared ${cacheNames.length} cache(s)<br>` +
+          `⚙️ Unregistered ${swCount} service worker(s)<br><br>` +
+          `<strong>Next steps:</strong><br>` +
+          `1. Close this tab<br>` +
+          `2. Hard refresh the app (Ctrl+Shift+R or Cmd+Shift+R)<br>` +
+          `3. You should now see the latest code!`,
+          'success'
+        );
+      } catch (error) {
+        showStatus(`❌ Error: ${error.message}`, 'error');
+      }
+    }
+    
+    // Show current status on load
+    window.addEventListener('load', async () => {
+      try {
+        const cacheNames = await caches.keys();
+        let swCount = 0;
+        
+        if ('serviceWorker' in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          swCount = registrations.length;
+        }
+        
+        if (cacheNames.length === 0 && swCount === 0) {
+          showStatus('✅ No caches or service workers found. Everything is clean!', 'success');
+        } else {
+          showStatus(
+            `ℹ️ Current status:<br>` +
+            `📦 ${cacheNames.length} cache(s) found<br>` +
+            `⚙️ ${swCount} service worker(s) registered`,
+            'info'
+          );
+        }
+      } catch (error) {
+        console.error('Error checking status:', error);
+      }
+    });
+  </script>
+</body>
+</html>
+

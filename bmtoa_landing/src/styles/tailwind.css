@@ -1,0 +1,129 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Core Colors */
+    --color-background: #FFFFFF; /* white */
+    --color-foreground: #0F172A; /* slate-900 */
+    --color-border: #E2E8F0; /* slate-200 */
+    --color-input: #FFFFFF; /* white */
+    --color-ring: #FFC107; /* yellow-500 - TaxiCab primary */
+    
+    /* Card Colors */
+    --color-card: #FFFFFF; /* white */
+    --color-card-foreground: #0F172A; /* slate-900 */
+    --color-popover: #FFFFFF; /* white */
+    --color-popover-foreground: #0F172A; /* slate-900 */
+    
+    /* Muted Colors */
+    --color-muted: #F8FAFC; /* slate-50 */
+    --color-muted-foreground: #475569; /* slate-600 */
+    
+    /* Primary Colors */
+    --color-primary: #FFC107; /* yellow-500 - TaxiCab primary */
+    --color-primary-foreground: #212121; /* gray-800 */
+
+    /* Secondary Colors */
+    --color-secondary: #424242; /* gray-700 - TaxiCab secondary */
+    --color-secondary-foreground: #FFFFFF; /* white */
+
+    /* Accent Colors */
+    --color-accent: #FF6F00; /* orange-600 - TaxiCab accent */
+    --color-accent-foreground: #FFFFFF; /* white */
+
+    /* Dark Blue-Grey Colors */
+    --color-dark-blue-grey: #334155; /* slate-700 */
+    --color-dark-blue-grey-foreground: #FFFFFF; /* white */
+    
+    /* Success Colors */
+    --color-success: #059669; /* emerald-600 */
+    --color-success-foreground: #FFFFFF; /* white */
+    
+    /* Warning Colors */
+    --color-warning: #F59E0B; /* amber-500 */
+    --color-warning-foreground: #0F172A; /* slate-900 */
+    
+    /* Error/Destructive Colors */
+    --color-error: #DC2626; /* red-600 */
+    --color-error-foreground: #FFFFFF; /* white */
+    --color-destructive: #DC2626; /* red-600 */
+    --color-destructive-foreground: #FFFFFF; /* white */
+    
+    /* Surface Colors */
+    --color-surface: #F8FAFC; /* slate-50 */
+    --color-surface-foreground: #0F172A; /* slate-900 */
+    
+    /* Text Colors */
+    --color-text-primary: #0F172A; /* slate-900 */
+    --color-text-secondary: #475569; /* slate-600 */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+  }
+}
+
+@layer components {
+.btn-primary  {
+    @apply bg-primary text-primary-foreground transition-colors duration-200;
+  }
+.btn-accent  {
+    @apply bg-accent text-accent-foreground transition-colors duration-200;
+  }
+  
+  .shadow-elevation {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  }
+  
+  .shadow-card {
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+  }
+  
+  .transition-smooth {
+    transition: all 200ms ease-in-out;
+  }
+  
+  .transition-medium {
+    transition: all 300ms ease-in-out;
+  }
+}
+
+/* Custom Scrollbar for Slate Background */
+.scrollbar-slate::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollbar-slate::-webkit-scrollbar-track {
+  background: #475569; /* slate-600 */
+  border-radius: 4px;
+}
+
+.scrollbar-slate::-webkit-scrollbar-thumb {
+  background: #64748b; /* slate-500 */
+  border-radius: 4px;
+}
+
+.scrollbar-slate::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8; /* slate-400 */
+}
+
+/* Firefox */
+.scrollbar-slate {
+  scrollbar-width: thin;
+  scrollbar-color: #64748b #475569;
+}

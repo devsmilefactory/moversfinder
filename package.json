@@ -1,8 +1,4 @@
 {
-  "name": "taxicab-pwa",
-  "version": "1.0.0",
-  "private": true,
-  "description": "TaxiCab PWA - Dual-mode app for clients and drivers",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,34 +12,7 @@
     "postbuild": "node scripts/verify-build.js"
   },
   "dependencies": {
-    "@dhiwise/component-tagger": "^1.0.10",
-    "@radix-ui/react-slot": "^1.2.3",
-    "@reduxjs/toolkit": "^2.6.1",
-    "@rollup/rollup-win32-x64-msvc": "^4.52.5",
-    "@supabase/supabase-js": "^2.74.0",
-    "@tailwindcss/forms": "^0.5.7",
-    "@vis.gl/react-google-maps": "^1.7.0",
-    "axios": "^1.8.4",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "d3": "^7.9.0",
-    "date-fns": "^4.1.0",
-    "framer-motion": "^10.16.4",
-    "lucide-react": "^0.484.0",
-    "papaparse": "^5.5.3",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-helmet": "^6.1.0",
-    "react-hook-form": "^7.55.0",
-    "react-router-dom": "^6.0.2",
-    "react-router-hash-link": "^2.4.3",
-    "recharts": "^2.15.2",
-    "redux": "^5.0.1",
-    "tailwind-merge": "^3.3.1",
-    "tailwindcss-animate": "^1.0.7",
-    "tailwindcss-elevation": "^2.0.0",
-    "tailwindcss-fluid-type": "^2.0.7",
-    "zustand": "^5.0.8"
+    "@supabase/supabase-js": "^2.75.0"
   },
   "devDependencies": {
     "@tailwindcss/aspect-ratio": "^0.4.2",
@@ -57,6 +26,7 @@
     "fast-check": "^4.4.0",
     "jsdom": "^27.3.0",
     "postcss": "^8.4.8",
+    "sharp": "^0.33.0",
     "tailwindcss": "^3.4.6",
     "vite-plugin-pwa": "^0.20.5",
     "vite-tsconfig-paths": "^3.6.0",

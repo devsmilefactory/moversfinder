@@ -12,7 +12,7 @@ const ActiveRideToast = ({ ride, onView, onDismiss }) => {
   if (!ride) return null;
 
   return (
-    <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-40 animate-slide-down">
+    <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-30 animate-slide-down pointer-events-auto">
       <div className="bg-green-600 text-white rounded-lg shadow-lg px-4 py-3 flex items-center gap-3 min-w-[320px] max-w-md">
         <div className="flex-shrink-0">
           <span className="text-2xl">🚗</span>

@@ -168,7 +168,37 @@ const ActiveRidesView = () => {
                   message: 'Your driver has accepted the ride and will arrive shortly',
                   type: 'success'
                 },
+                'offer_accepted': {
+                  title: '✅ Driver Accepted',
+                  message: 'Your driver has accepted the ride and will arrive shortly',
+                  type: 'success'
+                },
+                'driver_assigned': {
+                  title: '✅ Driver Assigned',
+                  message: 'A driver has been assigned and will be on the way shortly',
+                  type: 'success'
+                },
+                'driver_confirmed': {
+                  title: '✅ Driver Confirmed',
+                  message: 'Your driver confirmed the trip and will head out shortly',
+                  type: 'success'
+                },
                 'driver_on_way': {
+                  title: '🚗 Driver On The Way',
+                  message: 'Your driver is heading to the pickup location',
+                  type: 'info'
+                },
+                'driver_en_route': {
+                  title: '🚗 Driver On The Way',
+                  message: 'Your driver is heading to the pickup location',
+                  type: 'info'
+                },
+                'driver_enroute': {
+                  title: '🚗 Driver On The Way',
+                  message: 'Your driver is heading to the pickup location',
+                  type: 'info'
+                },
+                'driver_to_pickup': {
                   title: '🚗 Driver On The Way',
                   message: 'Your driver is heading to the pickup location',
                   type: 'info'
@@ -181,6 +211,36 @@ const ActiveRidesView = () => {
                 'trip_started': {
                   title: '🚕 Trip Started',
                   message: 'Your trip is now in progress',
+                  type: 'info'
+                },
+                'journey_started': {
+                  title: '🚕 Trip Started',
+                  message: 'Your trip is now in progress',
+                  type: 'info'
+                },
+                'in_progress': {
+                  title: '🚕 Trip In Progress',
+                  message: 'You are on the way to your destination',
+                  type: 'info'
+                },
+                'ride_in_progress': {
+                  title: '🚕 Trip In Progress',
+                  message: 'You are on the way to your destination',
+                  type: 'info'
+                },
+                'driver_to_dropoff': {
+                  title: '🚕 Trip In Progress',
+                  message: 'Heading to your destination now',
+                  type: 'info'
+                },
+                'pickup_in_progress': {
+                  title: '📍 Pickup In Progress',
+                  message: 'Driver is finalizing pickup',
+                  type: 'info'
+                },
+                'dropoff_in_progress': {
+                  title: '📍 Drop-off In Progress',
+                  message: 'Driver is finalizing drop-off',
                   type: 'info'
                 }
               };

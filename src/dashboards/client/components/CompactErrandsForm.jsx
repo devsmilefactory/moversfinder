@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import LocationInput from '../../shared/LocationInput';
 import FormInput, { FormSelect, FormTextarea, FormCheckbox } from '../../shared/FormInput';
 import Button from '../../shared/Button';
+import { getTaskAddressValue, estimateErrandTask } from '../../../utils/errandTasks';
 
 /**
  * Compact Errands Service Booking Form
@@ -10,7 +11,7 @@ import Button from '../../shared/Button';
  * Single-screen, compact layout for multi-task errands
  */
 
-const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
+const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimates = null, taskTotalCost = 0 }) => {
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTaskIndex, setEditingTaskIndex] = useState(null);
   const [taskFormData, setTaskFormData] = useState({
@@ -20,14 +21,33 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
     estimatedDuration: '15',
     startTime: ''
   });
+  const [taskEstimate, setTaskEstimate] = useState(null);
+  const [taskEstimateLoading, setTaskEstimateLoading] = useState(false);
+  const perTaskSummaries = useMemo(() => taskEstimates?.perTask || [], [taskEstimates]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     onChange(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleLocationChange = (field) => (e) => {
-    onChange(prev => ({ ...prev, [field]: e.target.value }));
+  const resolveLocationDisplay = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    return value?.data?.address || value?.address || '';
+  };
+
+  const handleTaskLocationChange = (field) => (e) => {
+    if (e?.target?.data) {
+      setTaskFormData(prev => ({
+        ...prev,
+        [field]: {
+          data: e.target.data,
+          address: e.target.value || e.target.data?.address || ''
+        }
+      }));
+    } else {
+      setTaskFormData(prev => ({ ...prev, [field]: e?.target?.value ?? '' }));
+    }
   };
 
   const handleOpenTaskModal = (index = null) => {
@@ -35,6 +55,8 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
       // Editing existing task
       setEditingTaskIndex(index);
       setTaskFormData(formData.tasks[index]);
+      setTaskEstimate(perTaskSummaries[index] || null);
+      setTaskEstimateLoading(false);
     } else {
       // Adding new task
       setEditingTaskIndex(null);
@@ -45,21 +67,31 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
         estimatedDuration: '15',
         startTime: ''
       });
+      setTaskEstimate(null);
+      setTaskEstimateLoading(false);
     }
     setShowTaskModal(true);
   };
 
   const handleSaveTask = () => {
-    const tasks = formData.tasks || [];
-    if (editingTaskIndex !== null) {
-      // Update existing task
-      tasks[editingTaskIndex] = taskFormData;
-    } else {
-      // Add new task
-      tasks.push(taskFormData);
-    }
-    onChange({ ...formData, tasks });
+    onChange(prev => {
+      const currentTasks = Array.isArray(prev.tasks) ? [...prev.tasks] : [];
+      if (editingTaskIndex !== null) {
+        currentTasks[editingTaskIndex] = taskFormData;
+      } else {
+        currentTasks.push(taskFormData);
+      }
+      return { ...prev, tasks: currentTasks };
+    });
     setShowTaskModal(false);
+    setEditingTaskIndex(null);
+    setTaskFormData({
+      startPoint: '',
+      destinationPoint: '',
+      description: '',
+      estimatedDuration: '15',
+      startTime: ''
+    });
   };
 
   const handleRemoveTask = (index) => {
@@ -69,6 +101,47 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
       tasks: tasks.filter((_, i) => i !== index)
     });
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!showTaskModal) {
+      setTaskEstimate(null);
+      setTaskEstimateLoading(false);
+      return () => {};
+    }
+
+    const hasLocations = taskFormData?.startPoint && taskFormData?.destinationPoint;
+    if (!hasLocations) {
+      setTaskEstimate(null);
+      setTaskEstimateLoading(false);
+      return () => {};
+    }
+
+    setTaskEstimateLoading(true);
+
+    (async () => {
+      try {
+        const estimate = await estimateErrandTask({
+          startPoint: taskFormData.startPoint,
+          destinationPoint: taskFormData.destinationPoint
+        });
+        if (!cancelled) {
+          setTaskEstimate(estimate);
+        }
+      } catch (error) {
+        console.warn('Failed to compute errand task preview:', error);
+        if (!cancelled) {
+          setTaskEstimate(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setTaskEstimateLoading(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [showTaskModal, taskFormData.startPoint, taskFormData.destinationPoint]);
 
   return (
     <>
@@ -94,39 +167,47 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
 
           {formData.tasks && formData.tasks.length > 0 && (
             <div className="space-y-2">
-              {formData.tasks.map((task, index) => (
-                <div
-                  key={index}
-                  className="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-yellow-400 transition-colors cursor-pointer"
-                  onClick={() => handleOpenTaskModal(index)}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-semibold text-slate-500">Task {index + 1}</span>
-                        <span className="text-xs text-slate-400">• {task.estimatedDuration} min</span>
-                        {task.startTime && <span className="text-xs text-slate-400">• {task.startTime}</span>}
+              {formData.tasks.map((task, index) => {
+                const summary = perTaskSummaries[index];
+                return (
+                  <div
+                    key={index}
+                    className="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-yellow-400 transition-colors cursor-pointer"
+                    onClick={() => handleOpenTaskModal(index)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-semibold text-slate-500">Task {index + 1}</span>
+                          <span className="text-xs text-slate-400">• {task.estimatedDuration || '15'} min</span>
+                          {task.startTime && <span className="text-xs text-slate-400">• {task.startTime}</span>}
+                        </div>
+                        <p className="text-sm font-medium text-slate-700 mb-1">{task.description || 'No description'}</p>
+                        <div className="flex items-center gap-1 text-xs text-slate-500">
+                          <span>📍 {resolveLocationDisplay(task.startPoint) || 'No start point'}</span>
+                          <span>→</span>
+                          <span>{resolveLocationDisplay(task.destinationPoint) || 'No destination'}</span>
+                        </div>
+                        {summary && (
+                          <div className="text-[11px] text-slate-500 mt-1">
+                            ≈ {Number(summary.distanceKm ?? 0).toFixed(1)} km • {summary.durationMinutes ?? 0} min • ${Number(summary.cost ?? 0).toFixed(2)}
+                          </div>
+                        )}
                       </div>
-                      <p className="text-sm font-medium text-slate-700 mb-1">{task.description || 'No description'}</p>
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <span>📍 {task.startPoint || 'No start point'}</span>
-                        <span>→</span>
-                        <span>{task.destinationPoint || 'No destination'}</span>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveTask(index);
+                        }}
+                        className="text-red-500 hover:text-red-600 text-sm"
+                      >
+                        ✕
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemoveTask(index);
-                      }}
-                      className="text-red-500 hover:text-red-600 text-sm"
-                    >
-                      ✕
-                    </button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -138,6 +219,23 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
             <span className="text-lg">+</span>
             <span>Add Task</span>
           </button>
+
+          {taskEstimates && formData.tasks && formData.tasks.length > 0 && (
+            <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-900">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">Totals</span>
+                <span>${Number(taskTotalCost || 0).toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-green-700 mt-1">
+                <span>Distance</span>
+                <span>{Number(taskEstimates.totalDistanceKm ?? 0).toFixed(1)} km</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-green-700">
+                <span>Duration</span>
+                <span>{taskEstimates.totalDurationMinutes ?? 0} min</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Special Instructions */}
@@ -172,22 +270,22 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
 
             {/* Modal Content - Scrollable */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
                 <LocationInput
                   label="Task Start Point"
-                  value={taskFormData.startPoint}
-                  onChange={(e) => setTaskFormData({ ...taskFormData, startPoint: e.target.value })}
+                  value={resolveLocationDisplay(taskFormData.startPoint)}
+                  onChange={handleTaskLocationChange('startPoint')}
                   savedPlaces={savedPlaces}
                   required
                   placeholder="Where does this task start?"
                 />
               </div>
 
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
                 <LocationInput
                   label="Task Destination Point"
-                  value={taskFormData.destinationPoint}
-                  onChange={(e) => setTaskFormData({ ...taskFormData, destinationPoint: e.target.value })}
+                  value={resolveLocationDisplay(taskFormData.destinationPoint)}
+                  onChange={handleTaskLocationChange('destinationPoint')}
                   savedPlaces={savedPlaces}
                   required
                   placeholder="Where does this task end?"
@@ -227,22 +325,37 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [] }) => {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowTaskModal(false)}
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleSaveTask}
-                disabled={!taskFormData.startPoint || !taskFormData.destinationPoint || !taskFormData.description}
-                className="flex-1"
-              >
-                {editingTaskIndex !== null ? 'Update Task' : 'Add Task'}
-              </Button>
+            <div className="p-4 border-t border-slate-200">
+              <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 mb-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase">Task Estimate</p>
+                {taskEstimateLoading ? (
+                  <p className="text-sm text-slate-600 mt-1">Calculating...</p>
+                ) : taskEstimate ? (
+                  <div className="text-sm text-slate-700 mt-1">
+                    <p>${taskEstimate.cost.toFixed(2)} • {taskEstimate.distanceKm.toFixed(1)} km • {taskEstimate.durationMinutes} min</p>
+                    <p className="text-[11px] text-slate-500">Estimate updates when pickup and destination change</p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500 mt-1">Enter pickup and destination to see estimate</p>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowTaskModal(false)}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={handleSaveTask}
+                  disabled={!taskFormData.startPoint || !taskFormData.destinationPoint || !taskFormData.description}
+                  className="flex-1"
+                >
+                  {editingTaskIndex !== null ? 'Update Task' : 'Add Task'}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

@@ -1,0 +1,17 @@
+# Netlify Redirects Configuration for SPA
+# This file handles client-side routing for Netlify deployments
+
+# Redirect all routes to index.html except for actual files
+/*    /index.html   200
+
+# Exclude API routes, auth, and static assets from redirect
+/api/*  /api/:splat  200
+/auth/*  /auth/:splat  200
+/supabase/*  /supabase/:splat  200
+
+
+
+
+
+
+

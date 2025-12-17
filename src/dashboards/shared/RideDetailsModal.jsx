@@ -1,5 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import Button from '../shared/Button';
+import { parseErrandTasks, describeTaskState } from '../../utils/errandTasks';
+import { isErrandService, normalizeServiceType } from '../../utils/serviceTypes';
+import { getRideProgress } from '../../utils/rideProgressTracking';
 
 /**
  * Reusable Ride Details Modal
@@ -29,7 +32,7 @@ const RideDetailsModal = ({
     taxi: '🚕',
     courier: '📦',
     school_run: '🎒',
-    errands: '🛍️',
+    errand: '🛍️',
   };
 
   // Status colors
@@ -78,13 +81,30 @@ const RideDetailsModal = ({
     }
   };
 
+  const serviceType = normalizeServiceType(ride?.serviceType || ride?.service_type);
+
+  const errandTasks = useMemo(
+    () => parseErrandTasks(ride?.errand_tasks || ride?.tasks),
+    [ride?.errand_tasks, ride?.tasks]
+  );
+
+  const errandProgress = useMemo(() => {
+    if (!errandTasks || errandTasks.length === 0) return null;
+    const completed = errandTasks.filter((task) => task.state === 'completed').length;
+    return {
+      total: errandTasks.length,
+      completed,
+      remaining: Math.max(errandTasks.length - completed, 0)
+    };
+  }, [errandTasks]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="relative bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <div className="text-3xl">{serviceIcons[ride.serviceType]}</div>
+            <div className="text-3xl">{serviceIcons[serviceType] || '🚗'}</div>
             <div>
               <h3 className="text-xl font-bold text-slate-700">Ride Details</h3>
               <p className="text-sm text-slate-500">ID: {ride.id}</p>
@@ -158,14 +178,14 @@ const RideDetailsModal = ({
           </div>
 
           {/* Service-Specific Details */}
-          {ride.serviceType === 'taxi' && (
+          {serviceType === 'taxi' && (
             <div>
               <label className="block text-sm font-medium text-slate-600 mb-2">Passengers</label>
               <p className="text-slate-700">{ride.passengers || 1}</p>
             </div>
           )}
 
-          {ride.serviceType === 'courier' && (
+          {serviceType === 'courier' && (
             <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-600 mb-2">Recipient Name</label>
@@ -186,7 +206,7 @@ const RideDetailsModal = ({
             </div>
           )}
 
-          {ride.serviceType === 'school_run' && (
+          {serviceType === 'school_run' && (
             <div className="grid md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-600 mb-2">Passenger Name</label>
@@ -199,20 +219,36 @@ const RideDetailsModal = ({
             </div>
           )}
 
-          {ride.serviceType === 'errands' && ride.tasks && ride.tasks.length > 0 && (
+          {isErrandService(serviceType) && errandTasks && errandTasks.length > 0 && (
             <div>
-              <label className="block text-sm font-medium text-slate-600 mb-2">Tasks</label>
+              <label className="block text-sm font-medium text-slate-600 mb-2">Errand Tasks</label>
+              {errandProgress && (
+                <p className="text-xs text-slate-500 mb-2">
+                  Completed {errandProgress.completed}/{errandProgress.total} • {errandProgress.remaining} remaining
+                </p>
+              )}
               <div className="space-y-3">
-                {ride.tasks.map((task, index) => (
-                  <div key={index} className="bg-slate-50 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-sm text-slate-600 mb-1">
-                      <span>📍 {task.startPoint || 'N/A'}</span>
-                      <span>→</span>
-                      <span>{task.destinationPoint || 'N/A'}</span>
+                {errandTasks.map((task, index) => (
+                  <div key={task.id || index} className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2 text-sm text-slate-600">
+                        <span>📍 {task.pickup || 'N/A'}</span>
+                        <span>→</span>
+                        <span>{task.dropoff || 'N/A'}</span>
+                      </div>
+                      <span className="text-[11px] font-semibold text-slate-500 uppercase">
+                        {describeTaskState(task.state)}
+                      </span>
                     </div>
-                    <p className="text-sm text-slate-700">{task.description}</p>
-                    {task.startTime && (
-                      <p className="text-xs text-slate-500 mt-1">Time: {task.startTime}</p>
+                    {task.description && (
+                      <p className="text-sm text-slate-700">{task.description}</p>
+                    )}
+                    {(task.startTime || task.durationMinutes) && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        {task.startTime && <>Time: {task.startTime}</>}
+                        {task.startTime && task.durationMinutes && <span className="mx-1">•</span>}
+                        {task.durationMinutes && <>~{task.durationMinutes} min</>}
+                      </p>
                     )}
                   </div>
                 ))}

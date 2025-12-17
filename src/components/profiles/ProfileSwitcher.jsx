@@ -2,6 +2,7 @@ import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Building2, Car, Users, CheckCircle, Clock, AlertCircle, XCircle, ChevronRight, Plus } from 'lucide-react';
 import useProfileStore from '../../stores/profileStore';
+import useAuthStore from '../../stores/authStore';
 import useProfileSwitch from '../../hooks/useProfileSwitch';
 import ConfirmationModal from '../modals/ConfirmationModal';
 
@@ -15,10 +16,68 @@ import { isComingSoon } from '../../config/profileAvailability';
  * Allows quick switching between approved profiles
  */
 const ProfileSwitcher = ({ isOpen, onClose }) => {
-  const { availableProfiles, activeProfileType } = useProfileStore();
+  const { availableProfiles, activeProfileType, refreshProfiles, checkProfileExists } = useProfileStore();
+  const { user } = useAuthStore();
+  const [profiles, setProfiles] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
 
   // Use shared profile switching hook
   const { handleProfileSwitch, switching, confirmationModal } = useProfileSwitch();
+
+  // Refresh profiles when modal opens to get latest status
+  React.useEffect(() => {
+    if (isOpen && user?.id) {
+      setLoading(true);
+      refreshProfiles(user.id).then(() => {
+        // Also check each profile directly from database for accurate status
+        Promise.all([
+          checkProfileExists(user.id, 'individual'),
+          checkProfileExists(user.id, 'driver')
+        ]).then(([individualProfile, driverProfile]) => {
+          // Map database status to display status
+          const mapStatus = (profile) => {
+            if (!profile) return 'not_created';
+            // Use profile_status as primary, fallback to profile_completion_status
+            const status = profile.profile_status || profile.profile_completion_status;
+            if (status === 'approved' && profile.approval_status === 'approved') return 'approved';
+            if (status === 'pending_approval' || profile.approval_status === 'pending') return 'pending_approval';
+            if (status === 'in_progress' || status === 'incomplete') return 'in_progress';
+            if (status === 'rejected' || profile.approval_status === 'rejected') return 'rejected';
+            if (status === 'declined' || profile.approval_status === 'declined') return 'declined';
+            return 'not_created';
+          };
+
+          const updatedProfiles = [
+            {
+              type: 'individual',
+              status: mapStatus(individualProfile),
+              approval: individualProfile?.approval_status || 'pending',
+              completion: individualProfile?.completion_percentage || 0
+            },
+            {
+              type: 'driver',
+              status: mapStatus(driverProfile),
+              approval: driverProfile?.approval_status || 'pending',
+              completion: driverProfile?.completion_percentage || 0
+            }
+          ];
+          setProfiles(updatedProfiles);
+          setLoading(false);
+        }).catch((err) => {
+          console.error('Error refreshing profiles:', err);
+          // Fallback to availableProfiles if check fails
+          setProfiles(availableProfiles.filter(p => ['individual', 'driver'].includes(p.type)));
+          setLoading(false);
+        });
+      }).catch((err) => {
+        console.error('Error refreshing profiles:', err);
+        setLoading(false);
+      });
+    } else if (!isOpen) {
+      // Reset when modal closes
+      setProfiles([]);
+    }
+  }, [isOpen, user?.id]);
 
 
 
@@ -108,10 +167,17 @@ const ProfileSwitcher = ({ isOpen, onClose }) => {
 
             {/* Profile List */}
             <div className="max-h-96 overflow-y-auto p-4 space-y-3">
+              {loading && (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                </div>
+              )}
               {/* Show only Passenger and Driver */}
-              {['individual','driver'].map((profileType) => {
+              {!loading && ['individual','driver'].map((profileType) => {
                 const config = profileConfigs[profileType];
-                const profile = availableProfiles.find(p => p.type === profileType) || {
+                // Use refreshed profiles, fallback to availableProfiles
+                const profile = profiles.find(p => p.type === profileType) || 
+                  availableProfiles.find(p => p.type === profileType) || {
                   type: profileType,
                   status: 'not_created',
                   approval: 'pending'

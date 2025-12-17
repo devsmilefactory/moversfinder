@@ -40,13 +40,24 @@ const LocationInput = ({
   const recentLocations = [];
 
   const handleSavedPlaceSelect = (place) => {
+    const coordsFromRecord = place?.coordinates;
+    const coordsFromLatLng = (place?.latitude !== undefined && place?.longitude !== undefined)
+      ? { lat: Number(place.latitude), lng: Number(place.longitude) }
+      : null;
+
+    const coordinates = coordsFromRecord || coordsFromLatLng || null;
+
+    if (!coordinates) {
+      console.warn('Saved place is missing coordinates. Please ensure latitude/longitude are set.', place);
+    }
+
     onChange({
       target: {
         value: place.address,
         name: 'location',
         data: {
           address: place.address,
-          coordinates: place.coordinates,
+          coordinates,
           placeId: place.id,
           name: place.name
         }
@@ -217,58 +228,16 @@ const LocationInput = ({
 
   return (
     <div className={`mb-4 ${className}`}>
-      {/* Label and Input Method Buttons on Same Line */}
-      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        {label && (
-          <label className="text-sm font-medium text-slate-700">
-            {label}
-            {required && <span className="text-red-500 ml-1">*</span>}
-          </label>
-        )}
-
-        {/* Input Method Buttons - Inline with Label */}
-        <div className="flex gap-1.5">
-          <button
-            type="button"
-            onClick={handleCurrentLocation}
-            disabled={isDetectingLocation}
-            className="px-2.5 py-1.5 bg-blue-100 hover:bg-blue-200 disabled:bg-slate-100 disabled:cursor-not-allowed rounded-md text-xs font-medium text-blue-700 disabled:text-slate-400 transition-colors flex items-center gap-1.5"
-            title="Use current location"
-          >
-            {isDetectingLocation ? (
-              <span className="animate-spin text-sm">⌛</span>
-            ) : (
-              <span className="text-sm">📍</span>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleMapSelect}
-            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-xs font-medium text-slate-700 transition-colors flex items-center gap-1.5"
-            title="Select on map"
-          >
-            <span className="text-sm">🗺️</span>
-          </button>
-
-          {showSavedPlaces && savedPlaces.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setShowSavedDropdown(!showSavedDropdown);
-                setShowRecentDropdown(false);
-              }}
-              className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-xs font-medium text-slate-700 transition-colors flex items-center gap-1.5"
-              title="Select saved place"
-            >
-              <span className="text-sm">📌</span>
-            </button>
-          )}
-        </div>
-      </div>
+      {/* Label */}
+      {label && (
+        <label className="block text-sm font-semibold text-slate-800 mb-2">
+          {label}
+          {required && <span className="text-red-500 ml-1">*</span>}
+        </label>
+      )}
 
       {/* Main Input Field - Using AddressAutocomplete */}
-      <div className="relative">
+      <div className="relative mb-2">
         <AddressAutocomplete
           value={value}
           onChange={(location) => {
@@ -336,6 +305,37 @@ const LocationInput = ({
             </div>
           </div>
         )}
+      </div>
+
+      {/* Input Method Buttons - Under Input with Text Labels */}
+      <div className="flex gap-2 mt-2">
+        <button
+          type="button"
+          onClick={handleCurrentLocation}
+          disabled={isDetectingLocation}
+          className="flex-1 px-3 py-2 bg-blue-50 hover:bg-blue-100 disabled:bg-slate-100 disabled:cursor-not-allowed rounded-lg text-xs font-medium text-blue-700 disabled:text-slate-400 transition-colors flex items-center justify-center gap-2 border border-blue-200"
+        >
+          {isDetectingLocation ? (
+            <>
+              <span className="animate-spin text-sm">⌛</span>
+              <span>Detecting...</span>
+            </>
+          ) : (
+            <>
+              <span className="text-sm">📍</span>
+              <span>Current Location</span>
+            </>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleMapSelect}
+          className="flex-1 px-3 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-medium text-slate-700 transition-colors flex items-center justify-center gap-2 border border-slate-200"
+        >
+          <span className="text-sm">🗺️</span>
+          <span>Select on Map</span>
+        </button>
       </div>
 
       {/* Map Modal */}

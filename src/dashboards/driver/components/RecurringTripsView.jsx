@@ -5,6 +5,7 @@ import RecurringTripCard from '../../../components/recurring/RecurringTripCard';
 import Button from '../../../components/ui/Button';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { Calendar, Filter } from 'lucide-react';
+import { getRideProgress } from '../../../utils/rideProgressTracking';
 
 /**
  * Recurring Trips View Component (Driver Version)
@@ -59,10 +60,13 @@ const RecurringTripsView = ({ onSeriesSelected }) => {
       if (error) throw error;
 
       // Add trips_remaining to each series
-      const seriesWithRemaining = (data || []).map(s => ({
-        ...s,
-        trips_remaining: s.total_trips - s.completed_trips - s.cancelled_trips
-      }));
+      const seriesWithRemaining = (data || []).map(s => {
+        const progressInfo = getRideProgress(s);
+        return {
+          ...s,
+          trips_remaining: progressInfo.remaining
+        };
+      });
 
       console.log('✅ Loaded recurring series:', seriesWithRemaining.length);
       setSeries(seriesWithRemaining);

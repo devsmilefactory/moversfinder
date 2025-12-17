@@ -70,11 +70,15 @@ export function useDriverRidesFeed(driverId) {
   /**
    * Change active tab
    * Resets page to 1 and fetches new data
+   * Forces a fresh data load by clearing current rides
    */
   const changeTab = useCallback((newTab) => {
-    setActiveTab(newTab);
-    setPage(1);
-  }, []);
+    if (newTab !== activeTab) {
+      setRides([]); // Clear current rides for fresh load
+      setActiveTab(newTab);
+      setPage(1);
+    }
+  }, [activeTab]);
 
   /**
    * Change ride type filter
@@ -103,6 +107,23 @@ export function useDriverRidesFeed(driverId) {
   }, []);
 
   /**
+   * Optimistically remove a ride from the current list.
+   * Helps keep UI in sync with state transitions (e.g., after placing a bid)
+   * without waiting for the backend fetch to finish.
+   */
+  const removeRideFromCurrentList = useCallback((rideId) => {
+    if (!rideId) return;
+    setRides((prevRides) => {
+      if (!Array.isArray(prevRides) || prevRides.length === 0) {
+        return prevRides;
+      }
+
+      const nextRides = prevRides.filter((ride) => ride.id !== rideId);
+      return nextRides;
+    });
+  }, []);
+
+  /**
    * Refresh current tab
    * Re-fetches data with current filters and page
    */
@@ -111,9 +132,20 @@ export function useDriverRidesFeed(driverId) {
   }, [fetchRidesForTab]);
 
   /**
-   * Calculate total pages
+   * Calculate total pages and hasMore for pagination
    */
   const totalPages = Math.ceil(totalCount / pageSize);
+  const hasMore = page < totalPages;
+
+  /**
+   * Load more rides (for infinite scroll)
+   * Increments page to load next batch
+   */
+  const loadMore = useCallback(() => {
+    if (hasMore && !isLoading) {
+      setPage((prevPage) => prevPage + 1);
+    }
+  }, [hasMore, isLoading]);
 
   return {
     // State
@@ -127,12 +159,15 @@ export function useDriverRidesFeed(driverId) {
     rides,
     isLoading,
     error,
+    hasMore,
     
     // Actions
     changeTab,
     changeRideTypeFilter,
     changeScheduleFilter,
     changePage,
+    loadMore,
+    removeRideFromCurrentList,
     refreshCurrentTab
   };
 }

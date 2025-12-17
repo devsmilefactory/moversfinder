@@ -49,7 +49,7 @@ const ActiveTripIndicator = ({ activeTrip, onViewDetails }) => {
                 {activeTrip.estimated_cost && (
                   <div className="flex items-center gap-1">
                     <DollarSign className="w-4 h-4" />
-                    <span>Fare: ${parseFloat(activeTrip.estimated_cost).toFixed(2)}</span>
+                    <span>Fare: ${(parseFloat(activeTrip.estimated_cost) || 0).toFixed(2)}</span>
                   </div>
                 )}
               </div>

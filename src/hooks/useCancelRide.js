@@ -38,6 +38,7 @@ export function useCancelRide() {
 
         const rideUpdate = {
           ride_status: 'cancelled',
+          status: 'cancelled',
           cancelled_at: now,
           cancelled_by: role,
           cancellation_reason: reason || null,

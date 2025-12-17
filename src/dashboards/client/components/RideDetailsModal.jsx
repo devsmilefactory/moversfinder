@@ -282,7 +282,7 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
               {ride.estimated_cost && (
                 <div>
                   <span className="text-slate-600">💰 Estimated Cost:</span>
-                  <span className="ml-2 text-green-600 font-semibold">${parseFloat(ride.estimated_cost).toFixed(2)}</span>
+                  <span className="ml-2 text-green-600 font-semibold">${(parseFloat(ride.estimated_cost) || 0).toFixed(2)}</span>
                 </div>
               )}
             </div>

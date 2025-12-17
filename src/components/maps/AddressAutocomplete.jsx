@@ -125,8 +125,18 @@ const AddressAutocomplete = ({
   }, [inputValue, useWidget]);
 
   const handleInput = (e) => {
-    setInputValue(e.target.value);
+    const newValue = e.target.value;
+    setInputValue(newValue);
     setSelectedIndex(-1);
+    if (onChange) {
+      onChange({
+        address: newValue,
+        lat: null,
+        lng: null,
+        placeId: null,
+        isManualEntry: true
+      });
+    }
   };
 
   const handleSelect = async (suggestion) => {

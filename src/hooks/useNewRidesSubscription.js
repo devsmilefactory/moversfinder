@@ -5,12 +5,14 @@
  * Only subscribes when on Available tab and driver is online.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 
 export function useNewRidesSubscription(driverId, activeTab, isOnline) {
   const [hasNewRides, setHasNewRides] = useState(false);
+  const [newRidesCount, setNewRidesCount] = useState(0);
   const [lastFetchTimestamp, setLastFetchTimestamp] = useState(null);
+  const seenRideIdsRef = useRef(new Set());
 
   useEffect(() => {
     // Only subscribe when on Available tab and online
@@ -32,6 +34,10 @@ export function useNewRidesSubscription(driverId, activeTab, isOnline) {
           filter: 'ride_status=eq.pending'
         },
         (payload) => {
+          const rideId = payload.new?.id;
+          if (!rideId) {
+            return;
+          }
           console.log('📡 New ride detected:', payload.new?.id);
           
           // Only show notification if we have a last fetch timestamp
@@ -41,11 +47,20 @@ export function useNewRidesSubscription(driverId, activeTab, isOnline) {
             const lastFetch = new Date(lastFetchTimestamp);
             
             if (rideCreatedAt > lastFetch) {
-              setHasNewRides(true);
+              // Avoid counting the same ride twice
+              if (!seenRideIdsRef.current.has(rideId)) {
+                seenRideIdsRef.current.add(rideId);
+                setHasNewRides(true);
+                setNewRidesCount((count) => count + 1);
+              }
             }
           } else {
             // If no timestamp yet, show notification for any new ride
-            setHasNewRides(true);
+            if (!seenRideIdsRef.current.has(rideId)) {
+              seenRideIdsRef.current.add(rideId);
+              setHasNewRides(true);
+              setNewRidesCount((count) => count + 1);
+            }
           }
         }
       )
@@ -61,17 +76,23 @@ export function useNewRidesSubscription(driverId, activeTab, isOnline) {
   }, [driverId, activeTab, isOnline, lastFetchTimestamp]);
 
   // Function to update the last fetch timestamp
-  const updateLastFetch = () => {
+  const updateLastFetch = useCallback(() => {
     setLastFetchTimestamp(new Date().toISOString());
-  };
+    setHasNewRides(false);
+    setNewRidesCount(0);
+    seenRideIdsRef.current.clear();
+  }, []);
 
   // Function to reset the new rides flag
-  const resetNewRides = () => {
+  const resetNewRides = useCallback(() => {
     setHasNewRides(false);
-  };
+    setNewRidesCount(0);
+    seenRideIdsRef.current.clear();
+  }, []);
 
   return {
     hasNewRides,
+    newRidesCount,
     updateLastFetch,
     resetNewRides
   };

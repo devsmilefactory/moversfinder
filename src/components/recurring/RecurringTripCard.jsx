@@ -1,6 +1,9 @@
 import React from 'react';
 import Button from '../ui/Button';
-import { Calendar, MapPin, DollarSign, Clock } from 'lucide-react';
+import { Calendar, MapPin, DollarSign, Clock, ArrowRight, ArrowLeft } from 'lucide-react';
+import { getRideProgress } from '../../utils/rideProgressTracking';
+import { getRideCostDisplay } from '../../utils/rideCostDisplay';
+import { getRoundTripDisplay } from '../../utils/roundTripHelpers';
 
 /**
  * Recurring Trip Card Component
@@ -11,11 +14,25 @@ import { Calendar, MapPin, DollarSign, Clock } from 'lucide-react';
  * @param {Function} onViewDetails - Callback when "View Details" is clicked
  */
 const RecurringTripCard = ({ series, onViewDetails }) => {
-  // Calculate progress
-  const tripsRemaining = series.trips_remaining || (series.total_trips - series.completed_trips - series.cancelled_trips);
-  const progressPercent = series.total_trips > 0 
-    ? Math.round((series.completed_trips / series.total_trips) * 100) 
-    : 0;
+  // Use centralized progress tracking
+  const progress = getRideProgress(series);
+  
+  // Use centralized cost display
+  const costDisplay = getRideCostDisplay(series);
+  
+  // Check if this is a round trip series
+  const roundTripInfo = getRoundTripDisplay(series);
+  const isRoundTrip = roundTripInfo !== null;
+  
+  // Use centralized progress tracking - no inline calculations needed
+  const displayTotal = progress.total;
+  const displayCompleted = progress.completed;
+  const displayRemaining = progress.remaining;
+  const progressPercent = progress.percentage || 0;
+  
+  // Use cost display from utility - already formatted
+  const formattedTotalCost = costDisplay.display;
+  const perTripCost = costDisplay.perTripDisplay;
 
   // Format next trip date
   const formatNextTripDate = (dateString) => {
@@ -108,12 +125,33 @@ const RecurringTripCard = ({ series, onViewDetails }) => {
         {getStatusBadge()}
       </div>
 
+      {/* Round Trip Status - Show current occurrence and leg */}
+      {isRoundTrip && progress.type === 'recurring_round_trip' && progress.inProgress && (
+        <div className="mb-3 bg-indigo-50 rounded-lg p-3 border border-indigo-200">
+          <div className="flex items-center gap-2">
+            {progress.currentLeg === 'return' ? (
+              <ArrowLeft className="w-5 h-5 text-indigo-600" />
+            ) : (
+              <ArrowRight className="w-5 h-5 text-indigo-600" />
+            )}
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-indigo-900">
+                Round Trip {progress.currentOccurrence} of {progress.total}
+              </p>
+              <p className="text-xs text-indigo-600">
+                {progress.currentLeg === 'return' ? 'Return leg' : 'Outbound leg'} in progress
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Progress Bar */}
       <div className="mb-3">
         <div className="flex justify-between text-sm mb-1">
           <span className="text-gray-600">Progress</span>
           <span className="font-semibold text-purple-700">
-            {series.completed_trips} / {series.total_trips} trips
+            {displayCompleted} / {displayTotal} {isRoundTrip ? 'round trips' : 'trips'}
           </span>
         </div>
         <div className="w-full bg-gray-200 rounded-full h-2">
@@ -123,7 +161,7 @@ const RecurringTripCard = ({ series, onViewDetails }) => {
           />
         </div>
         <p className="text-sm text-gray-600 mt-1">
-          {tripsRemaining} trip{tripsRemaining !== 1 ? 's' : ''} remaining
+          {displayRemaining} {isRoundTrip ? 'round trip' : 'trip'}{displayRemaining !== 1 ? 's' : ''} remaining
         </p>
       </div>
 
@@ -161,13 +199,33 @@ const RecurringTripCard = ({ series, onViewDetails }) => {
       </div>
 
       {/* Estimated Cost */}
-      {series.estimated_cost && (
-        <div className="flex items-center gap-2 mb-3 text-sm">
-          <DollarSign className="w-4 h-4 text-green-600" />
-          <span className="text-gray-600">Per trip:</span>
-          <span className="font-semibold text-green-600">
-            ${parseFloat(series.estimated_cost).toFixed(2)}
-          </span>
+      {(formattedTotalCost || perTripCost) && (
+        <div className="mb-3 text-sm space-y-1">
+          {formattedTotalCost && (
+            <div className="flex items-center gap-2">
+              <DollarSign className="w-4 h-4 text-green-600" />
+              <span className="text-gray-600">Series total:</span>
+              <span className="font-semibold text-green-600">
+                {formattedTotalCost}
+              </span>
+            </div>
+          )}
+          {perTripCost && (
+            <div className="flex items-center gap-2 text-xs pl-6">
+              <span className="text-gray-500">
+                {isRoundTrip ? 'Per occurrence:' : 'Per trip:'}
+              </span>
+              <span className="font-semibold text-green-700">
+                {perTripCost}
+              </span>
+            </div>
+          )}
+          {isRoundTrip && costDisplay.breakdown && (
+            <div className="flex items-center gap-3 text-xs pl-6 text-gray-600">
+              <span>Out: ${costDisplay.breakdown.outbound?.toFixed(2)}</span>
+              <span>Ret: ${costDisplay.breakdown.return?.toFixed(2)}</span>
+            </div>
+          )}
         </div>
       )}
 

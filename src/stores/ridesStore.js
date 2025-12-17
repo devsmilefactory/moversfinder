@@ -93,6 +93,7 @@ const useRidesStore = create(
             .insert([{
               ...rideData,
               ride_status: 'pending',
+              status: 'pending',
               payment_status: 'pending',
               created_at: new Date().toISOString(),
             }])
@@ -139,6 +140,7 @@ const useRidesStore = create(
             .from('rides')
             .update({
               ride_status: 'cancelled',
+              status: 'cancelled',
               updated_at: new Date().toISOString(),
             })
             .eq('id', rideId)
@@ -243,6 +245,7 @@ const useRidesStore = create(
             .from('rides')
             .update({
               ride_status: mappedStatus,
+              status: mappedStatus,
               updated_at: new Date().toISOString(),
               ...(mappedStatus === 'trip_started' && { trip_started_at: new Date().toISOString() }),
               ...(mappedStatus === 'trip_completed' && {

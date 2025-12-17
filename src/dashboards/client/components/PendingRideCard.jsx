@@ -1,18 +1,24 @@
-import React, { useState } from 'react';
-import { Bell, MapPin, Calendar, DollarSign, XCircle, Loader2, Car, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Repeat } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Bell, MapPin, Calendar, XCircle, Loader2, Car, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Repeat } from 'lucide-react';
 import Button from '../../shared/Button';
 import { useCancelRide } from '../../../hooks/useCancelRide';
+import { getRideProgressDetails } from '../../../utils/rideProgress';
+import { summarizeErrandTasks, describeTaskState } from '../../../utils/errandTasks';
+import { isErrandService, normalizeServiceType } from '../../../utils/serviceTypes';
+import { getRoundTripDisplay } from '../../../utils/roundTripHelpers';
+import { getRideCostDisplay } from '../../../utils/rideCostDisplay';
+import { formatPrice } from '../../../utils/formatters';
 
 /**
  * Card component for pending rides (awaiting driver offers)
  */
-const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled }) => {
+const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled, tabContext = 'pending' }) => {
   const [cancelling, setCancelling] = useState(false);
   const { cancelRide } = useCancelRide();
 
   // Get service type icon and label
   const getServiceTypeInfo = () => {
-    const serviceType = ride.service_type || 'taxi';
+    const serviceType = normalizeServiceType(ride.service_type || 'taxi');
     const serviceMap = {
       taxi: { icon: Car, label: 'Taxi', color: 'text-blue-600', bgColor: 'bg-blue-50' },
       courier: { icon: Package, label: 'Courier', color: 'text-purple-600', bgColor: 'bg-purple-50' },
@@ -64,22 +70,40 @@ const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled }) => {
   };
 
   const isScheduled = ride.ride_timing !== 'instant';
-  const isRecurring = ride.ride_timing === 'scheduled_recurring';
   const scheduledTime = ride.scheduled_datetime || ride.scheduled_time;
+  const progress = getRideProgressDetails(ride);
+  
+  // Get round trip display info
+  const roundTripInfo = getRoundTripDisplay(ride);
+  
+  // Get cost display with leg breakdown
+  const costDisplay = getRideCostDisplay(ride);
 
-  // Get recurrence pattern info
-  const getRecurrenceInfo = () => {
-    if (!ride.recurrence_pattern) return null;
-    const pattern = ride.recurrence_pattern;
-    if (pattern.type === 'specific_dates') {
-      return `${pattern.dates?.length || 0} specific dates`;
-    } else if (pattern.type === 'weekdays') {
-      return 'Weekdays';
-    } else if (pattern.type === 'weekends') {
-      return 'Weekends';
-    }
-    return 'Recurring';
+  const tripSummary = () => {
+    const plannedLabel =
+      progress.totalTrips === 1
+        ? '1 trip'
+        : `${progress.totalTrips} trips`;
+
+    const title =
+      tabContext === 'pending'
+        ? `${plannedLabel} planned`
+        : plannedLabel;
+
+    const subtitle =
+      progress.recurrenceSummary ||
+      (progress.isRoundTrip ? 'Includes return ride' : 'Single ride');
+
+    return { title, subtitle };
   };
+
+  const summary = tripSummary();
+  const showTripSummary = progress.totalTrips > 0;
+  const errandSummary = useMemo(() => {
+    if (!isErrandService(ride.service_type)) return null;
+    const summaryData = summarizeErrandTasks(ride.errand_tasks || ride.tasks);
+    return summaryData.total ? summaryData : null;
+  }, [ride.service_type, ride.errand_tasks, ride.tasks]);
 
   return (
     <div
@@ -116,26 +140,57 @@ const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled }) => {
         </div>
         <div className="text-right ml-2">
           <div className="text-lg font-bold text-green-600">
-            ${(parseFloat(ride.estimated_cost || ride.fare) || 0).toFixed(2)}
+            {formatPrice(costDisplay.displayCost)}
           </div>
-          <div className="text-xs text-slate-500">Estimated</div>
+          <div className="text-xs text-slate-500">{costDisplay.label || 'Estimated'}</div>
+          {costDisplay.totalCost && costDisplay.totalCost !== costDisplay.displayCost && (
+            <div className="text-xs text-slate-600 mt-1">
+              {formatPrice(costDisplay.totalCost)} total
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Recurring Ride Info */}
-      {isRecurring && ride.total_rides_in_series > 0 && (
-        <div className="mb-3 bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Repeat className="w-4 h-4 text-blue-600" />
-              <div>
-                <div className="text-sm font-bold text-blue-700">
-                  {ride.total_rides_in_series} trips total
+      {/* Round Trip Leg Display */}
+      {roundTripInfo && (
+        <div className="mb-3 bg-indigo-50 rounded-lg px-3 py-2.5 border border-indigo-200">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{roundTripInfo.indicator}</span>
+            <div className="flex-1">
+              <div className="text-sm font-bold text-indigo-700">
+                {roundTripInfo.displayText}
+              </div>
+              {roundTripInfo.isRecurring && (
+                <div className="text-xs text-indigo-600 mt-0.5">
+                  {roundTripInfo.legLabel} leg of occurrence {roundTripInfo.occurrenceNumber}
                 </div>
-                <div className="text-xs text-blue-600">
-                  {getRecurrenceInfo()}
+              )}
+            </div>
+            {costDisplay.breakdown && (
+              <div className="text-right">
+                <div className="text-xs text-indigo-600">
+                  Out: {formatPrice(costDisplay.breakdown.outbound)}
+                </div>
+                <div className="text-xs text-indigo-600">
+                  Ret: {formatPrice(costDisplay.breakdown.return)}
                 </div>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showTripSummary && !roundTripInfo && (
+        <div className="mb-3 bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
+          <div className="flex items-center gap-2">
+            <Repeat className="w-4 h-4 text-blue-600" />
+            <div>
+              <div className="text-sm font-bold text-blue-700">
+                {summary.title}
+              </div>
+              {summary.subtitle && (
+                <div className="text-xs text-blue-600">{summary.subtitle}</div>
+              )}
             </div>
           </div>
         </div>
@@ -200,6 +255,30 @@ const PendingRideCard = ({ ride, offerCount = 0, onClick, onCancelled }) => {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Errand summary */}
+      {errandSummary && (
+        <div className="mb-3 bg-green-50 rounded-lg px-3 py-2 border border-green-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-bold text-green-800">Errand Tasks</p>
+              <p className="text-xs text-green-700">
+                Completed {errandSummary.completed}/{errandSummary.total}
+              </p>
+            </div>
+            {errandSummary.activeTask && (
+              <span className="text-[11px] font-semibold text-green-600">
+                {describeTaskState(errandSummary.activeTask.state)}
+              </span>
+            )}
+          </div>
+          {errandSummary.activeTask && (
+            <p className="text-xs text-green-700 mt-1">
+              Next up: {errandSummary.activeTask.title}
+            </p>
+          )}
         </div>
       )}
 

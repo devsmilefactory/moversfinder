@@ -1,9 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import {
+  RefreshCw,
+  DollarSign,
+  FileText,
+  User as UserIcon,
+  LogOut,
+  Car as CarIcon,
+  CheckCircle2,
+  MapPin as MapPinIcon
+} from 'lucide-react';
 import DriverRidesPage from '../DriverRidesPage';
 import ProfileSwitcher from '../../../components/profiles/ProfileSwitcher';
 import useAuthStore from '../../../stores/authStore';
 import useProfileStore from '../../../stores/profileStore';
+import ToggleSwitch from '../../../components/ui/ToggleSwitch';
+import NotificationBell from '../../../components/notifications/NotificationBell';
 
 /**
  * Ride Requests Page (Driver)
@@ -17,10 +29,32 @@ import useProfileStore from '../../../stores/profileStore';
  */
 const RideRequestsPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, logout } = useAuthStore();
   const { activeProfileType } = useProfileStore();
   const [showMenu, setShowMenu] = useState(false);
   const [showProfileSwitcher, setShowProfileSwitcher] = useState(false);
+  const [ridesUiState, setRidesUiState] = useState({
+    isOnline: false,
+    locationCity: '',
+    locationLoading: false,
+    onToggleOnline: () => {},
+    onRefresh: () => {},
+    hasNewRides: false,
+    newRidesCount: 0,
+    isRefreshing: false
+  });
+
+  const handleRidesUiState = useCallback((nextState) => {
+    if (!nextState) {
+      return;
+    }
+    setRidesUiState((prev) => {
+      const keys = Object.keys(nextState);
+      const changed = keys.some((key) => prev[key] !== nextState[key]);
+      return changed ? nextState : prev;
+    });
+  }, []);
 
   // CRITICAL FIX: Redirect if activeProfileType doesn't match this page
   // This ensures seamless profile switching - when user switches to individual/corporate,
@@ -57,11 +91,11 @@ const RideRequestsPage = () => {
   };
 
   const menuItems = [
-    { icon: '🔄', label: 'Switch Profile', action: handleSwitchProfile },
-    { icon: '💰', label: 'Earnings', action: () => navigate('/driver/earnings') },
-    { icon: '📜', label: 'Rides History', action: () => navigate('/driver/rides-history') },
-    { icon: '👤', label: 'Profile', action: () => navigate('/driver/profile') },
-    { icon: '🚪', label: 'Logout', action: handleLogout },
+    { icon: MapPinIcon, label: 'Rides', path: '/driver/rides', action: () => navigate('/driver/rides'), accent: 'text-blue-600' },
+    { icon: DollarSign, label: 'Earnings', path: '/driver/earnings', action: () => navigate('/driver/earnings'), accent: 'text-green-600' },
+    { icon: FileText, label: 'Rides History', path: '/driver/rides-history', action: () => navigate('/driver/rides-history'), accent: 'text-purple-600' },
+    { icon: UserIcon, label: 'Profile', path: '/driver/profile', action: () => navigate('/driver/profile'), accent: 'text-slate-600' },
+    { icon: LogOut, label: 'Logout', path: null, action: handleLogout, accent: 'text-red-600' },
   ];
 
   return (
@@ -70,8 +104,7 @@ const RideRequestsPage = () => {
         {/* Header with Hamburger Menu */}
         <div className="bg-white border-b border-gray-200 sticky top-0 z-30">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between h-16">
-              {/* Left: Menu Button */}
+            <div className="flex items-center justify-between gap-4 h-16">
               <button
                 onClick={() => setShowMenu(true)}
                 className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
@@ -82,16 +115,40 @@ const RideRequestsPage = () => {
                 </svg>
               </button>
 
-              {/* Center: Title */}
               <div className="flex-1 text-center">
-                <h1 className="text-xl font-bold text-gray-900">Ride Management</h1>
+                <h1 className="text-xl font-bold text-gray-900">Rides</h1>
               </div>
 
-              {/* Right: User Avatar */}
-              <div className="w-10 h-10 bg-yellow-400 rounded-full flex items-center justify-center">
-                <span className="text-slate-700 font-bold">
-                  {user?.name?.charAt(0) || 'D'}
-                </span>
+              <div className="flex items-center gap-4">
+                <div className="flex flex-col items-end text-right gap-1 min-w-[180px] max-w-[240px] md:items-start md:text-left">
+                  <div className="flex items-center gap-2">
+                    <ToggleSwitch
+                      checked={ridesUiState.isOnline}
+                      onChange={ridesUiState.onToggleOnline}
+                      disabled={ridesUiState.locationLoading}
+                      size="lg"
+                      className="flex-shrink-0"
+                    />
+                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                      {ridesUiState.isOnline ? 'Online' : 'Offline'}
+                      {ridesUiState.isOnline && ridesUiState.locationCity && (
+                        <span className="flex items-center gap-1 text-[11px] text-gray-500">
+                          <MapPinIcon className="w-3 h-3 text-green-600" />
+                          {ridesUiState.locationCity}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  {(ridesUiState.locationLoading || !ridesUiState.isOnline) && (
+                    <p className="text-xs text-gray-600">
+                      {ridesUiState.locationLoading
+                        ? 'Grabbing location...'
+                        : 'Tap to go online'}
+                    </p>
+                  )}
+                </div>
+
+                <NotificationBell className="flex-shrink-0" />
               </div>
             </div>
           </div>
@@ -100,7 +157,7 @@ const RideRequestsPage = () => {
         {/* Main Content */}
         <div className="py-8">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <DriverRidesPage />
+            <DriverRidesPage onUiStateChange={handleRidesUiState} />
           </div>
         </div>
       </div>
@@ -121,14 +178,21 @@ const RideRequestsPage = () => {
               <div className="bg-gradient-to-r from-yellow-400 to-yellow-500 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center">
-                      <span className="text-2xl">🚗</span>
+                    <div className="w-12 h-12 bg-yellow-50 rounded-full flex items-center justify-center border-2 border-white shadow-md">
+                      <CarIcon className="w-6 h-6 text-yellow-600" />
                     </div>
-                    <span className="text-xl font-bold text-slate-800">TaxiCab</span>
+                    <div>
+                      <span className="text-xl font-bold text-slate-800">TaxiCab</span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <CheckCircle2 className="w-3 h-3 text-white" />
+                        <p className="text-xs font-semibold text-white">Driver Mode</p>
+                      </div>
+                    </div>
                   </div>
                   <button
                     onClick={() => setShowMenu(false)}
-                    className="p-2 rounded-full hover:bg-yellow-600 transition-colors"
+                    className="p-2 rounded-full hover:bg-white/20 transition-colors"
+                    aria-label="Close menu"
                   >
                     <svg className="w-6 h-6 text-slate-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -136,32 +200,58 @@ const RideRequestsPage = () => {
                   </button>
                 </div>
 
-                {/* User Info */}
-                <div className="bg-white/20 backdrop-blur-sm rounded-lg p-3">
-                  <p className="text-sm font-medium text-slate-800">{user?.name || 'Driver'}</p>
-                  <p className="text-xs text-slate-700">{user?.email || ''}</p>
-                  <div className="mt-2 inline-block bg-white/30 px-2 py-1 rounded text-xs font-medium text-slate-800">
-                    Driver Mode
+                {/* Profile summary + switch CTA */}
+                <div className="bg-white/20 rounded-xl p-4 border border-white/30 space-y-3">
+                  <div>
+                    <p className="font-semibold text-slate-800 truncate">
+                      {user?.name || user?.email || 'Your account'}
+                    </p>
+                    {user?.email && <p className="text-sm text-slate-700 truncate">{user.email}</p>}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 justify-between">
+                    <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-white/30">
+                      <CarIcon className="w-4 h-4 text-yellow-600" />
+                      <p className="text-xs font-bold text-slate-800">
+                        Active profile: Driver
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        handleSwitchProfile();
+                        setShowMenu(false);
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white text-slate-900 text-sm font-semibold shadow hover:bg-yellow-50 transition-colors"
+                    >
+                      <RefreshCw className="w-4 h-4 text-yellow-500" />
+                      <span>Switch profile</span>
+                    </button>
                   </div>
                 </div>
               </div>
 
               {/* Menu Items */}
               <nav className="flex-1 px-4 py-6 overflow-y-auto">
-                <div className="space-y-2">
-                  {menuItems.map((item, index) => (
-                    <button
-                      key={index}
-                      onClick={() => {
-                        item.action();
-                        setShowMenu(false);
-                      }}
-                      className="w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-left transition-colors hover:bg-slate-100"
-                    >
-                      <span className="text-2xl">{item.icon}</span>
-                      <span className="font-medium text-slate-700">{item.label}</span>
-                    </button>
-                  ))}
+                <div className="space-y-1">
+                  {menuItems.map((item, index) => {
+                    const isActive = item.path && location.pathname === item.path;
+                    return (
+                      <button
+                        key={index}
+                        onClick={() => {
+                          item.action();
+                          setShowMenu(false);
+                        }}
+                        className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg text-left transition-colors ${
+                          isActive 
+                            ? 'bg-yellow-100 border-2 border-yellow-400 text-yellow-900 font-semibold' 
+                            : 'hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <item.icon className={`w-5 h-5 ${isActive ? 'text-yellow-700' : (item.accent || 'text-slate-600')}`} />
+                        <span className="font-medium">{item.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </nav>
 

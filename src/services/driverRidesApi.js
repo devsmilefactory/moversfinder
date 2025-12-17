@@ -1,17 +1,63 @@
 /**
  * Driver Rides API Service
  * 
- * Centralized service for all driver ride data access.
+ * Centralized service for all driver ride data access using new platform ride logic.
  * This is the single source of truth for fetching driver rides.
  */
 
 import { supabase } from '../lib/supabase';
 
 /**
- * Fetch driver rides with filtering and pagination
+ * Map old status groups to new feed categories
+ * AVAILABLE -> available
+ * BID -> my_bids
+ * ACTIVE -> in_progress
+ * COMPLETED -> completed
+ */
+const STATUS_GROUP_TO_FEED_CATEGORY = {
+  'AVAILABLE': 'available',
+  'BID': 'my_bids',
+  'ACTIVE': 'in_progress',
+  'COMPLETED': 'completed',
+  'CANCELLED': 'cancelled'
+};
+
+/**
+ * Map old ride type filters to new service types
+ */
+const RIDE_TYPE_TO_SERVICE_TYPE = {
+  'TAXI': 'taxi',
+  'COURIER': 'courier',
+  'ERRANDS': 'errands',
+  'SCHOOL_RUN': 'school_run'
+};
+
+/**
+ * Map old schedule filters to new ride timing
+ * Note: SCHEDULED maps to scheduled_single (not 'scheduled')
+ * RECURRING maps to scheduled_recurring (not 'recurring')
+ */
+const SCHEDULE_TO_TIMING = {
+  'INSTANT': 'instant',
+  'SCHEDULED': 'scheduled_single',
+  'RECURRING': 'scheduled_recurring'
+};
+
+/**
+ * Check if a ride entry is a recurring series
+ * 
+ * @param {Object} ride - Ride object from feed
+ * @returns {boolean} True if this is a series entry
+ */
+export function isRecurringSeries(ride) {
+  return ride && ride.is_series === true;
+}
+
+/**
+ * Fetch driver rides with filtering and pagination using new get_driver_feed RPC
  * 
  * @param {string} driverId - UUID of the driver
- * @param {string} statusGroup - AVAILABLE | BID | ACTIVE | COMPLETED
+ * @param {string} statusGroup - AVAILABLE | BID | ACTIVE | COMPLETED | CANCELLED
  * @param {string} rideTypeFilter - ALL | TAXI | COURIER | ERRANDS | SCHOOL_RUN
  * @param {string} scheduleFilter - ALL | INSTANT | SCHEDULED | RECURRING
  * @param {number} page - Page number (1-based)
@@ -26,44 +72,96 @@ export async function fetchDriverRides(
   page = 1,
   pageSize = 10
 ) {
+  const startTime = performance.now();
+  
   try {
     const offset = (page - 1) * pageSize;
+    
+    // Map to new feed category
+    const feedCategory = STATUS_GROUP_TO_FEED_CATEGORY[statusGroup] || 'available';
+    
+    // Map service type
+    const serviceType = rideTypeFilter === 'ALL' ? null : RIDE_TYPE_TO_SERVICE_TYPE[rideTypeFilter];
+    
+    // Map ride timing
+    const rideTiming = scheduleFilter === 'ALL' ? null : SCHEDULE_TO_TIMING[scheduleFilter];
 
-    const { data, error } = await supabase.rpc('get_driver_rides', {
+    // Log RPC call parameters
+    console.log('[Driver Feed] Calling get_driver_feed:', {
       p_driver_id: driverId,
-      p_status_group: statusGroup,
-      p_ride_type: rideTypeFilter === 'ALL' ? null : rideTypeFilter,
-      p_schedule_type: scheduleFilter === 'ALL' ? null : scheduleFilter,
+      p_feed_category: feedCategory,
+      p_service_type: serviceType,
+      p_ride_timing: rideTiming,
       p_limit: pageSize,
       p_offset: offset
     });
 
+    const { data, error } = await supabase.rpc('get_driver_feed', {
+      p_driver_id: driverId,
+      p_feed_category: feedCategory,
+      p_service_type: serviceType,
+      p_ride_timing: rideTiming,
+      p_limit: pageSize,
+      p_offset: offset
+    });
+
+    const duration = performance.now() - startTime;
+
     if (error) {
-      console.error('Error fetching driver rides:', error);
+      console.error('[Driver Feed] Error fetching driver rides:', {
+        error,
+        context: { driverId, feedCategory, serviceType, rideTiming, page, pageSize },
+        duration: `${duration.toFixed(2)}ms`
+      });
       return { data: null, error, count: 0 };
     }
 
+    // Log performance warning if slow
+    if (duration > 500) {
+      console.warn('[Driver Feed] Slow query detected:', {
+        feedCategory,
+        duration: `${duration.toFixed(2)}ms`,
+        resultCount: data?.length || 0
+      });
+    }
+
     // Get total count for pagination (approximate based on returned data)
-    // Note: For exact count, we'd need a separate count query
     const count = data?.length || 0;
+
+    console.log('[Driver Feed] Success:', {
+      feedCategory,
+      resultCount: count,
+      duration: `${duration.toFixed(2)}ms`
+    });
 
     return { data: data || [], error: null, count };
   } catch (error) {
-    console.error('Exception in fetchDriverRides:', error);
+    const duration = performance.now() - startTime;
+    console.error('[Driver Feed] Exception in fetchDriverRides:', {
+      error: error.message,
+      stack: error.stack,
+      context: { driverId, statusGroup, rideTypeFilter, scheduleFilter, page, pageSize },
+      duration: `${duration.toFixed(2)}ms`
+    });
     return { data: null, error, count: 0 };
   }
 }
 
 /**
- * Fetch active instant ride for a driver
+ * Fetch active instant ride for a driver using new get_driver_feed RPC
  * 
  * @param {string} driverId - UUID of the driver
  * @returns {Promise<{data: Object|null, error: Error|null}>}
  */
 export async function fetchActiveInstantRide(driverId) {
   try {
-    const { data, error } = await supabase.rpc('get_active_instant_ride', {
-      p_driver_id: driverId
+    const { data, error } = await supabase.rpc('get_driver_feed', {
+      p_driver_id: driverId,
+      p_feed_category: 'in_progress',
+      p_service_type: null,
+      p_ride_timing: 'instant',
+      p_limit: 1,
+      p_offset: 0
     });
 
     if (error) {
@@ -71,7 +169,7 @@ export async function fetchActiveInstantRide(driverId) {
       return { data: null, error };
     }
 
-    // RPC returns array, get first item
+    // Get first active instant ride
     const ride = data && data.length > 0 ? data[0] : null;
 
     return { data: ride, error: null };
@@ -82,7 +180,7 @@ export async function fetchActiveInstantRide(driverId) {
 }
 
 /**
- * Fetch imminent scheduled rides for a driver
+ * Fetch imminent scheduled rides for a driver using new get_driver_feed RPC
  * 
  * @param {string} driverId - UUID of the driver
  * @param {number} windowMinutes - Time window in minutes (default 30)
@@ -90,9 +188,14 @@ export async function fetchActiveInstantRide(driverId) {
  */
 export async function fetchImminentScheduledRides(driverId, windowMinutes = 30) {
   try {
-    const { data, error } = await supabase.rpc('get_imminent_scheduled_rides', {
+    // Fetch all in-progress scheduled rides
+    const { data, error } = await supabase.rpc('get_driver_feed', {
       p_driver_id: driverId,
-      p_window_minutes: windowMinutes
+      p_feed_category: 'in_progress',
+      p_service_type: null,
+      p_ride_timing: 'scheduled_single',
+      p_limit: 50,
+      p_offset: 0
     });
 
     if (error) {
@@ -100,7 +203,17 @@ export async function fetchImminentScheduledRides(driverId, windowMinutes = 30) 
       return { data: null, error };
     }
 
-    return { data: data || [], error: null };
+    // Filter for rides within the time window
+    const now = new Date();
+    const windowEnd = new Date(now.getTime() + windowMinutes * 60000);
+    
+    const imminentRides = (data || []).filter(ride => {
+      if (!ride.scheduled_datetime) return false;
+      const scheduledTime = new Date(ride.scheduled_datetime);
+      return scheduledTime >= now && scheduledTime <= windowEnd;
+    });
+
+    return { data: imminentRides, error: null };
   } catch (error) {
     console.error('Exception in fetchImminentScheduledRides:', error);
     return { data: null, error };
@@ -108,7 +221,7 @@ export async function fetchImminentScheduledRides(driverId, windowMinutes = 30) 
 }
 
 /**
- * Activate a scheduled ride
+ * Activate a scheduled ride using new activate_ride RPC
  * 
  * @param {string} rideId - UUID of the ride to activate
  * @param {string} driverId - UUID of the driver
@@ -116,7 +229,7 @@ export async function fetchImminentScheduledRides(driverId, windowMinutes = 30) 
  */
 export async function activateScheduledRide(rideId, driverId) {
   try {
-    const { data, error } = await supabase.rpc('activate_scheduled_ride', {
+    const { data, error } = await supabase.rpc('activate_ride', {
       p_ride_id: rideId,
       p_driver_id: driverId
     });
@@ -131,7 +244,7 @@ export async function activateScheduledRide(rideId, driverId) {
       return {
         success: data.success || false,
         error: data.error || null,
-        ride_id: data.ride_id || null
+        ride_id: data.ride_id || rideId
       };
     }
 
@@ -172,5 +285,117 @@ export async function fetchRideCounts(driverId) {
       active: 0,
       completed: 0
     };
+  }
+}
+
+/**
+ * Transition ride status using new transition_ride_status RPC
+ * 
+ * @param {string} rideId - UUID of the ride
+ * @param {string} newState - New ride state (PENDING, ACTIVE_PRE_TRIP, ACTIVE_EXECUTION, COMPLETED_INSTANCE, COMPLETED_FINAL, CANCELLED)
+ * @param {string|null} newSubState - New execution sub-state (DRIVER_ON_THE_WAY, DRIVER_ARRIVED, TRIP_STARTED, TRIP_COMPLETED)
+ * @param {string} actorType - DRIVER | PASSENGER | SYSTEM
+ * @param {string} actorId - UUID of the actor
+ * @returns {Promise<{success: boolean, error: string|null, data: Object|null}>}
+ */
+export async function transitionRideStatus(rideId, newState, newSubState = null, actorType = 'DRIVER', actorId) {
+  try {
+    const { data, error } = await supabase.rpc('transition_ride_status', {
+      p_ride_id: rideId,
+      p_new_state: newState,
+      p_new_sub_state: newSubState,
+      p_actor_type: actorType,
+      p_actor_id: actorId
+    });
+
+    if (error) {
+      console.error('Error transitioning ride status:', error);
+      return { success: false, error: error.message, data: null };
+    }
+
+    if (data && typeof data === 'object') {
+      return {
+        success: data.success || false,
+        error: data.error || null,
+        data: data
+      };
+    }
+
+    return { success: false, error: 'Invalid response from server', data: null };
+  } catch (error) {
+    console.error('Exception in transitionRideStatus:', error);
+    return { success: false, error: error.message, data: null };
+  }
+}
+
+/**
+ * Transition errand task status using new transition_errand_task RPC
+ * 
+ * @param {string} rideId - UUID of the ride
+ * @param {number} taskIndex - Index of the task (0-based)
+ * @param {string} newTaskStatus - New task status (ACTIVATE_TASK, DRIVER_ON_THE_WAY, DRIVER_ARRIVED, TASK_STARTED, TASK_COMPLETED)
+ * @param {string} driverId - UUID of the driver
+ * @returns {Promise<{success: boolean, error: string|null, data: Object|null}>}
+ */
+export async function transitionErrandTask(rideId, taskIndex, newTaskStatus, driverId) {
+  try {
+    const { data, error } = await supabase.rpc('transition_errand_task', {
+      p_ride_id: rideId,
+      p_task_index: taskIndex,
+      p_new_task_status: newTaskStatus,
+      p_driver_id: driverId
+    });
+
+    if (error) {
+      console.error('Error transitioning errand task:', error);
+      return { success: false, error: error.message, data: null };
+    }
+
+    if (data && typeof data === 'object') {
+      return {
+        success: data.success || false,
+        error: data.error || null,
+        data: data
+      };
+    }
+
+    return { success: false, error: 'Invalid response from server', data: null };
+  } catch (error) {
+    console.error('Exception in transitionErrandTask:', error);
+    return { success: false, error: error.message, data: null };
+  }
+}
+
+/**
+ * Accept a driver offer using new accept_driver_offer RPC
+ * 
+ * @param {string} offerId - UUID of the offer
+ * @param {string} passengerId - UUID of the passenger
+ * @returns {Promise<{success: boolean, error: string|null, data: Object|null}>}
+ */
+export async function acceptDriverOffer(offerId, passengerId) {
+  try {
+    const { data, error } = await supabase.rpc('accept_driver_offer', {
+      p_offer_id: offerId,
+      p_passenger_id: passengerId
+    });
+
+    if (error) {
+      console.error('Error accepting driver offer:', error);
+      return { success: false, error: error.message, data: null };
+    }
+
+    if (data && typeof data === 'object') {
+      return {
+        success: data.success || false,
+        error: data.error || null,
+        data: data
+      };
+    }
+
+    return { success: false, error: 'Invalid response from server', data: null };
+  } catch (error) {
+    console.error('Exception in acceptDriverOffer:', error);
+    return { success: false, error: error.message, data: null };
   }
 }

@@ -3,6 +3,7 @@ import { Car, Filter, Calendar, MapPin } from 'lucide-react';
 import CorporatePWALayout from '../../../components/layouts/CorporatePWALayout';
 import useAuthStore from '../../../stores/authStore';
 import { supabase } from '../../../lib/supabase';
+import { normalizeServiceType } from '../../../utils/serviceTypes';
 
 /**
  * Corporate Rides Page - PWA Version
@@ -46,7 +47,7 @@ const CorporateRidesPage = () => {
         id: ride.id,
         bookingDate: ride.created_at,
         passengerName: ride.passenger?.name || 'Unknown',
-        serviceType: ride.service_type || 'taxi',
+        serviceType: normalizeServiceType(ride.service_type || 'taxi'),
         pickup: ride.pickup_location,
         dropoff: ride.dropoff_location,
         status: ride.status,
@@ -65,7 +66,8 @@ const CorporateRidesPage = () => {
   // Filter rides
   const filteredRides = rides.filter(ride => {
     if (filters.status !== 'all' && ride.status !== filters.status) return false;
-    if (filters.serviceType !== 'all' && ride.serviceType !== filters.serviceType) return false;
+    const filterServiceType = normalizeServiceType(filters.serviceType);
+    if (filterServiceType !== 'all' && ride.serviceType !== filterServiceType) return false;
     return true;
   });
 
@@ -88,7 +90,7 @@ const CorporateRidesPage = () => {
       taxi: '🚕',
       courier: '📦',
       school_run: '🚌',
-      errands: '🛒',
+      errand: '🛒',
     };
     return icons[serviceType] || '🚗';
   };
@@ -171,7 +173,7 @@ const CorporateRidesPage = () => {
                   <option value="taxi">Taxi</option>
                   <option value="courier">Courier</option>
                   <option value="school_run">School Run</option>
-                  <option value="errands">Errands</option>
+                  <option value="errand">Errands</option>
                 </select>
               </div>
             </div>

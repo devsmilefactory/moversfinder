@@ -6,26 +6,61 @@
         "-y",
         "@modelcontextprotocol/server-sequential-thinking"
       ],
-      "disabled": false
+      "disabled": false,
+      "autoApprove": [
+        "sequentialthinking"
+      ]
     },
     "chrome-devtools": {
       "command": "npx",
       "args": [
         "chrome-devtools-mcp@latest"
       ],
-      "disabled": false,
+      "disabled": true,
       "autoApprove": [
-        "list_pages"
+        "list_pages",
+        "take_snapshot",
+        "navigate_page",
+        "click",
+        "list_console_messages",
+        "get_console_message",
+        "list_network_requests",
+        "handle_dialog",
+        "take_screenshot",
+        "wait_for",
+        "evaluate_script"
       ]
     },
-    
-  
+    "Augment-Context-Engine": {
+      "command": "auggie",
+      "args": [
+        "--mcp",
+        "-m",
+        "default",
+        "-w",
+        "./"
+      ],
+      "disabled": false,
+      "autoApprove": [
+        "codebase-retrieval"
+      ]
+    },
     "supabase": {
-      "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=dxfyoaabkckllpequaog&features=docs%2Caccount%2Cdatabase%2Cdebugging%2Cdevelopment%2Cfunctions%2Cbranching%2Cstorage",
-      "disabled": true
+      "command": "npx",
+      "args": [
+        "-y",
+        "@supabase/mcp-server-supabase@latest",
+        "--access-token",
+        "sbp_d4429ff2b40a65c01bcb85ecc0d3c7f593c858f6"
+      ],
+      "disabled": false,
+      "autoApprove": [
+        "list_tables",
+        "apply_migration",
+        "execute_sql",
+        "list_migrations",
+        "list_projects"
+      ]
     }
   }
-
-  
 }

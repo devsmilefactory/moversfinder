@@ -53,16 +53,46 @@ export const findNearbyDrivers = async (pickupCoordinates, radiusKm = 5) => {
  */
 export const broadcastRideToDrivers = async (rideId, pickupCoordinates, radiusKm = 5) => {
   try {
-    // Find nearby drivers
-    const { success, data: nearbyDrivers, error } = await findNearbyDrivers(pickupCoordinates, radiusKm);
+    // Gradually expand search radius if no drivers found in the initial radius.
+    const searchRadii = [...new Set([
+      radiusKm,
+      Math.max(radiusKm * 2, radiusKm + 5),
+      20
+    ])];
 
-    if (!success || !nearbyDrivers || nearbyDrivers.length === 0) {
-      console.log('No nearby drivers found');
-      return { success: true, driversNotified: 0, message: 'No nearby drivers available' };
+    const uniqueDrivers = new Map();
+    let searchRadiusUsed = radiusKm;
+
+    for (const radius of searchRadii) {
+      const { success, data: nearbyDrivers, error } = await findNearbyDrivers(pickupCoordinates, radius);
+
+      if (!success) {
+        return { success: false, error, driversNotified: 0 };
+      }
+
+      (nearbyDrivers || []).forEach((driver) => {
+        if (driver?.driver_id && !uniqueDrivers.has(driver.driver_id)) {
+          uniqueDrivers.set(driver.driver_id, driver);
+        }
+      });
+
+      if (uniqueDrivers.size > 0) {
+        searchRadiusUsed = radius;
+        break;
+      }
+    }
+
+    if (uniqueDrivers.size === 0) {
+      console.log('No nearby drivers found even after expanding radius');
+      return {
+        success: true,
+        driversNotified: 0,
+        message: 'No nearby drivers available'
+      };
     }
 
     // Create queue entries for each driver
-    const queueEntries = nearbyDrivers.map(driver => ({
+    const queueEntries = Array.from(uniqueDrivers.values()).map(driver => ({
       ride_id: rideId,
       driver_id: driver.driver_id,
       status: 'viewing',
@@ -79,12 +109,13 @@ export const broadcastRideToDrivers = async (rideId, pickupCoordinates, radiusKm
       return { success: false, error: insertError.message, driversNotified: 0 };
     }
 
-    console.log(`✅ Ride broadcast to ${insertedEntries.length} drivers`);
+    console.log(`✅ Ride broadcast to ${insertedEntries.length} drivers (radius used: ${searchRadiusUsed}km)`);
     return { 
       success: true, 
       driversNotified: insertedEntries.length,
-      drivers: nearbyDrivers,
-      message: `Ride broadcast to ${insertedEntries.length} nearby drivers`
+      drivers: Array.from(uniqueDrivers.values()),
+      radiusUsed: searchRadiusUsed,
+      message: `Ride broadcast to ${insertedEntries.length} driver(s) within ${searchRadiusUsed}km`
     };
 
   } catch (error) {

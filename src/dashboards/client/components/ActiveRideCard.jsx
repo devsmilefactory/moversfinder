@@ -1,19 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { MapPin, User, Car, Clock, Phone, Navigation, CheckCircle, Star, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Calendar, Repeat } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import Button from '../../shared/Button';
+import { getRideProgressDetails } from '../../../utils/rideProgress';
+import { summarizeErrandTasks, describeTaskState } from '../../../utils/errandTasks';
+import { isErrandService, normalizeServiceType } from '../../../utils/serviceTypes';
 
 /**
  * Card component for active rides (driver assigned through completed)
  * Handles multiple sub-states: driver_assigned, driver_en_route, driver_arrived, in_progress
  */
-const ActiveRideCard = ({ ride, onClick }) => {
+const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
   const [driverInfo, setDriverInfo] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Get service type icon and label
   const getServiceTypeInfo = () => {
-    const serviceType = ride.service_type || 'taxi';
+    const serviceType = normalizeServiceType(ride.service_type || 'taxi');
     const serviceMap = {
       taxi: { icon: Car, label: 'Taxi', color: 'text-blue-600', bgColor: 'bg-blue-50' },
       courier: { icon: Package, label: 'Courier', color: 'text-purple-600', bgColor: 'bg-purple-50' },
@@ -138,21 +141,39 @@ const ActiveRideCard = ({ ride, onClick }) => {
 
   const statusInfo = getStatusInfo();
   const StatusIcon = statusInfo.icon;
-  const isRecurring = ride.ride_timing === 'scheduled_recurring';
+  const progress = getRideProgressDetails(ride);
 
-  // Get recurrence pattern info
-  const getRecurrenceInfo = () => {
-    if (!ride.recurrence_pattern) return null;
-    const pattern = ride.recurrence_pattern;
-    if (pattern.type === 'specific_dates') {
-      return `${pattern.dates?.length || 0} specific dates`;
-    } else if (pattern.type === 'weekdays') {
-      return 'Weekdays';
-    } else if (pattern.type === 'weekends') {
-      return 'Weekends';
+  const errandSummary = useMemo(() => {
+    if (!isErrandService(ride.service_type)) return null;
+    const summary = summarizeErrandTasks(ride.errand_tasks || ride.tasks);
+    if (!summary.total) return null;
+    return summary;
+  }, [ride.service_type, ride.errand_tasks, ride.tasks]);
+  const errandCompletionPct = errandSummary?.total
+    ? Math.round((errandSummary.completed / errandSummary.total) * 100)
+    : 0;
+
+  const tripSummary = () => {
+    if (!progress.totalTrips) return null;
+
+    if (tabContext === 'active') {
+      const activeSubtitle =
+        progress.remainingTrips > 0
+          ? `${progress.remainingTrips} trip${progress.remainingTrips === 1 ? '' : 's'} remaining after this`
+          : 'Final trip in this series';
+      return {
+        title: `Trip ${progress.currentTripNumber} of ${progress.totalTrips}`,
+        subtitle: activeSubtitle || progress.recurrenceSummary,
+      };
     }
-    return 'Recurring';
+
+    return {
+      title: `${progress.totalTrips} trip${progress.totalTrips === 1 ? '' : 's'}`,
+      subtitle: progress.recurrenceSummary,
+    };
   };
+
+  const summary = tripSummary();
 
   return (
     <div
@@ -191,20 +212,17 @@ const ActiveRideCard = ({ ride, onClick }) => {
         </div>
       </div>
 
-      {/* Recurring Ride Info */}
-      {isRecurring && ride.total_rides_in_series > 0 && (
+      {summary && (
         <div className="mb-3 bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Repeat className="w-4 h-4 text-blue-600" />
-              <div>
-                <div className="text-sm font-bold text-blue-700">
-                  Trip {(ride.completed_rides_count || 0) + 1} of {ride.total_rides_in_series}
-                </div>
-                <div className="text-xs text-blue-600">
-                  {ride.remaining_rides_count || 0} trips remaining • {getRecurrenceInfo()}
-                </div>
+          <div className="flex items-center gap-2">
+            <Repeat className="w-4 h-4 text-blue-600" />
+            <div>
+              <div className="text-sm font-bold text-blue-700">
+                {summary.title}
               </div>
+              {summary.subtitle && (
+                <div className="text-xs text-blue-600">{summary.subtitle}</div>
+              )}
             </div>
           </div>
         </div>
@@ -279,6 +297,35 @@ const ActiveRideCard = ({ ride, onClick }) => {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Errand task progress */}
+      {errandSummary && (
+        <div className="mb-3 bg-green-50 rounded-lg p-3 border border-green-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-green-800">Task progress</p>
+              <p className="text-xs text-green-700">
+                Completed {errandSummary.completed}/{errandSummary.total} • {errandSummary.remaining} remaining
+              </p>
+            </div>
+            <div className="text-sm font-bold text-green-800">
+              {errandCompletionPct}%
+            </div>
+          </div>
+          {errandSummary.activeTask && (
+            <div className="mt-2 bg-white rounded-lg p-2 border border-green-100">
+              <p className="text-xs uppercase text-green-500 tracking-wide mb-1">Current task</p>
+              <p className="text-sm font-semibold text-green-800">{errandSummary.activeTask.title}</p>
+              <p className="text-xs text-green-700">
+                {errandSummary.activeTask.pickup || 'Pickup TBD'} → {errandSummary.activeTask.dropoff || 'Drop-off TBD'}
+              </p>
+              <p className="text-[11px] text-green-500 mt-1">
+                {describeTaskState(errandSummary.activeTask.state)}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

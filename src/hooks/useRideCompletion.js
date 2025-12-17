@@ -36,14 +36,40 @@ export function useRideCompletion() {
       try {
         const now = new Date().toISOString();
 
+        const extraUpdates = { ...extraRideUpdates };
+        delete extraUpdates.ride_status;
+        delete extraUpdates.status;
+
         const rideUpdate = {
           ride_status: RIDE_STATUSES.TRIP_COMPLETED,
+          status: RIDE_STATUSES.TRIP_COMPLETED,
           trip_completed_at: now,
           actual_dropoff_time: now,
           payment_status: 'paid',
           status_updated_at: now,
-          ...extraRideUpdates,
+          ...extraUpdates,
         };
+
+        // Get ride details first to check if it's a recurring ride
+        const { data: rideData, error: rideFetchError } = await supabase
+          .from('rides')
+          .select('*, series_id, number_of_trips, estimated_cost, payment_method, company_id')
+          .eq('id', rideId)
+          .single();
+
+        if (rideFetchError) {
+          console.error('Error fetching ride details:', rideFetchError);
+          throw rideFetchError;
+        }
+
+        // For recurring rides, calculate per-trip cost if needed
+        let tripCost = parseFloat(rideData.fare || rideData.estimated_cost || 0);
+        if (rideData.number_of_trips && rideData.number_of_trips > 1 && rideData.estimated_cost) {
+          // This is a recurring ride - use per-trip cost
+          tripCost = parseFloat(rideData.estimated_cost) / rideData.number_of_trips;
+          // Update the fare field with the per-trip cost for this specific trip
+          rideUpdate.fare = tripCost;
+        }
 
         const { error: rideError } = await supabase
           .from('rides')
@@ -53,6 +79,51 @@ export function useRideCompletion() {
         if (rideError) {
           console.error('Error completing ride:', rideError);
           throw rideError;
+        }
+
+        // Handle automatic deduction for corporate account_balance payments
+        // This happens automatically via the database trigger, but we ensure it here too
+        if (rideData.payment_method === 'account_balance' && rideData.company_id) {
+          try {
+            const { data: companyData, error: companyError } = await supabase
+              .from('corporate_profiles')
+              .select('credit_balance, low_balance_threshold')
+              .eq('user_id', rideData.company_id)
+              .single();
+
+            if (!companyError && companyData) {
+              const currentBalance = parseFloat(companyData.credit_balance || 0);
+              const newBalance = currentBalance - tripCost;
+              const threshold = parseFloat(companyData.low_balance_threshold || 100);
+
+              // Update balance
+              await supabase
+                .from('corporate_profiles')
+                .update({ credit_balance: newBalance })
+                .eq('user_id', rideData.company_id);
+
+              // Create transaction record
+              await supabase
+                .from('credit_transactions')
+                .insert({
+                  company_id: rideData.company_id,
+                  transaction_type: 'deduction',
+                  amount: tripCost,
+                  balance_before: currentBalance,
+                  balance_after: newBalance,
+                  reference_type: 'ride',
+                  reference_id: rideId,
+                  description: `Recurring trip payment (trip ${rideData.series_trip_number || 1} of ${rideData.number_of_trips || 1})`,
+                  created_by: user?.id,
+                  platform: 'taxicab'
+                });
+
+              console.log(`✅ Recurring ride deduction: $${tripCost.toFixed(2)} (New balance: $${newBalance.toFixed(2)})`);
+            }
+          } catch (deductionError) {
+            console.error('Error processing recurring ride deduction:', deductionError);
+            // Don't fail the completion if deduction fails
+          }
         }
 
         // Mark driver available again if we know the current user is a driver

@@ -87,7 +87,7 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
       {mode === 'multi_pickup' ? (
         <>
           {/* Single Drop-off (required first) */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+          <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
             <LocationInput
               label="Drop-off Location"
               value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}
@@ -116,7 +116,7 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
             </div>
             <div className="max-h-56 overflow-y-auto pr-1 -mr-1 space-y-3">
               {(formData.bulkPickups || []).map((val, idx) => (
-                <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+                <div key={idx} className="bg-slate-50 rounded-lg border border-slate-200 p-3">
                   <LocationInput
                     label={`Pickup ${idx + 1}`}
                     value={typeof val === 'string' ? val : (val?.data?.address || '')}
@@ -143,7 +143,7 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
       ) : (
         <>
           {/* Single Pickup */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+          <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
             <LocationInput
               label="Pickup Location"
               value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
@@ -169,7 +169,7 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
             </div>
             <div className="max-h-56 overflow-y-auto pr-1 -mr-1 space-y-3">
               {(formData.bulkDropoffs || []).map((val, idx) => (
-                <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+                <div key={idx} className="bg-slate-50 rounded-lg border border-slate-200 p-3">
                   <LocationInput
                     label={`Drop-off ${idx + 1}`}
                     value={typeof val === 'string' ? val : (val?.data?.address || '')}

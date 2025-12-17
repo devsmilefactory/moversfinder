@@ -28,8 +28,8 @@ const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
 
   return (
     <div className="space-y-4">
-      {/* Locations */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+      {/* Locations - Flat design without shadows */}
+      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
         <LocationInput
           label="Passenger Pick-up"
           value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
@@ -40,7 +40,7 @@ const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
         />
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
         <LocationInput
           label="Drop-off Location"
           value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}

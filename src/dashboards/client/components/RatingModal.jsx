@@ -17,6 +17,7 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
 
     setSubmitting(true);
     try {
+      // Per spec: Transition from A3 (trip_completed) to C1 (completed) when modal closes
       const { error } = await supabase
         .from('rides')
         .update({
@@ -24,6 +25,9 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
           review: review || null,
           rated_at: new Date().toISOString(),
           ...(saveTrip ? { is_saved_template: true } : {}),
+          // Transition from trip_completed (A3) to completed (C1) per spec
+          ride_status: ride.ride_status === 'trip_completed' ? 'completed' : ride.ride_status,
+          status: ride.ride_status === 'trip_completed' ? 'completed' : ride.status,
         })
         .eq('id', ride.id);
 
@@ -39,10 +43,29 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
     }
   };
 
+  // Handle modal close: Transition from A3 (trip_completed) to C1 (completed) per spec
+  const handleClose = async () => {
+    // If ride is still in trip_completed state, transition to completed when modal closes
+    if (ride?.ride_status === 'trip_completed') {
+      try {
+        await supabase
+          .from('rides')
+          .update({
+            ride_status: 'completed',
+            status: 'completed',
+          })
+          .eq('id', ride.id);
+      } catch (error) {
+        console.error('Error transitioning ride to completed state:', error);
+      }
+    }
+    onClose();
+  };
+
   return (
     <SharedRatingModal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       ride={ride}
       role="passenger"
       submitting={submitting}

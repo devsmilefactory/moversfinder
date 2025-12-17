@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCw } from 'lucide-react';
 
 const RideFiltersBar = ({
   rideTypeFilter,
@@ -15,7 +15,10 @@ const RideFiltersBar = ({
   onScheduleChange,
   page,
   totalPages,
-  onPageChange
+  onPageChange,
+  onRefresh,
+  isRefreshing = false,
+  hasNewRides = false
 }) => {
   const rideTypes = [
     { value: 'ALL', label: 'All Categories' },
@@ -33,14 +36,14 @@ const RideFiltersBar = ({
   ];
 
   return (
-    <div className="bg-white border-b border-gray-200 px-4 py-3">
-      <div className="flex items-center gap-3 overflow-x-auto mb-3">
+    <div className="bg-white border-b border-gray-200 px-2 py-1">
+      <div className="flex items-center gap-1.5 overflow-x-auto mb-1 flex-nowrap scrollbar-hide">
         {/* Ride Type Dropdown */}
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 min-w-[120px]">
           <select
             value={rideTypeFilter}
             onChange={(e) => onRideTypeChange(e.target.value)}
-            className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full text-xs border border-gray-300 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 whitespace-nowrap"
           >
             {rideTypes.map(type => (
               <option key={type.value} value={type.value}>
@@ -51,11 +54,11 @@ const RideFiltersBar = ({
         </div>
 
         {/* Schedule Type Dropdown */}
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 min-w-[120px]">
           <select
             value={scheduleFilter}
             onChange={(e) => onScheduleChange(e.target.value)}
-            className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full text-xs border border-gray-300 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 whitespace-nowrap"
           >
             {scheduleTypes.map(type => (
               <option key={type.value} value={type.value}>
@@ -65,6 +68,26 @@ const RideFiltersBar = ({
           </select>
         </div>
 
+        {/* Refresh Button */}
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className={`relative flex-shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full border transition-colors ${
+              hasNewRides
+                ? 'border-green-500 text-green-700 bg-green-50 hover:bg-green-100'
+                : 'border-gray-300 text-gray-600 hover:border-yellow-400 hover:text-slate-900 hover:bg-yellow-50'
+            } disabled:opacity-60 disabled:cursor-not-allowed`}
+            title={hasNewRides ? 'New rides available - refresh to load' : 'Refresh rides'}
+          >
+            <RotateCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {hasNewRides && !isRefreshing && (
+              <span className="absolute top-0.5 right-0.5 inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
+            )}
+          </button>
+        )}
+
         {/* Clear Filters Button */}
         {(rideTypeFilter !== 'ALL' || scheduleFilter !== 'ALL') && (
           <button
@@ -72,38 +95,38 @@ const RideFiltersBar = ({
               onRideTypeChange('ALL');
               onScheduleChange('ALL');
             }}
-            className="text-xs text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap"
+            className="flex-shrink-0 text-[10px] text-yellow-600 hover:text-yellow-700 font-medium whitespace-nowrap"
           >
-            Clear Filters
+            Clear
           </button>
         )}
       </div>
 
       {/* Pagination Controls */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-3 pt-2 border-t border-gray-100">
+        <div className="flex items-center justify-center gap-2 pt-0.5 border-t border-gray-100">
           <button
             onClick={() => onPageChange(page - 1)}
             disabled={page === 1}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center gap-0.5 px-2 py-0.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             aria-label="Previous page"
           >
-            <ChevronLeft className="w-4 h-4" />
-            <span>Previous</span>
+            <ChevronLeft className="w-3 h-3" />
+            <span>Prev</span>
           </button>
           
-          <span className="text-sm text-gray-600 font-medium">
-            Page {page} of {totalPages}
+          <span className="text-xs text-gray-600 font-medium">
+            {page}/{totalPages}
           </span>
           
           <button
             onClick={() => onPageChange(page + 1)}
             disabled={page === totalPages}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center gap-0.5 px-2 py-0.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             aria-label="Next page"
           >
             <span>Next</span>
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="w-3 h-3" />
           </button>
         </div>
       )}

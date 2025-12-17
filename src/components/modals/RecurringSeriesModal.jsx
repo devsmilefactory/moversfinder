@@ -222,7 +222,7 @@ const RecurringSeriesModal = ({ isOpen, onClose, series, userId, onSeriesUpdated
                 <div className="bg-green-50 rounded-lg p-3">
                   <p className="text-xs text-gray-500 mb-1">Cost per Trip</p>
                   <p className="font-semibold text-green-700">
-                    ${parseFloat(series.estimated_cost).toFixed(2)}
+                    ${(parseFloat(series.estimated_cost) || 0).toFixed(2)}
                   </p>
                 </div>
               )}
@@ -303,7 +303,7 @@ const RecurringSeriesModal = ({ isOpen, onClose, series, userId, onSeriesUpdated
                       </div>
                       {ride.estimated_cost && (
                         <span className="text-sm font-semibold text-green-600">
-                          ${parseFloat(ride.estimated_cost).toFixed(2)}
+                          ${(parseFloat(ride.estimated_cost) || 0).toFixed(2)}
                         </span>
                       )}
                     </div>

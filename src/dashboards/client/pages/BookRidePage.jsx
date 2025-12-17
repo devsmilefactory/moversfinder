@@ -5,6 +5,7 @@ import LocationPicker from '../../../components/maps/LocationPicker';
 
 import UnifiedBookingModal from '../components/UnifiedBookingModal';
 import PWALeftDrawer from '../../../components/layouts/PWALeftDrawer';
+import RideStatusIndicator from '../../../components/passenger/RideStatusIndicator';
 import useAuthStore from '../../../stores/authStore';
 import useProfileStore from '../../../stores/profileStore';
 import useRidesStore from '../../../stores/ridesStore';
@@ -96,15 +97,26 @@ const BookRidePage = () => {
     let isMounted = true;
 
     const waitForGoogleMaps = async () => {
-      // Wait for Google Maps to load (max 10 seconds)
       const maxWait = 10000;
       const startTime = Date.now();
 
-      while (!window.google?.maps?.Geocoder && Date.now() - startTime < maxWait) {
+      while (!window.google?.maps?.importLibrary && Date.now() - startTime < maxWait) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      return !!window.google?.maps?.Geocoder;
+      if (!window.google?.maps?.importLibrary) {
+        return false;
+      }
+
+      try {
+        if (!window.google?.maps?.Geocoder) {
+          await window.google.maps.importLibrary('geocoding');
+        }
+        return true;
+      } catch (error) {
+        console.error('Failed to load Google geocoding library:', error);
+        return false;
+      }
     };
 
     const detectLocation = async () => {
@@ -131,9 +143,14 @@ const BookRidePage = () => {
 
         if (!isMounted) return;
 
-        // Use universal location detection utility
+        // Use universal location detection utility with retry logic for production
         const location = await detectCurrentLocationWithCity({
-          timeout: 15000
+          timeout: 20000, // Longer timeout for production
+          geolocationOptions: {
+            maxRetries: 2,
+            retryDelay: 2000,
+            enableHighAccuracy: true
+          }
         });
 
         if (!isMounted) return;
@@ -325,6 +342,9 @@ const BookRidePage = () => {
             fitBoundsToRoute={true}
           />
 
+          {/* Subtle overlay for improved contrast */}
+          <div className="absolute inset-0 pointer-events-none bg-slate-900/10 mix-blend-multiply" />
+
 
           {/* Route summary card */}
           {routeEstimate && (
@@ -359,6 +379,13 @@ const BookRidePage = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
+          </div>
+
+          {/* Ride Status Indicator - Top Right */}
+          <div className="absolute top-4 right-4 z-20">
+            <div className="bg-white rounded-full shadow-xl hover:bg-slate-50 transition-all transform hover:scale-105">
+              <RideStatusIndicator userId={user?.id} />
+            </div>
           </div>
 
           {/* Location Detection Status Banner */}

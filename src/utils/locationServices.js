@@ -11,54 +11,170 @@
  */
 
 /**
- * Get current location using browser Geolocation API
- * @param {Object} options - Geolocation options
- * @returns {Promise<{lat: number, lng: number}>} Current location coordinates
- * @throws {Error} If geolocation fails or is not supported
+ * Check if geolocation is available and has permission
+ * @returns {Promise<'granted'|'denied'|'prompt'|'unsupported'>}
  */
-export const getCurrentLocation = (options = {}) => {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not supported by your browser'));
-      return;
-    }
+export const checkGeolocationPermission = async () => {
+  if (!navigator.geolocation) {
+    return 'unsupported';
+  }
 
-    const defaultOptions = {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 0, // No caching - always get fresh location
-      ...options
-    };
+  // Check permission using Permissions API if available
+  if ('permissions' in navigator) {
+    try {
+      const result = await navigator.permissions.query({ name: 'geolocation' });
+      return result.state; // 'granted', 'denied', or 'prompt'
+    } catch (e) {
+      // Permissions API might not be fully supported, fall through to test
+      console.warn('Permissions API not fully supported:', e);
+    }
+  }
+
+  // Fallback: Try a quick test (will fail fast if denied)
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve('prompt'); // Assume prompt if no response
+    }, 100);
 
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        resolve({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-          timestamp: position.timestamp
-        });
+      () => {
+        clearTimeout(timeout);
+        resolve('granted');
       },
       (error) => {
-        let errorMessage = 'Unable to retrieve your location';
-
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage = 'Location permission denied. Please enable location access in your browser settings.';
-            break;
-          case error.POSITION_UNAVAILABLE:
-            errorMessage = 'Location information is unavailable. Please check your device settings.';
-            break;
-          case error.TIMEOUT:
-            errorMessage = 'Location request timed out. Please try again.';
-            break;
+        clearTimeout(timeout);
+        if (error.code === error.PERMISSION_DENIED) {
+          resolve('denied');
+        } else {
+          resolve('prompt'); // Other errors might be temporary
         }
-
-        reject(new Error(errorMessage));
       },
-      defaultOptions
+      { timeout: 100, maximumAge: Infinity }
     );
   });
+};
+
+/**
+ * Get current location using browser Geolocation API with retry logic
+ * @param {Object} options - Geolocation options
+ * @param {number} options.maxRetries - Maximum retry attempts (default: 2)
+ * @param {number} options.retryDelay - Delay between retries in ms (default: 1000)
+ * @returns {Promise<{lat: number, lng: number, accuracy: number, timestamp: number}>} Current location coordinates
+ * @throws {Error} If geolocation fails or is not supported
+ */
+export const getCurrentLocation = async (options = {}) => {
+  const {
+    maxRetries = 2,
+    retryDelay = 1000,
+    enableHighAccuracy = true,
+    timeout = 15000, // Increased timeout for production
+    maximumAge = 0,
+    ...otherOptions
+  } = options;
+
+  if (!navigator.geolocation) {
+    throw new Error('Geolocation is not supported by your browser');
+  }
+
+  // Check if we're on HTTPS (required for geolocation in production)
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+    console.warn('Geolocation requires HTTPS in production. Current protocol:', location.protocol);
+  }
+
+  // Check permission first
+  const permission = await checkGeolocationPermission();
+  if (permission === 'denied') {
+    throw new Error('Location permission denied. Please enable location access in your browser settings.');
+  }
+
+  const attemptLocation = (useHighAccuracy) => {
+    return new Promise((resolve, reject) => {
+      const geolocationOptions = {
+        enableHighAccuracy: useHighAccuracy,
+        timeout,
+        maximumAge,
+        ...otherOptions
+      };
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const result = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: position.timestamp
+          };
+
+          // Validate coordinates
+          if (!isValidCoordinates(result)) {
+            reject(new Error('Invalid coordinates received from geolocation'));
+            return;
+          }
+
+          resolve(result);
+        },
+        (error) => {
+          let errorMessage = 'Unable to retrieve your location';
+
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              errorMessage = 'Location permission denied. Please enable location access in your browser settings.';
+              break;
+            case error.POSITION_UNAVAILABLE:
+              errorMessage = 'Location information is unavailable. Please check your device settings.';
+              break;
+            case error.TIMEOUT:
+              errorMessage = 'Location request timed out. Please try again.';
+              break;
+          }
+
+          reject(new Error(errorMessage));
+        },
+        geolocationOptions
+      );
+    });
+  };
+
+  // Try with high accuracy first, then fallback to low accuracy
+  let lastError;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      // First attempt: high accuracy
+      if (attempt === 0 && enableHighAccuracy) {
+        try {
+          return await attemptLocation(true);
+        } catch (error) {
+          lastError = error;
+          // If timeout or unavailable, try low accuracy
+          if (error.message.includes('timeout') || error.message.includes('unavailable')) {
+            console.warn('High accuracy location failed, trying low accuracy...');
+            continue;
+          }
+          throw error; // Permission denied should fail immediately
+        }
+      }
+
+      // Retry attempts: low accuracy
+      if (attempt > 0 || !enableHighAccuracy) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay * attempt));
+        return await attemptLocation(false);
+      }
+    } catch (error) {
+      lastError = error;
+      if (error.message.includes('permission denied')) {
+        throw error; // Don't retry permission errors
+      }
+      
+      if (attempt < maxRetries) {
+        console.warn(`Location attempt ${attempt + 1} failed, retrying...`, error.message);
+        continue;
+      }
+    }
+  }
+
+  // All attempts failed
+  throw lastError || new Error('Failed to get location after multiple attempts');
 };
 
 /**
@@ -83,19 +199,36 @@ export const detectCurrentLocationWithCity = async (options = {}) => {
   } = options;
 
   // Step 1: Get coordinates from browser geolocation (fresh, no cache)
+  // Use retry logic for production reliability
   const coords = await getCurrentLocation({
     enableHighAccuracy: true,
-    timeout: 10000,
+    timeout: timeout - 5000, // Reserve time for geocoding
     maximumAge: 0, // Always get fresh location
+    maxRetries: geolocationOptions.maxRetries || 2,
+    retryDelay: geolocationOptions.retryDelay || 2000,
     ...geolocationOptions
   });
 
   // Step 2: Reverse geocode using Google Maps Geocoding API
-  if (!window.google?.maps?.Geocoder) {
+  if (!window.google?.maps) {
+    throw new Error('Google Maps SDK not available');
+  }
+
+  let GeocoderCtor = window.google?.maps?.Geocoder;
+  if (!GeocoderCtor && typeof window.google.maps.importLibrary === 'function') {
+    try {
+      const geocodingLib = await window.google.maps.importLibrary('geocoding');
+      GeocoderCtor = geocodingLib?.Geocoder || null;
+    } catch (error) {
+      console.error('Failed to import Google geocoding library:', error);
+    }
+  }
+
+  if (!GeocoderCtor) {
     throw new Error('Google Maps Geocoder not available');
   }
 
-  const geocoder = new window.google.maps.Geocoder();
+  const geocoder = new GeocoderCtor();
 
   try {
     const result = await geocoder.geocode({

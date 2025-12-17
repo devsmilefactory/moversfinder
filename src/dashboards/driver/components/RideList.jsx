@@ -2,10 +2,13 @@
  * RideList Component
  * 
  * Presentational component that displays a list of rides with loading and empty states.
- * Handles bulk ride grouping following existing patterns.
+ * Handles bulk ride grouping and recurring series display following existing patterns.
  */
 
 import React from 'react';
+import { isRecurringSeries } from '../../../services/driverRidesApi';
+import RecurringSeriesCard from './RecurringSeriesCard';
+import DriverRideCard from './DriverRideCard';
 
 const RideList = ({ 
   rides, 
@@ -14,7 +17,9 @@ const RideList = ({
   onRideClick, 
   onAcceptRide, 
   onActivateRide,
-  renderRideCard 
+  onActivateNextTrip,
+  onMoreDetails,
+  feedCategory = 'available'
 }) => {
   // Loading state
   if (isLoading) {
@@ -30,6 +35,30 @@ const RideList = ({
 
   // Empty state
   if (!rides || rides.length === 0) {
+    // Special case: If there's an active instant ride and we're on AVAILABLE tab
+    // Show a helpful message with CTA to navigate to the active ride
+    if (activeInstantRide && onActivateRide) {
+      return (
+        <div className="text-center py-16">
+          <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <span className="text-4xl">🚗</span>
+          </div>
+          <h3 className="text-xl font-semibold text-gray-900 mb-2">You have an active ride</h3>
+          <p className="text-gray-600 mb-6">
+            Complete your current instant ride before accepting new ones.
+          </p>
+          <button
+            onClick={() => onActivateRide(activeInstantRide)}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition-colors inline-flex items-center gap-2"
+          >
+            <span>View Active Ride</span>
+            <span>→</span>
+          </button>
+        </div>
+      );
+    }
+
+    // Default empty state
     return (
       <div className="text-center py-16">
         <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -96,13 +125,48 @@ const RideList = ({
                 </div>
               </div>
               <div className="p-2 space-y-2">
-                {group.rides.map((ride) => renderRideCard(ride, activeInstantRide, onRideClick, onAcceptRide, onActivateRide))}
+                {group.rides.map((ride) => (
+                  <DriverRideCard
+                    key={ride.id}
+                    ride={ride}
+                    feedCategory={feedCategory}
+                    onPlaceBid={onAcceptRide}
+                    onMoreDetails={onMoreDetails || onRideClick}
+                    onStartTrip={onActivateRide}
+                    onCompleteTrip={onActivateRide}
+                  />
+                ))}
               </div>
             </div>
           );
         } else {
-          // Single ride
-          return renderRideCard(group.ride, activeInstantRide, onRideClick, onAcceptRide, onActivateRide);
+          // Check if this is a recurring series
+          if (isRecurringSeries(group.ride)) {
+            return (
+              <RecurringSeriesCard
+                key={group.ride.series_id || group.ride.id}
+                series={group.ride}
+                feedCategory={group.ride.feed_category || feedCategory}
+                onPlaceBid={onAcceptRide}
+                onMoreDetails={onMoreDetails || onRideClick}
+                onActivateNext={onActivateNextTrip}
+                onViewDetails={onRideClick}
+              />
+            );
+          }
+          
+          // Regular single ride
+          return (
+            <DriverRideCard
+              key={group.ride.id}
+              ride={group.ride}
+              feedCategory={feedCategory}
+              onPlaceBid={onAcceptRide}
+              onMoreDetails={onMoreDetails || onRideClick}
+              onStartTrip={onActivateRide}
+              onCompleteTrip={onActivateRide}
+            />
+          );
         }
       })}
     </div>

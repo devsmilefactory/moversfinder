@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 import Button from '../../shared/Button';
+import ToggleSwitch from '../../../components/ui/ToggleSwitch';
 import CompactTaxiForm from './CompactTaxiForm';
 import CompactCourierForm from './CompactCourierForm';
 import CompactSchoolRunForm from './CompactSchoolRunForm';
@@ -10,7 +11,16 @@ import ScheduleModal from './ScheduleModal';
 import { useAuthStore, useSavedPlacesStore } from '../../../stores';
 import { supabase } from '../../../lib/supabase';
 import { broadcastRideToDrivers } from '../../../utils/driverMatching';
-import { createRecurringRides } from '../../../utils/recurringRides';
+import { createRecurringSeries } from '../../../services/recurringTripService';
+import {
+  calculateRecurrenceDays,
+  calculateTotalTrips,
+  calculateStartDate,
+  calculateEndDate
+} from '../../../utils/recurringSeriesHelpers';
+import { prepareErrandTasksForInsert } from '../../../utils/errandTasks';
+import { formatPrice } from '../../../utils/formatters';
+import { isRoundTripRide } from '../../../utils/rideCostDisplay';
 import {
   calculateEstimatedFareV2,
   calculateRoundTripFare,
@@ -22,6 +32,14 @@ import {
   calculateErrandsFare,
   calculateBulkTripsFare
 } from '../../../utils/pricingCalculator';
+import { calculateReturnTime } from '../../../utils/roundTripHelpers';
+import { getRideCostDisplay } from '../../../utils/rideCostDisplay';
+import { addCostsToTasks } from '../../../utils/errandCostHelpers';
+import {
+  getTaskAddressValue,
+  getTaskCoordinatesValue,
+  estimateErrandTask
+} from '../../../utils/errandTasks';
 
 import { getRouteWithStopsDistanceAndDuration, getRouteDistanceAndDuration, toGeoJSON, fromGeoJSON, calculateDistance, getCurrentLocation } from '../../../utils/locationServices';
 
@@ -69,7 +87,7 @@ const UnifiedBookingModal = ({
 
   // Modal state
   const [tripMode, setTripMode] = useState('new'); // 'new' or 'saved'
-  const [scheduleType, setScheduleType] = useState('instant'); // 'instant', 'specific_dates', 'weekdays', 'weekends'
+  const [scheduleType, setScheduleType] = useState('specific_dates'); // 'specific_dates', 'weekdays', 'weekends'
   const [selectedService, setSelectedService] = useState(defaultServiceType);
   const [selectedSavedTrip, setSelectedSavedTrip] = useState(null);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
@@ -79,7 +97,7 @@ const UnifiedBookingModal = ({
   // Form data - comprehensive for all service types
   const [formData, setFormData] = useState({
     // Scheduling
-    scheduleType: 'instant', // 'instant', 'specific_dates', 'weekdays', 'weekends'
+    scheduleType: 'specific_dates', // 'specific_dates', 'weekdays', 'weekends'
     selectedDates: [], // Array of date strings for specific dates
     scheduleMonth: '', // Month for weekdays/weekends (YYYY-MM format)
     tripTime: '', // Time for the trip
@@ -116,34 +134,60 @@ const UnifiedBookingModal = ({
   });
 
   const [loading, setLoading] = useState(false);
-  // Derived cost for errands (sum of each task priced as a taxi ride)
+  // Derived cost and stats for errands (sum of each task priced as a taxi ride)
   const [errandsTasksCost, setErrandsTasksCost] = useState(0);
+  const [errandsTasksSummary, setErrandsTasksSummary] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
+
+    if (selectedService !== 'errands' || !formData?.tasks?.length) {
+      setErrandsTasksCost(0);
+      setErrandsTasksSummary(null);
+      return () => { cancelled = true; };
+    }
+
     const compute = async () => {
       try {
-        if (selectedService !== 'errands' || !formData?.tasks?.length) {
-          if (!cancelled) setErrandsTasksCost(0);
-          return;
-        }
-        const results = await Promise.all(
-          formData.tasks.map(async (t) => {
-            const origin = t?.startPoint?.data?.address || t?.startPoint?.address || t?.startPoint;
-            const dest = t?.destinationPoint?.data?.address || t?.destinationPoint?.address || t?.destinationPoint;
-            if (!origin || !dest) return 0;
-            const { distance } = await getRouteDistanceAndDuration(origin, dest);
-            const km = distance || 0;
-            return calculateEstimatedFareV2({ distanceKm: km }) ?? 0;
+        const stats = await Promise.all(
+          formData.tasks.map(async (task, index) => {
+            const title = task?.description || `Task ${index + 1}`;
+            const estimate = await estimateErrandTask({
+              startPoint: task?.startPoint,
+              destinationPoint: task?.destinationPoint
+            });
+            return {
+              index,
+              title,
+              distanceKm: estimate.distanceKm,
+              durationMinutes: estimate.durationMinutes,
+              cost: estimate.cost
+            };
           })
         );
-        const sum = results.reduce((a, b) => a + (b || 0), 0);
-        if (!cancelled) setErrandsTasksCost(Math.round(sum * 100) / 100);
+
+        if (cancelled) return;
+
+        const totalCost = stats.reduce((sum, task) => sum + (task.cost || 0), 0);
+        const totalDistance = stats.reduce((sum, task) => sum + (task.distanceKm || 0), 0);
+        const totalDuration = stats.reduce((sum, task) => sum + (task.durationMinutes || 0), 0);
+
+        setErrandsTasksCost(Math.round(totalCost * 100) / 100);
+        setErrandsTasksSummary({
+          totalTasks: formData.tasks.length,
+          totalDistanceKm: Math.round(totalDistance * 10) / 10,
+          totalDurationMinutes: Math.max(0, Math.round(totalDuration)),
+          perTask: stats
+        });
       } catch (e) {
         console.warn('Errands pricing compute failed:', e);
-        if (!cancelled) setErrandsTasksCost(0);
+        if (!cancelled) {
+          setErrandsTasksCost(0);
+          setErrandsTasksSummary(null);
+        }
       }
     };
+
     compute();
     return () => { cancelled = true; };
   }, [selectedService, formData?.tasks]);
@@ -166,6 +210,7 @@ const UnifiedBookingModal = ({
     if (typeof loc.lat === 'number' && typeof loc.lng === 'number') return { lat: loc.lat, lng: loc.lng };
     return null;
   };
+
 
   useEffect(() => {
     // Reset estimate immediately on input/tab changes to update pricing in realtime
@@ -297,12 +342,12 @@ const UnifiedBookingModal = ({
       if (initialData) {
         setSelectedService(initialData.serviceType || defaultServiceType);
         setTripMode('new'); // Always use 'new' mode for edit/rebook
-        setScheduleType(initialData.scheduleType || 'instant');
+        setScheduleType(initialData.scheduleType || 'specific_dates');
         setSelectedSavedTrip(null);
 
         // Pre-fill form with initialData
         setFormData({
-          scheduleType: initialData.scheduleType || 'instant',
+          scheduleType: initialData.scheduleType || 'specific_dates',
           selectedDates: initialData.selectedDates || [],
           scheduleMonth: initialData.scheduleMonth || '',
           tripTime: initialData.tripTime || '',
@@ -328,10 +373,10 @@ const UnifiedBookingModal = ({
         // Default empty form
         setSelectedService(defaultServiceType);
         setTripMode('new');
-        setScheduleType('instant');
+        setScheduleType('specific_dates');
         setSelectedSavedTrip(null);
         setFormData({
-          scheduleType: 'instant',
+          scheduleType: 'specific_dates',
           selectedDates: [],
           scheduleMonth: '',
           tripTime: '',
@@ -364,6 +409,26 @@ const UnifiedBookingModal = ({
 
 
 
+  const roundToNearestHalfDollar = (amount) => {
+    if (amount === null || amount === undefined) return 0;
+    const numeric = Number(amount);
+    if (Number.isNaN(numeric)) return 0;
+
+    const dollars = Math.floor(numeric);
+    const cents = Math.round((numeric - dollars) * 100);
+
+    let roundedValue;
+    if (cents < 25) {
+      roundedValue = dollars;
+    } else if (cents < 75) {
+      roundedValue = dollars + 0.5;
+    } else {
+      roundedValue = dollars + 1;
+    }
+
+    return Number(roundedValue.toFixed(2));
+  };
+
   // Handle saved trip selection
   const handleSavedTripSelect = (trip) => {
     setSelectedSavedTrip(trip);
@@ -383,7 +448,7 @@ const UnifiedBookingModal = ({
   const calculateCost = () => {
     if (selectedService === 'bulk') {
       if (computedEstimate && computedEstimate.cost != null) {
-        return Math.round(computedEstimate.cost * 100) / 100;
+        return roundToNearestHalfDollar(computedEstimate.cost);
       }
       return 0;
     }
@@ -399,7 +464,7 @@ const UnifiedBookingModal = ({
       const singleTripPackagePrice = calculateMultiPackageFare(formData.packages);
       // Multiply by number of trips for recurring bookings
       const totalPrice = singleTripPackagePrice * numberOfTrips;
-      return Math.round(totalPrice * 100) / 100;
+      return roundToNearestHalfDollar(totalPrice);
     }
 
     // For errands service with multiple tasks
@@ -407,7 +472,7 @@ const UnifiedBookingModal = ({
       const singleTripTaskPrice = errandsTasksCost;
       // Multiply by number of trips for recurring bookings
       const totalPrice = singleTripTaskPrice * numberOfTrips;
-      return Math.round(totalPrice * 100) / 100;
+      return roundToNearestHalfDollar(totalPrice);
     }
 
     // For distance-based services (taxi, school run)
@@ -423,7 +488,7 @@ const UnifiedBookingModal = ({
 
       // Multiply by number of trips for recurring bookings
       const totalCost = singleTripFare * numberOfTrips;
-      return Math.round(totalCost * 100) / 100;
+      return roundToNearestHalfDollar(totalCost);
     }
 
     // No distance yet -> 0 until route is computed
@@ -445,10 +510,18 @@ const UnifiedBookingModal = ({
       case 'school_run':
         return formData.pickupLocation && formData.dropoffLocation &&
                formData.passengerName && formData.contactNumber &&
-               (formData.scheduleType === 'instant' || !!formData.tripTime);
+               !!formData.tripTime;
 
-      case 'errands':
-        return formData.pickupLocation && formData.tasks && formData.tasks.length > 0;
+      case 'errands': {
+        const tasks = Array.isArray(formData.tasks) ? formData.tasks : [];
+        if (tasks.length === 0) return false;
+        return tasks.every(
+          (task) =>
+            task &&
+            task.startPoint &&
+            task.destinationPoint
+        );
+      }
 
       case 'bulk': {
         const mode = formData.bulkMode || 'multi_pickup';
@@ -542,11 +615,11 @@ const UnifiedBookingModal = ({
       if (selectedService === 'taxi' && finalDistanceKm && finalDistanceKm > 0) {
         const taxiFare = calculateTaxiFare({
           distanceKm: finalDistanceKm,
-          isRecurring: formData.isRoundTrip,
+          isRoundTrip: formData.isRoundTrip,
           numberOfDates: formData.numberOfTrips || 1
         });
         if (taxiFare) {
-          finalCost = taxiFare.totalFare;
+          finalCost = roundToNearestHalfDollar(taxiFare.totalFare);
           fareBreakdown = taxiFare.breakdown;
         }
       } else if (selectedService === 'courier' && finalDistanceKm && finalDistanceKm > 0) {
@@ -558,7 +631,7 @@ const UnifiedBookingModal = ({
           numberOfDates: formData.numberOfTrips || 1
         });
         if (courierFare) {
-          finalCost = courierFare.totalFare;
+          finalCost = roundToNearestHalfDollar(courierFare.totalFare);
           fareBreakdown = courierFare.breakdown;
         }
       } else if (selectedService === 'school_run' && finalDistanceKm && finalDistanceKm > 0) {
@@ -568,7 +641,7 @@ const UnifiedBookingModal = ({
           numberOfDates: formData.numberOfTrips || 1
         });
         if (schoolFare) {
-          finalCost = schoolFare.totalFare;
+          finalCost = roundToNearestHalfDollar(schoolFare.totalFare);
           fareBreakdown = schoolFare.breakdown;
         }
       } else if (selectedService === 'errands' && formData.tasks && formData.tasks.length > 0) {
@@ -578,12 +651,12 @@ const UnifiedBookingModal = ({
           calculateDistance: calculateDistance
         });
         if (errandsFare) {
-          finalCost = errandsFare.totalFare;
+          finalCost = roundToNearestHalfDollar(errandsFare.totalFare);
           fareBreakdown = errandsFare.breakdown;
         }
       } else if (finalDistanceKm && finalDistanceKm > 0) {
         // Fallback to simple calculation
-        finalCost = calculateEstimatedFareV2({ distanceKm: finalDistanceKm }) ?? 0;
+        finalCost = roundToNearestHalfDollar(calculateEstimatedFareV2({ distanceKm: finalDistanceKm }) ?? 0);
       }
 
       // Prepare booking data with new database schema fields
@@ -606,15 +679,38 @@ const UnifiedBookingModal = ({
         }
       }
 
+      const scheduleType = formData.scheduleType || 'specific_dates';
+      const selectedDatesCount = Array.isArray(formData.selectedDates) ? formData.selectedDates.length : 0;
+      const baseTripCount = formData.numberOfTrips || selectedDatesCount || 1;
+      const roundTripMultiplier = formData.isRoundTrip ? 2 : 1;
+      const derivedNumberOfTrips = Math.max(baseTripCount * roundTripMultiplier, 1);
+
+      const hasSpecificSchedule = Boolean(
+        formData.tripTime &&
+        (
+          (scheduleType === 'specific_dates' && selectedDatesCount >= 1) ||
+          ((scheduleType === 'weekdays' || scheduleType === 'weekends') && formData.scheduleMonth)
+        )
+      );
+
+      const isRecurringPattern = hasSpecificSchedule && (
+        (scheduleType === 'specific_dates' && selectedDatesCount > 1) ||
+        scheduleType === 'weekdays' ||
+        scheduleType === 'weekends' ||
+        baseTripCount > 1
+      );
+
+      const rideTiming = hasSpecificSchedule
+        ? (isRecurringPattern ? 'scheduled_recurring' : 'scheduled_single')
+        : 'instant';
+
       const bookingData = {
         // User and service info
         user_id: user.id,
         service_type: selectedService === 'bulk' ? 'taxi' : selectedService,
 
         // Ride timing and type
-        ride_timing: formData.scheduleType === 'instant' ? 'instant' :
-                     (formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 1) ? 'scheduled_recurring' :
-                     'scheduled_single',
+        ride_timing: rideTiming,
         ride_type: selectedService === 'bulk' ? 'taxi' : selectedService,
         booking_source: 'individual',
 
@@ -636,26 +732,21 @@ const UnifiedBookingModal = ({
 
         // Scheduling - combine date and time properly
         scheduled_datetime: (() => {
-          if (formData.scheduleType === 'instant' || !formData.tripTime) return null;
+          if (!hasSpecificSchedule) return null;
 
-          // For single scheduled ride or first date of recurring rides
           let dateStr;
-          if (formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 0) {
-            dateStr = formData.selectedDates[0]; // Use first date for the initial ride
-          } else if (formData.scheduleType === 'weekdays' || formData.scheduleType === 'weekends') {
-            // For weekdays/weekends, we'll use the first day of the selected month
-            // The actual dates will be generated by createRecurringRides
+          if (scheduleType === 'specific_dates' && formData.selectedDates.length > 0) {
+            dateStr = formData.selectedDates[0];
+          } else if ((scheduleType === 'weekdays' || scheduleType === 'weekends') && formData.scheduleMonth) {
             const [year, month] = formData.scheduleMonth.split('-');
             dateStr = `${year}-${month}-01`;
           } else {
             return null;
           }
 
-          // Combine date and time
           const dateTimeStr = `${dateStr}T${formData.tripTime}:00`;
           const dateObj = new Date(dateTimeStr);
 
-          // Validate the date
           if (isNaN(dateObj.getTime())) {
             console.error('Invalid date created:', dateTimeStr);
             return null;
@@ -665,29 +756,31 @@ const UnifiedBookingModal = ({
         })(),
 
         // Recurrence pattern for recurring rides
-        recurrence_pattern: formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 1 ? {
-          type: 'specific_dates',
-          dates: formData.selectedDates,
-          time: formData.tripTime
-        } : formData.scheduleType === 'weekdays' ? {
-          type: 'weekdays',
-          month: formData.scheduleMonth,
-          time: formData.tripTime
-        } : formData.scheduleType === 'weekends' ? {
-          type: 'weekends',
-          month: formData.scheduleMonth,
-          time: formData.tripTime
-        } : null,
+        recurrence_pattern: rideTiming === 'scheduled_recurring'
+          ? (
+              scheduleType === 'specific_dates' ? {
+                type: 'specific_dates',
+                dates: formData.selectedDates,
+                time: formData.tripTime
+              } : scheduleType === 'weekdays' ? {
+                type: 'weekdays',
+                month: formData.scheduleMonth,
+                time: formData.tripTime
+              } : scheduleType === 'weekends' ? {
+                type: 'weekends',
+                month: formData.scheduleMonth,
+                time: formData.tripTime
+              } : null
+            )
+          : null,
 
         // Ride series info
-        total_rides_in_series: formData.scheduleType === 'specific_dates' ? formData.selectedDates.length :
-                               formData.scheduleType === 'weekdays' || formData.scheduleType === 'weekends' ? formData.tripCount : 1,
+        total_rides_in_series: derivedNumberOfTrips,
         completed_rides_count: 0,
-        remaining_rides_count: formData.scheduleType === 'specific_dates' ? formData.selectedDates.length :
-                               formData.scheduleType === 'weekdays' || formData.scheduleType === 'weekends' ? formData.tripCount : 1,
+        remaining_rides_count: derivedNumberOfTrips,
 
         // Number of trips (for recurring bookings and price calculation)
-        number_of_trips: formData.numberOfTrips || 1,
+        number_of_trips: derivedNumberOfTrips,
 
         // Status fields
         acceptance_status: 'pending',
@@ -706,15 +799,24 @@ const UnifiedBookingModal = ({
         special_requests: formData.specialInstructions || null,
         number_of_passengers: formData.passengers || 1,
         
-        // For errands: store number of tasks
-        ...(selectedService === 'errands' && formData.tasks && {
-          number_of_tasks: formData.tasks.length,
-          errand_tasks: JSON.stringify(formData.tasks.map(t => ({
-            description: t.description,
-            pickup_location: t.pickup_location,
-            dropoff_location: t.dropoff_location
-          })))
-        }),
+        // For errands: store number of tasks + normalized metadata with costs
+        ...(selectedService === 'errands' && Array.isArray(formData.tasks) && formData.tasks.length > 0
+          ? (() => {
+              const normalizedTasks = prepareErrandTasksForInsert(formData.tasks);
+              // Add costs to each task
+              const tasksWithCosts = addCostsToTasks(normalizedTasks, finalCost);
+              return {
+                number_of_tasks: tasksWithCosts.length,
+                errand_tasks: JSON.stringify(tasksWithCosts),
+                completed_tasks_count: 0,
+                remaining_tasks_count: tasksWithCosts.length,
+                active_errand_task_index: 0,
+                tasks_total: tasksWithCosts.length,
+                tasks_done: 0,
+                tasks_left: tasksWithCosts.length
+              };
+            })()
+          : {}),
 
         // Taxi-specific fields
         ...(selectedService === 'taxi' && {
@@ -728,6 +830,13 @@ const UnifiedBookingModal = ({
           package_size: formData.packages[0]?.packageSize || 'medium',
           recipient_name: formData.packages[0]?.recipientName || null,
           recipient_phone: formData.packages[0]?.recipientPhone || null
+        }),
+
+        // School run-specific fields
+        ...(selectedService === 'school_run' && {
+          passenger_name: formData.passengerName || null,
+          contact_number: formData.contactNumber || null,
+          is_round_trip: formData.isRoundTrip || false
         }),
 
         // Timestamps
@@ -876,79 +985,199 @@ if (selectedService === 'bulk') {
 // Check if this is a recurring ride
 const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && bookingData.recurrence_pattern;
 
-      if (isRecurring) {
-        // Handle recurring rides - generate multiple ride records
+      if (isRecurring && selectedService !== 'errands') {
+        // Handle recurring rides - create series using NEW system
         console.log('📅 Creating recurring ride series...');
 
-        const recurringResult = await createRecurringRides(
-          bookingData,
-          bookingData.recurrence_pattern
-        );
+        // Map frontend pattern type to database-compatible value
+        // Database expects: 'daily', 'weekly', 'weekdays', 'weekends', 'custom'
+        // Frontend uses: 'specific_dates', 'weekdays', 'weekends'
+        const patternType = bookingData.recurrence_pattern.type;
+        const dbRecurrencePattern = patternType === 'specific_dates' ? 'custom' : patternType;
 
-        if (!recurringResult.success) {
-          console.error('Error creating recurring rides:', recurringResult.error);
-          alert('❌ Failed to create recurring rides. Please try again.');
+        // Build series data from booking data
+        const seriesData = {
+          userId: user.id,
+          seriesName: `${selectedService} - ${bookingData.pickup_address} to ${bookingData.dropoff_address}`,
+          recurrencePattern: dbRecurrencePattern, // ✅ Now maps 'specific_dates' → 'custom'
+          recurrenceDays: calculateRecurrenceDays(bookingData.recurrence_pattern),
+          pickupAddress: bookingData.pickup_address,
+          pickupCoordinates: bookingData.pickup_coordinates,
+          dropoffAddress: bookingData.dropoff_address,
+          dropoffCoordinates: bookingData.dropoff_coordinates,
+          serviceType: bookingData.service_type,
+          estimatedCost: bookingData.estimated_cost,
+          startDate: calculateStartDate(bookingData.recurrence_pattern),
+          endDate: calculateEndDate(bookingData.recurrence_pattern),
+          tripTime: bookingData.recurrence_pattern.time || '08:00:00',
+          totalTrips: calculateTotalTrips(bookingData.recurrence_pattern)
+        };
+
+        const seriesResult = await createRecurringSeries(seriesData);
+
+        if (!seriesResult.success) {
+          console.error('Error creating recurring series:', seriesResult.error);
+          alert('❌ Failed to create recurring ride series. Please try again.');
           setLoading(false);
           return;
         }
 
-        console.log(`✅ Created ${recurringResult.count} recurring rides`);
-        alert(`🎉 Success! ${recurringResult.count} rides have been scheduled for your recurring trip.`);
+        console.log(`✅ Created recurring series with ${seriesData.totalTrips} trips`);
+        alert(`🎉 Success! Your recurring ride series with ${seriesData.totalTrips} trips has been created.`);
 
         setLoading(false);
 
         // Call onSuccess callback if provided
         if (onSuccess) {
-          onSuccess({ rides: recurringResult.rides, isRecurring: true });
+          onSuccess({ 
+            series: seriesResult.data.series, 
+            firstRide: seriesResult.data.firstRide,
+            isRecurring: true 
+          });
         }
 
         onClose();
 
       } else {
         // Handle single ride (instant or scheduled_single)
-        const { data: ride, error } = await supabase
-          .from('rides')
-          .insert([bookingData])
-          .select()
-          .single();
+        
+        // Check if this is a round trip - need to create both legs
+        const isRoundTrip = bookingData.is_round_trip;
+        
+        if (isRoundTrip) {
+          // Calculate costs for each leg using our utility
+          // For round trips, the estimated_cost should already be the total for both legs
+          const totalCost = parseFloat(bookingData.estimated_cost) || 0;
+          const outboundCost = totalCost / 2;
+          const returnCost = totalCost / 2;
+          
+          // Calculate return time (default to 1 hour after outbound if not specified)
+          const outboundTime = bookingData.scheduled_datetime || new Date().toISOString();
+          const estimatedDuration = bookingData.estimated_duration_minutes || 30;
+          const returnTime = calculateReturnTime(outboundTime, estimatedDuration, 30);
+          
+          // Create outbound leg
+          const outboundLeg = {
+            ...bookingData,
+            trip_leg_type: 'outbound',
+            round_trip_occurrence_number: 1,
+            round_trip_leg_number: 1,
+            outbound_cost: outboundCost,
+            return_cost: returnCost,
+            active_leg: 'outbound',
+            estimated_cost: outboundCost // Cost for this leg
+          };
+          
+          // Create return leg (swap pickup/dropoff)
+          const returnLeg = {
+            ...bookingData,
+            trip_leg_type: 'return',
+            round_trip_occurrence_number: 1,
+            round_trip_leg_number: 2,
+            outbound_cost: outboundCost,
+            return_cost: returnCost,
+            active_leg: null, // Return leg starts inactive
+            estimated_cost: returnCost, // Cost for this leg
+            scheduled_datetime: returnTime ? returnTime.toISOString() : null,
+            // Swap locations for return
+            pickup_location: bookingData.dropoff_location,
+            pickup_address: bookingData.dropoff_address,
+            pickup_coordinates: bookingData.dropoff_coordinates,
+            dropoff_location: bookingData.pickup_location,
+            dropoff_address: bookingData.pickup_address,
+            dropoff_coordinates: bookingData.pickup_coordinates
+          };
+          
+          // Insert both legs
+          const { data: rides, error } = await supabase
+            .from('rides')
+            .insert([outboundLeg, returnLeg])
+            .select();
 
-        if (error) {
-          console.error('Error creating ride:', error);
-          alert('❌ Failed to book trip. Please try again.');
-          setLoading(false);
-          return;
-        }
-
-        console.log('✅ Ride created successfully:', ride);
-
-        // For instant rides, broadcast to nearby drivers
-        if (ride.ride_timing === 'instant' && ride.pickup_coordinates) {
-          const pickupLatLng = fromGeoJSON(ride.pickup_coordinates) || null;
-          const broadcastResult = await broadcastRideToDrivers(
-            ride.id,
-            pickupLatLng,
-            5 // 5km radius
-          );
-
-          if (broadcastResult.success && broadcastResult.driversNotified > 0) {
-            console.log(`✅ Ride broadcast to ${broadcastResult.driversNotified} drivers`);
-            alert(`🎉 Trip booked successfully! ${broadcastResult.driversNotified} nearby driver(s) have been notified.`);
-          } else {
-            console.log('⚠️ No nearby drivers found');
-            alert('🎉 Trip booked successfully! We\'ll notify you when a driver becomes available.');
+          if (error) {
+            console.error('Error creating round trip rides:', error);
+            alert('❌ Failed to book round trip. Please try again.');
+            setLoading(false);
+            return;
           }
+
+          console.log('✅ Round trip created successfully:', rides);
+
+          // For instant rides, broadcast outbound leg to nearby drivers
+          const outboundRide = rides[0];
+          if (outboundRide.ride_timing === 'instant' && outboundRide.pickup_coordinates) {
+            const pickupLatLng = fromGeoJSON(outboundRide.pickup_coordinates) || null;
+            const broadcastResult = await broadcastRideToDrivers(
+              outboundRide.id,
+              pickupLatLng,
+              5 // 5km radius
+            );
+
+            if (broadcastResult.success && broadcastResult.driversNotified > 0) {
+              console.log(`✅ Round trip broadcast to ${broadcastResult.driversNotified} drivers`);
+              alert(`🎉 Round trip booked successfully! ${broadcastResult.driversNotified} nearby driver(s) have been notified.`);
+            } else {
+              console.log('⚠️ No nearby drivers found');
+              alert('🎉 Round trip booked successfully! We\'ll notify you when a driver becomes available.');
+            }
+          } else {
+            alert('🎉 Round trip booked successfully! A driver will be assigned shortly.');
+          }
+
+          setLoading(false);
+
+          // Call onSuccess callback if provided
+          if (onSuccess) {
+            onSuccess({ rides, isRoundTrip: true, isRecurring: false });
+          }
+
+          onClose();
         } else {
-          alert('🎉 Trip booked successfully! A driver will be assigned shortly.');
+          // Regular single ride (not round trip)
+          const { data: ride, error } = await supabase
+            .from('rides')
+            .insert([bookingData])
+            .select()
+            .single();
+
+          if (error) {
+            console.error('Error creating ride:', error);
+            alert('❌ Failed to book trip. Please try again.');
+            setLoading(false);
+            return;
+          }
+
+          console.log('✅ Ride created successfully:', ride);
+
+          // For instant rides, broadcast to nearby drivers
+          if (ride.ride_timing === 'instant' && ride.pickup_coordinates) {
+            const pickupLatLng = fromGeoJSON(ride.pickup_coordinates) || null;
+            const broadcastResult = await broadcastRideToDrivers(
+              ride.id,
+              pickupLatLng,
+              5 // 5km radius
+            );
+
+            if (broadcastResult.success && broadcastResult.driversNotified > 0) {
+              console.log(`✅ Ride broadcast to ${broadcastResult.driversNotified} drivers`);
+              alert(`🎉 Trip booked successfully! ${broadcastResult.driversNotified} nearby driver(s) have been notified.`);
+            } else {
+              console.log('⚠️ No nearby drivers found');
+              alert('🎉 Trip booked successfully! We\'ll notify you when a driver becomes available.');
+            }
+          } else {
+            alert('🎉 Trip booked successfully! A driver will be assigned shortly.');
+          }
+
+          setLoading(false);
+
+          // Call onSuccess callback if provided
+          if (onSuccess) {
+            onSuccess({ ride, isRecurring: false });
+          }
+
+          onClose();
         }
-
-        setLoading(false);
-
-        // Call onSuccess callback if provided
-        if (onSuccess) {
-          onSuccess({ ride, isRecurring: false });
-        }
-
-        onClose();
       }
 
 
@@ -959,7 +1188,6 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
 
   // Format date display
   const getDateDisplay = () => {
-    if (formData.scheduleType === 'instant') return 'Trip date: Instant';
     if (formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 0) {
       return `${formData.selectedDates.length} date(s) selected`;
     }
@@ -980,8 +1208,6 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
   };
 
   const getScheduleDisplay = () => {
-    if (formData.scheduleType === 'instant') return 'Instant (Now)';
-
     if (formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 0) {
       if (formData.selectedDates.length === 1) {
         // Single scheduled ride
@@ -1058,7 +1284,20 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                 </button>
                 <h2 className="text-lg font-bold text-slate-700">Book a Trip</h2>
               </div>
-              <div />
+              {/* New/Saved Trip Switch Toggle */}
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-medium transition-colors ${tripMode === 'new' ? 'text-slate-700' : 'text-slate-400'}`}>
+                  New Trip
+                </span>
+                <ToggleSwitch
+                  checked={tripMode === 'saved'}
+                  onChange={(checked) => setTripMode(checked ? 'saved' : 'new')}
+                  size="md"
+                />
+                <span className={`text-xs font-medium transition-colors ${tripMode === 'saved' ? 'text-slate-700' : 'text-slate-400'}`}>
+                  Saved Trip
+                </span>
+              </div>
             </div>
             {/* Progress Indicator - Centered, Full Width - Only show for new trips */}
             {tripMode === 'new' && (
@@ -1075,51 +1314,27 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
             )}
           </div>
 
-          {/* Toolbar Row - New/Saved Toggle */}
-          <div className="flex items-center justify-center gap-3 px-4 py-2 bg-slate-50">
-            {/* New/Saved Trip Toggle - Compact with Green Indicator */}
-            <div className="flex bg-slate-200 rounded-md p-0.5">
-              <button
-                onClick={() => setTripMode('new')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-all flex items-center gap-1.5 ${
-                  tripMode === 'new'
-                    ? 'bg-white text-slate-700 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-700'
-                }`}
-              >
-                {tripMode === 'new' && <div className="w-1.5 h-1.5 rounded-full bg-green-500" />}
-                <span>New Trip</span>
-              </button>
-              <button
-                onClick={() => setTripMode('saved')}
-                className={`px-3 py-1 text-xs font-medium rounded transition-all flex items-center gap-1.5 ${
-                  tripMode === 'saved'
-                    ? 'bg-white text-slate-700 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-700'
-                }`}
-              >
-                {tripMode === 'saved' && <div className="w-1.5 h-1.5 rounded-full bg-green-500" />}
-                <span>Saved Trip</span>
-              </button>
-            </div>
-          </div>
-
           {/* Service Type Tabs - Centered, Part of Fixed Area */}
           {tripMode === 'new' && (
-            <div className="px-0 -mx-4 py-2 border-t border-slate-100">
+            <div className="px-0 -mx-4 py-2 border-t border-slate-150 bg-slate-150">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide px-4 snap-x snap-mandatory">
                 {services.map((service) => (
                   <button
                     key={service.id}
                     onClick={() => setSelectedService(service.id)}
-                    className={`flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all text-sm snap-start ${
+                    className={`relative flex-shrink-0 px-4 py-2 rounded-lg font-medium transition-all text-sm snap-start ${
                       selectedService === service.id
-                        ? 'bg-yellow-400 text-slate-800 shadow-md transform -translate-y-0.5'
-                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        ? 'bg-slate-150 text-slate-800 border-b-2 border-yellow-400'
+                        : 'bg-slate-150 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
                     <span className="mr-1.5">{service.icon}</span>
                     <span>{service.name}</span>
+                    {selectedService === service.id && (
+                      <>
+                        <span className="absolute top-1 right-1 w-2 h-2 bg-yellow-400 rounded-full"></span>
+                      </>
+                    )}
                   </button>
                 ))}
               </div>
@@ -1128,7 +1343,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto bg-slate-50">
+        <div className="flex-1 overflow-y-auto bg-slate-150">
           {tripMode === 'saved' ? (
             /* Saved Trips List */
             <div className="p-4">
@@ -1147,7 +1362,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                     <button
                       key={trip.id}
                       onClick={() => handleSavedTripSelect(trip)}
-                      className="w-full text-left p-4 bg-slate-50 hover:bg-slate-100 rounded-lg transition-all border-2 border-transparent hover:border-yellow-400"
+                      className="w-full text-left p-4 bg-slate-150 hover:bg-slate-200 rounded-lg transition-all border-2 border-transparent hover:border-yellow-400"
                     >
                       <div className="flex items-start gap-3">
                         <div className="text-2xl">{services.find(s => s.id === trip.serviceType)?.icon}</div>
@@ -1235,6 +1450,8 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                     formData={formData}
                     onChange={setFormData}
                     savedPlaces={savedPlaces}
+                    taskEstimates={errandsTasksSummary}
+                    taskTotalCost={errandsTasksCost}
                   />
                 )}
             </div>
@@ -1259,12 +1476,25 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                       </span>
                     )}
                     <p className="text-xs text-slate-600 mt-1">Estimated Cost</p>
-                    <p className="text-xl font-bold text-green-600">${calculateCost().toFixed(2)}</p>
+                    <p className="text-xl font-bold text-green-600">{formatPrice(calculateCost())}</p>
                     {selectedService === 'bulk' && computedEstimate?.perTripEstimates?.length > 0 && (
                       <p className="text-[11px] text-slate-500 mt-1">
                         {computedEstimate.tripCount} trips: {computedEstimate.perTripEstimates.slice(0,3).map((t) => `$${((t.cost || 0)).toFixed(0)}`).join(' + ')}
                         {computedEstimate.tripCount > 3 ? ' + …' : ''} = ${calculateCost().toFixed(0)}
                       </p>
+                    )}
+                    {selectedService === 'errands' && errandsTasksSummary && (
+                      <div className="mt-3 bg-purple-50 border border-purple-100 rounded-lg px-3 py-2 text-xs text-purple-800">
+                        <p className="font-semibold text-purple-900">
+                          {errandsTasksSummary.totalTasks} task{errandsTasksSummary.totalTasks === 1 ? '' : 's'} planned
+                        </p>
+                        <p className="mt-0.5">
+                          {Number(errandsTasksSummary.totalDistanceKm ?? 0).toFixed(1)} km combined • {errandsTasksSummary.totalDurationMinutes ?? 0} min est.
+                        </p>
+                        <p className="text-[11px] text-purple-600 mt-1">
+                          Task pricing auto-updates as you edit routes.
+                        </p>
+                      </div>
                     )}
 
 
@@ -1272,7 +1502,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                 ) : (
                   <>
                     <p className="text-xs text-slate-600">Estimated Cost</p>
-                    <p className="text-xl font-bold text-slate-700">${calculateCost().toFixed(2)}</p>
+                    <p className="text-xl font-bold text-slate-700">{formatPrice(calculateCost())}</p>
                     <p className="text-xs text-slate-500 mt-1">Distance calculating...</p>
                   </>
                 )}
@@ -1347,10 +1577,10 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
           </div>
 
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 bg-slate-50">
+          <div className="flex-1 overflow-y-auto px-6 py-4 bg-slate-150">
             <div className="space-y-4">
               {/* Service Type */}
-              <div className="bg-slate-50 rounded-lg p-4">
+              <div className="bg-slate-150 rounded-lg p-4">
                 <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Service Type</p>
                 <p className="text-lg font-semibold text-slate-800">{getServiceName()}</p>
               </div>
@@ -1401,13 +1631,31 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
               {selectedService === 'errands' && formData.tasks && formData.tasks.length > 0 && (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase mb-2">🛍️ Tasks</p>
-                  <div className="space-y-1">
-                    {formData.tasks.map((task, index) => (
-                      <div key={index} className="text-sm text-slate-700 pl-4">
-                        <p className="font-medium">{index + 1}. {task.description || task}</p>
-                        {task.location && <p className="text-xs text-slate-500">Location: {getLocationAddress(task.location)}</p>}
-                      </div>
-                    ))}
+                  {errandsTasksSummary && (
+                    <p className="text-xs text-slate-500 mb-2">
+                      {errandsTasksSummary.totalTasks} task{errandsTasksSummary.totalTasks === 1 ? '' : 's'} •{' '}
+                      {Number(errandsTasksSummary.totalDistanceKm ?? 0).toFixed(1)} km combined •{' '}
+                      {errandsTasksSummary.totalDurationMinutes ?? 0} min estimated
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {formData.tasks.map((task, index) => {
+                      const pickup = getTaskAddressValue(task?.startPoint);
+                      const dropoff = getTaskAddressValue(task?.destinationPoint);
+                      const summary = errandsTasksSummary?.perTask?.[index];
+                      return (
+                        <div key={index} className="text-sm text-slate-700 pl-4 border-l-2 border-purple-200">
+                          <p className="font-medium">{index + 1}. {task.description || `Task ${index + 1}`}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">Pickup: {pickup || 'Not set'}</p>
+                          <p className="text-xs text-slate-500">Drop-off: {dropoff || 'Not set'}</p>
+                          {summary && (
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              ≈ {Number(summary.distanceKm ?? 0).toFixed(1)} km • {summary.durationMinutes ?? 0} min • {formatPrice(summary.cost)}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                   {formData.returnToStart && (
                     <p className="text-xs text-blue-600 mt-2 pl-4">↩️ Return to starting point</p>
@@ -1528,7 +1776,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                   )}
                   <div>
                     <p className="text-xs text-green-600">Estimated Cost</p>
-                    <p className="text-2xl font-bold text-green-800">${calculateCost().toFixed(2)}</p>
+                    <p className="text-2xl font-bold text-green-800">{formatPrice(calculateCost())}</p>
                   </div>
                 {selectedService === 'bulk' && computedEstimate?.perTripEstimates?.length > 0 && (
                   <div className="text-[11px] text-green-700 mt-1">
@@ -1553,14 +1801,14 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
               {formData.specialInstructions && (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase mb-1">📝 Special Instructions</p>
-                  <p className="text-sm text-slate-700 bg-slate-50 rounded p-3">{formData.specialInstructions}</p>
+                  <p className="text-sm text-slate-700 bg-slate-150 rounded p-3">{formData.specialInstructions}</p>
                 </div>
               )}
             </div>
           </div>
 
           {/* Footer Actions */}
-          <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+          <div className="px-6 py-4 border-t border-slate-200 bg-slate-200 rounded-b-xl">
             <div className="flex gap-3">
               <Button
                 variant="outline"

@@ -50,9 +50,8 @@ const ToggleSwitch = ({
         <div
           className={`
             ${sizeConfig.switch}
-            bg-gray-300 rounded-full
-            peer-focus:ring-4 peer-focus:ring-blue-300
-            peer-checked:bg-green-500
+            ${checked ? 'bg-green-500' : 'bg-yellow-400'} rounded-full
+            peer-focus:ring-4 peer-focus:ring-yellow-300
             transition-colors duration-200 ease-in-out
             ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}
           `}

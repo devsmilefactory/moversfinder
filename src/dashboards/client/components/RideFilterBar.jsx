@@ -22,14 +22,14 @@ const RideFilterBar = ({ filters, onFilterChange }) => {
   ];
 
   return (
-    <div className="bg-white border-b border-slate-200 px-4 py-3">
-      <div className="flex items-center gap-3 overflow-x-auto">
+    <div className="bg-white border-b border-slate-200 px-2 py-1.5">
+      <div className="flex items-center gap-2 overflow-x-auto">
         {/* Service Type Filter */}
         <div className="flex-shrink-0">
           <select
             value={filters.serviceType || 'all'}
             onChange={(e) => onFilterChange({ ...filters, serviceType: e.target.value })}
-            className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="text-xs border border-slate-300 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           >
             {serviceTypes.map(type => (
               <option key={type.value} value={type.value}>
@@ -44,7 +44,7 @@ const RideFilterBar = ({ filters, onFilterChange }) => {
           <select
             value={filters.rideTiming || 'all'}
             onChange={(e) => onFilterChange({ ...filters, rideTiming: e.target.value })}
-            className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="text-xs border border-slate-300 rounded-lg px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           >
             {rideTimings.map(timing => (
               <option key={timing.value} value={timing.value}>
@@ -58,9 +58,9 @@ const RideFilterBar = ({ filters, onFilterChange }) => {
         {(filters.serviceType !== 'all' || filters.rideTiming !== 'all') && (
           <button
             onClick={() => onFilterChange({ serviceType: 'all', rideTiming: 'all' })}
-            className="text-xs text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap"
+            className="text-[10px] text-blue-600 hover:text-blue-700 font-medium whitespace-nowrap"
           >
-            Clear Filters
+            Clear
           </button>
         )}
       </div>

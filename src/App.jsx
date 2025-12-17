@@ -10,10 +10,11 @@ import AppRoutes from './Routes';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ToastProvider } from './components/ui/ToastProvider';
 import { PWAInstallPrompt, PWAUpdateNotification, IOSInstallInstructions } from './components/pwa';
+import PermissionsManager from './components/pwa/PermissionsManager';
 // GoogleMapsProvider removed - using vanilla Google Maps API instead
 import RideStatusToasts from './components/notifications/RideStatusToasts';
+import useActiveRideLoginNotifier from './hooks/useActiveRideLoginNotifier';
 
-import NotificationBell from './components/notifications/NotificationBell';
 import { checkAndHandleUpdate, getCurrentVersion } from './utils/versionManager';
 
 /**
@@ -34,6 +35,7 @@ function App() {
 
   const { user, isAuthenticated, authLoading, authError, initialize } = useAuthStore();
   const { isOnline, isConnected, checkConnectivity } = useNetworkStatus();
+  useActiveRideLoginNotifier(user);
 
   // Check for app updates and clear caches if needed
   useEffect(() => {
@@ -136,13 +138,8 @@ function App() {
           {/* PWA Components */}
           <PWAUpdateNotification />
           <PWAInstallPrompt />
-              {isAuthenticated && user && (
-                <div className="fixed top-4 right-4 z-[9990]">
-                  <NotificationBell />
-                </div>
-              )}
-
           <IOSInstallInstructions />
+          <PermissionsManager />
 
           {/* Main Content */}
           {/* Always render routes so public pages like /login are reachable even while auth initializes */}

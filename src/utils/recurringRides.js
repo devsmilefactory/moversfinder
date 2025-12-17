@@ -1,11 +1,29 @@
 /**
  * Recurring Rides Utilities
  * 
+ * @deprecated This file contains legacy recurring ride code that creates multiple unlinked ride records.
+ * New code should use src/services/recurringTripService.js which implements the series-based approach.
+ * 
  * Functions for generating and managing recurring ride bookings
  * Supports: specific dates, weekdays, weekends patterns
+ * 
+ * MIGRATION NOTE: The new system creates a recurring_trip_series record and generates ride instances
+ * on-demand, rather than creating all rides upfront. This provides better performance and cleaner data.
  */
 
 import { supabase } from '../lib/supabase';
+
+/**
+ * Ensure ride records always satisfy Supabase RLS policies.
+ * Explicitly stamps the authenticated user's ID on every record so the
+ * `auth.uid() = user_id` check always passes, even if the caller provided
+ * a mismatched or stale user id.
+ */
+const stampUserIdOnRides = (rides, userId) =>
+  rides.map((ride) => ({
+    ...ride,
+    user_id: userId,
+  }));
 
 /**
  * Generate dates for weekdays in a given month
@@ -147,8 +165,8 @@ export const generateRecurringRides = (baseRideData, recurrencePattern) => {
       remaining_rides_count: dates.length - index,
       recurrence_pattern: recurrencePattern,
       number_of_trips: dates.length, // Total number of trips in this recurring series
-      // Add sequence number for tracking
-      sequence_number: index + 1
+      // Track sequence using series_trip_number in the rides table
+      series_trip_number: index + 1
     });
   });
 
@@ -158,12 +176,28 @@ export const generateRecurringRides = (baseRideData, recurrencePattern) => {
 /**
  * Create recurring rides in database
  * 
+ * @deprecated Use createRecurringSeries from src/services/recurringTripService.js instead.
+ * This function creates multiple unlinked ride records. The new approach creates a series
+ * record and generates instances on-demand for better performance and data management.
+ * 
  * @param {Object} baseRideData - Base ride data
  * @param {Object} recurrencePattern - Recurrence pattern
  * @returns {Promise<Object>} Result with created rides
  */
 export const createRecurringRides = async (baseRideData, recurrencePattern) => {
   try {
+    // Ensure we have a valid authenticated user (required for RLS insert policy)
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.warn('Recurring rides: failed to fetch session, falling back to booking data', sessionError);
+    }
+
+    const sessionUserId = session?.user?.id;
+
     // Generate ride records
     const rideRecords = generateRecurringRides(baseRideData, recurrencePattern);
     
@@ -175,12 +209,17 @@ export const createRecurringRides = async (baseRideData, recurrencePattern) => {
       };
     }
     
-    console.log(`📅 Generating ${rideRecords.length} recurring rides...`);
+    const stampedRideRecords = stampUserIdOnRides(
+      rideRecords,
+      sessionUserId || baseRideData.user_id
+    );
+
+    console.log(`📅 Generating ${stampedRideRecords.length} recurring rides...`);
     
     // Insert all rides in a single batch
     const { data, error } = await supabase
       .from('rides')
-      .insert(rideRecords)
+      .insert(stampedRideRecords)
       .select();
     
     if (error) {

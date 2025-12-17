@@ -60,8 +60,8 @@ const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
         </label>
       </div>
 
-      {/* Locations */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+      {/* Locations - Flat design without shadows */}
+      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
         <LocationInput
           label="Pickup Location"
           value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
@@ -72,7 +72,7 @@ const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
         />
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
         <LocationInput
           label="Drop-off Location"
           value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}

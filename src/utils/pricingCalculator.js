@@ -98,13 +98,13 @@ export const calculateEstimatedFareV2 = ({ distanceKm }) => {
  * Calculate taxi fare with detailed breakdown
  * @param {Object} params - Parameters object
  * @param {number} params.distanceKm - Distance in kilometers
- * @param {boolean} params.isRecurring - Whether this is a recurring ride
+ * @param {boolean} params.isRoundTrip - Whether this is a round trip
  * @param {number} params.numberOfDates - Number of scheduled dates
  * @returns {Object|null} Fare breakdown or null if invalid
  */
-export const calculateTaxiFare = ({ distanceKm, isRecurring = false, numberOfDates = 1 }) => {
+export const calculateTaxiFare = ({ distanceKm, isRoundTrip = false, numberOfDates = 1 }) => {
   if (import.meta.env.DEV) {
-    console.log('🚕 Calculating taxi fare:', { distanceKm, isRecurring, numberOfDates });
+    console.log('🚕 Calculating taxi fare:', { distanceKm, isRoundTrip, numberOfDates });
   }
   
   if (!distanceKm || distanceKm <= 0) {
@@ -116,21 +116,21 @@ export const calculateTaxiFare = ({ distanceKm, isRecurring = false, numberOfDat
   
   const { baseFare, distanceCharge } = calculateBaseFareAndDistance(distanceKm);
   const singleTripFare = baseFare + distanceCharge;
-  const recurringMultiplier = isRecurring ? 2 : 1;
-  const fareAfterRecurring = singleTripFare * recurringMultiplier;
-  const totalFare = fareAfterRecurring * numberOfDates;
+  const roundTripMultiplier = isRoundTrip ? 2 : 1;
+  const fareAfterRoundTrip = singleTripFare * roundTripMultiplier;
+  const totalFare = fareAfterRoundTrip * numberOfDates;
   
   const result = {
     baseFare: Math.round(baseFare * 100) / 100,
     distanceCharge: Math.round(distanceCharge * 100) / 100,
     singleTripFare: Math.round(singleTripFare * 100) / 100,
-    recurringMultiplier,
+    roundTripMultiplier,
     numberOfDates,
     totalFare: Math.round(totalFare * 100) / 100,
     breakdown: {
       base: `Base fare: $${baseFare.toFixed(2)}`,
       distance: distanceCharge > 0 ? `Distance charge (${(distanceKm - PRICING.MIN_DISTANCE_KM).toFixed(1)}km × $${PRICING.RATE_PER_KM_AFTER_MIN}): $${distanceCharge.toFixed(2)}` : null,
-      recurring: isRecurring ? `Recurring (×2): $${fareAfterRecurring.toFixed(2)}` : null,
+      roundTrip: isRoundTrip ? `Round trip (×2): $${fareAfterRoundTrip.toFixed(2)}` : null,
       dates: numberOfDates > 1 ? `${numberOfDates} dates: $${totalFare.toFixed(2)}` : null,
     }
   };

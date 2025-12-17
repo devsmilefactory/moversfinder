@@ -9,13 +9,19 @@ import { supabase } from '../lib/supabase';
 
 /**
  * Create a new recurring trip series
+ * Supports round trips, errands, and standard rides
  */
 export const createRecurringSeries = async (seriesData) => {
   try {
+    const isRoundTrip = seriesData.isRoundTrip || false;
+    const isErrand = seriesData.serviceType === 'errands';
+    
     console.log('🔄 Creating recurring trip series:', {
       seriesName: seriesData.seriesName,
       pattern: seriesData.recurrencePattern,
       totalTrips: seriesData.totalTrips,
+      isRoundTrip,
+      isErrand,
       timestamp: new Date().toISOString()
     });
 
@@ -47,6 +53,13 @@ export const createRecurringSeries = async (seriesData) => {
     const [hours, minutes, seconds] = seriesData.tripTime.split(':');
     nextTripDate.setHours(parseInt(hours), parseInt(minutes), parseInt(seconds || 0));
 
+    // Calculate cost per occurrence
+    // For round trips: cost per occurrence = cost for both legs
+    // For errands: cost per occurrence = cost for all tasks in one occurrence
+    const costPerOccurrence = isRoundTrip 
+      ? seriesData.estimatedCost 
+      : (seriesData.estimatedCost / seriesData.totalTrips);
+    
     const seriesRecord = {
       user_id: seriesData.userId,
       driver_id: seriesData.driverId || null,
@@ -59,12 +72,15 @@ export const createRecurringSeries = async (seriesData) => {
       dropoff_coordinates: seriesData.dropoffCoordinates || null,
       service_type: seriesData.serviceType || 'standard',
       estimated_cost: seriesData.estimatedCost || null,
+      cost_per_occurrence: costPerOccurrence,
+      is_round_trip: isRoundTrip,
+      errand_tasks_template: isErrand ? seriesData.errandTasksTemplate : null,
       start_date: seriesData.startDate,
       end_date: seriesData.endDate || null,
       trip_time: seriesData.tripTime,
-      total_trips: seriesData.totalTrips,
-      completed_trips: 0,
-      cancelled_trips: 0,
+      rides_total: seriesData.totalTrips,
+      rides_completed: 0,
+      rides_cancelled: 0,
       next_trip_date: nextTripDate.toISOString(),
       status: 'active'
     };
@@ -163,7 +179,7 @@ export const getSeriesDetails = async (seriesId) => {
       };
     }
 
-    const tripsRemaining = data.total_trips - data.completed_trips - data.cancelled_trips;
+    const tripsRemaining = data.rides_total - data.rides_completed - data.rides_cancelled;
 
     return {
       success: true,
@@ -204,7 +220,7 @@ export const getUserSeries = async (userId, role = 'passenger', statuses = ['act
 
     const seriesWithRemaining = (data || []).map(series => ({
       ...series,
-      trips_remaining: series.total_trips - series.completed_trips - series.cancelled_trips
+      trips_remaining: series.rides_total - series.rides_completed - series.rides_cancelled
     }));
 
     return {
@@ -336,7 +352,7 @@ export const getSeriesProgress = async (seriesId) => {
   try {
     const { data: series, error: seriesError } = await supabase
       .from('recurring_trip_series')
-      .select('total_trips, completed_trips, cancelled_trips')
+      .select('rides_total, rides_completed, rides_cancelled')
       .eq('id', seriesId)
       .single();
 
@@ -350,17 +366,17 @@ export const getSeriesProgress = async (seriesId) => {
       };
     }
 
-    const tripsRemaining = series.total_trips - series.completed_trips - series.cancelled_trips;
-    const completionPercentage = series.total_trips > 0 
-      ? Math.round((series.completed_trips / series.total_trips) * 100) 
+    const tripsRemaining = series.rides_total - series.rides_completed - series.rides_cancelled;
+    const completionPercentage = series.rides_total > 0 
+      ? Math.round((series.rides_completed / series.rides_total) * 100) 
       : 0;
 
     return {
       success: true,
       data: {
-        total_trips: series.total_trips,
-        completed_trips: series.completed_trips,
-        cancelled_trips: series.cancelled_trips,
+        total_trips: series.rides_total,
+        completed_trips: series.rides_completed,
+        cancelled_trips: series.rides_cancelled,
         trips_remaining: tripsRemaining,
         completion_percentage: completionPercentage
       }

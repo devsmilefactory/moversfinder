@@ -53,8 +53,8 @@ const CompactCourierForm = ({ formData, onChange, savedPlaces = [] }) => {
 
   return (
     <div className="space-y-4">
-      {/* Pickup Location */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3">
+      {/* Pickup Location - Flat design without shadows */}
+      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
         <LocationInput
           label="Pickup Location"
           value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
@@ -65,8 +65,8 @@ const CompactCourierForm = ({ formData, onChange, savedPlaces = [] }) => {
         />
       </div>
 
-      {/* Primary Delivery */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3 space-y-3">
+      {/* Primary Delivery - Flat design without shadows */}
+      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4 space-y-3">
         <h3 className="font-semibold text-slate-700 text-sm mb-3">Primary Delivery</h3>
 
         <LocationInput

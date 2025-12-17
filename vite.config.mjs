@@ -25,149 +25,135 @@ export default defineConfig({
     tsconfigPaths(), 
     react(), 
     tagger(),
-VitePWA({
+    // Workbox PWA Configuration - Optimized for real-time apps
+    VitePWA({
       apply: 'build',
       devOptions: {
         enabled: false,
         type: 'module'
       },
-      registerType: 'prompt', // Changed from 'autoUpdate' to give user control
+      registerType: 'prompt',
       includeAssets: ['favicon.ico', 'robots.txt', 'icons/*.png', 'splash/*.png'],
-      // Manifest is now in public/manifest.json - vite-plugin-pwa will use it
-      manifest: false, // Use the public/manifest.json file instead
+      manifest: false, // Using public/manifest.json instead
+      injectRegister: false, // Manual registration in PWAUpdateNotification
       workbox: {
-        // Service worker cache name with version
-        cleanupOutdatedCaches: true,
+        // Skip waiting and claim clients immediately for faster updates
+        skipWaiting: true,
         clientsClaim: true,
-        skipWaiting: false, // Don't auto-activate, wait for user confirmation
-
-        // Files to precache (App Shell)
-        globPatterns: [
-          '**/*.{js,css,html,ico,png,svg,woff,woff2,ttf,eot}'
-        ],
-
-        // Ignore these patterns
-        globIgnores: [
-          '**/node_modules/**/*',
-          '**/screenshots/**/*',
-          'sw.js',
-          'workbox-*.js'
-        ],
-
-        // Maximum file size to precache (2MB)
-        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
-
-        // Runtime caching strategies
+        
+        // PRIORITY: Network connectivity over caching
+        // All strategies prioritize network with minimal caching for offline fallback only
+        
+        // Runtime caching strategies - Network-first approach
         runtimeCaching: [
-          // App Shell - Cache First (for navigation requests)
+          // Navigation requests - NetworkFirst with very short timeout, minimal caching
           {
             urlPattern: ({ request }) => request.mode === 'navigate',
             handler: 'NetworkFirst',
             options: {
-              cacheName: 'taxicab-pages-v1',
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 60 * 24 * 7 // 7 days
+              cacheName: 'navigation-cache',
+              networkTimeoutSeconds: 2, // Very short timeout - prioritize network
+              cacheableResponse: {
+                statuses: [0, 200]
               },
-              networkTimeoutSeconds: 3
+              expiration: {
+                maxEntries: 5, // Minimal cache entries
+                maxAgeSeconds: 60 * 60 // 1 hour only
+              },
+              plugins: [
+                {
+                  cacheWillUpdate: async ({ response }) => {
+                    // Only cache successful responses, and only as last resort
+                    return response && response.status === 200 ? response : null;
+                  },
+                  fetchDidFail: async ({ request }) => {
+                    // Fallback to index.html ONLY when network completely fails
+                    if (request.mode === 'navigate') {
+                      try {
+                        const cache = await caches.open('navigation-cache');
+                        const cachedIndex = await cache.match('/index.html');
+                        if (cachedIndex) {
+                          return cachedIndex;
+                        }
+                      } catch (e) {
+                        console.warn('Failed to get cached index.html:', e);
+                      }
+                    }
+                    return null;
+                  }
+                }
+              ]
             }
           },
-
-          // Supabase API - Network First with fallback
+          // Static assets - NetworkFirst (not CacheFirst) to prioritize fresh content
           {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/.*/i,
+            urlPattern: /\.(?:js|css|woff2?|png|jpg|jpeg|gif|svg|ico|webp)$/,
             handler: 'NetworkFirst',
             options: {
-              cacheName: 'taxicab-api-v1',
+              cacheName: 'static-assets-cache',
+              networkTimeoutSeconds: 3, // Short timeout, then fallback to cache
               expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 // 1 hour
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              },
-              networkTimeoutSeconds: 5
-            }
-          },
-
-          // Supabase Auth - Network Only (never cache auth)
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/auth\/.*/i,
-            handler: 'NetworkOnly'
-          },
-
-          // Supabase Storage - Cache First for images
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'taxicab-images-v1',
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
+                maxEntries: 50, // Reduced cache size
+                maxAgeSeconds: 60 * 60 * 24 // 1 day only (not 30 days)
               },
               cacheableResponse: {
                 statuses: [0, 200]
               }
             }
           },
-
-          // Google Maps API - Stale While Revalidate
+          // API requests - NetworkOnly (NEVER cache - always fresh)
           {
-            urlPattern: /^https:\/\/maps\.googleapis\.com\/.*/i,
-            handler: 'StaleWhileRevalidate',
+            urlPattern: /^https?:\/\/.*\/(api|auth|supabase|rest)\//,
+            handler: 'NetworkOnly',
             options: {
-              cacheName: 'taxicab-google-maps-v1',
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 60 * 24 * 7 // 7 days
-              }
+              // No caching - always fetch from network for real-time data
             }
           },
-
-          // Static assets (fonts, icons) - Cache First
+          // Supabase REST API - NetworkOnly (always fresh)
           {
-            urlPattern: /\.(?:woff|woff2|ttf|eot|otf)$/i,
-            handler: 'CacheFirst',
+            urlPattern: ({ url }) => {
+              // Match Supabase URLs (realtime, rest, auth, storage)
+              return url.hostname.includes('supabase.co') || 
+                     url.hostname.includes('supabase.io');
+            },
+            handler: 'NetworkOnly',
             options: {
-              cacheName: 'taxicab-fonts-v1',
-              expiration: {
-                maxEntries: 30,
-                maxAgeSeconds: 60 * 60 * 24 * 365 // 1 year
-              }
+              // Never cache - preserve real-time functionality
             }
           },
-
-          // Images - Cache First
+          // WebSocket connections - NetworkOnly (documented, though not intercepted by SW)
           {
-            urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i,
-            handler: 'CacheFirst',
+            urlPattern: /^wss?:\/\/.*/,
+            handler: 'NetworkOnly',
             options: {
-              cacheName: 'taxicab-static-images-v1',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 * 30 // 30 days
-              }
-            }
-          },
-
-          // CSS and JS - Stale While Revalidate
-          {
-            urlPattern: /\.(?:js|css)$/i,
-            handler: 'StaleWhileRevalidate',
-            options: {
-              cacheName: 'taxicab-static-resources-v1',
-              expiration: {
-                maxEntries: 60,
-                maxAgeSeconds: 60 * 60 * 24 * 7 // 7 days
-              }
+              // WebSockets use native API, not intercepted, but documented here
             }
           }
         ],
-
-        // Navigation fallback
+        
+        // Exclude patterns from precaching (API, WebSocket, etc.)
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api/, /^\/auth/]
+        navigateFallbackDenylist: [
+          // Don't fallback for API requests
+          /^\/api\//,
+          /^\/auth\//,
+          /^\/supabase\//,
+          // Don't fallback for file extensions that should 404
+          /\.(?:json|xml|txt)$/
+        ],
+        
+        // Cleanup old caches aggressively
+        cleanupOutdatedCaches: true,
+        
+        // Reduced maximum cache size to prioritize network
+        maximumFileSizeToCacheInBytes: 2 * 1024 * 1024, // 2MB (reduced from 5MB)
+        
+        // Disable precaching for most assets - we want network-first
+        globIgnores: [
+          '**/node_modules/**/*',
+          '**/sw.js',
+          '**/workbox-*.js'
+        ]
       }
     })
   ],

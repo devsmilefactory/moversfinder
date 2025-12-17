@@ -10,6 +10,7 @@ import { supabase } from '../../lib/supabase';
 import SeriesProgressBar from '../../components/recurring/SeriesProgressBar';
 import RecurringSeriesModal from '../../components/modals/RecurringSeriesModal';
 import { Calendar, Clock } from 'lucide-react';
+import { getRideProgress } from '../../utils/rideProgressTracking';
 
 /**
  * Individual User Dashboard
@@ -312,7 +313,8 @@ const IndividualDashboard = () => {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {recurringSeries.map((series) => {
-              const tripsRemaining = series.total_trips - series.completed_trips - series.cancelled_trips;
+              const progressInfo = getRideProgress(series);
+              const tripsRemaining = progressInfo.remaining;
               const nextTripFormatted = formatNextTripDate(series.next_trip_date);
               const isWithin24Hours = series.next_trip_date && new Date(series.next_trip_date) - new Date() < 24 * 60 * 60 * 1000;
 

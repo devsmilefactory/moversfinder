@@ -1,6 +1,7 @@
 import React from 'react';
 import { MapPin, Calendar, DollarSign, RotateCcw, Trash2, Car, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Repeat } from 'lucide-react';
 import Button from '../../shared/Button';
+import { normalizeServiceType } from '../../../utils/serviceTypes';
 
 /**
  * Card component for saved trip templates
@@ -8,7 +9,7 @@ import Button from '../../shared/Button';
 const SavedTripCard = ({ ride, onClick, onBookAgain, onDelete }) => {
   // Get service type icon and label
   const getServiceTypeInfo = () => {
-    const serviceType = ride.service_type || 'taxi';
+    const serviceType = normalizeServiceType(ride.service_type || 'taxi');
     const serviceMap = {
       taxi: { icon: Car, label: 'Taxi', color: 'text-blue-600', bgColor: 'bg-blue-50' },
       courier: { icon: Package, label: 'Courier', color: 'text-purple-600', bgColor: 'bg-purple-50' },

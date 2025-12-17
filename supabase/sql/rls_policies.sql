@@ -24,6 +24,19 @@ CREATE POLICY rides_update_passenger_pending ON public.rides
   USING (auth.uid() = user_id AND ride_status = 'pending')
   WITH CHECK (auth.uid() = user_id);
 
+-- Passengers may submit ratings / finalize post-trip transitions
+DROP POLICY IF EXISTS rides_update_passenger_rating ON public.rides;
+CREATE POLICY rides_update_passenger_rating ON public.rides
+  FOR UPDATE TO authenticated
+  USING (
+    auth.uid() = user_id
+    AND ride_status IN ('trip_completed', 'awaiting_rating', 'completed')
+  )
+  WITH CHECK (
+    auth.uid() = user_id
+    AND ride_status IN ('trip_completed', 'awaiting_rating', 'completed')
+  );
+
 -- Drivers may update rides assigned to them (status transitions enforced in app/edge)
 DROP POLICY IF EXISTS rides_update_assigned_driver ON public.rides;
 CREATE POLICY rides_update_assigned_driver ON public.rides

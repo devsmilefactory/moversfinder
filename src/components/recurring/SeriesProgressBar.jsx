@@ -1,4 +1,5 @@
 import React from 'react';
+import { getRideProgress } from '../../utils/rideProgressTracking';
 
 /**
  * Series Progress Bar Component
@@ -6,14 +7,16 @@ import React from 'react';
  * Displays visual progress bar for recurring trip series
  * Shows completed vs total trips with percentage
  * 
- * @param {number} totalTrips - Total number of trips in series
- * @param {number} completedTrips - Number of completed trips
+ * @param {Object} series - Series object (preferred) or individual props
+ * @param {number} totalTrips - Total number of trips in series (fallback)
+ * @param {number} completedTrips - Number of completed trips (fallback)
  * @param {number} cancelledTrips - Number of cancelled trips (optional)
  * @param {boolean} showPercentage - Whether to show percentage (default: true)
  * @param {boolean} showCounts - Whether to show trip counts (default: true)
  * @param {string} size - Size variant: 'sm', 'md', 'lg' (default: 'md')
  */
 const SeriesProgressBar = ({ 
+  series,
   totalTrips, 
   completedTrips, 
   cancelledTrips = 0,
@@ -21,16 +24,22 @@ const SeriesProgressBar = ({
   showCounts = true,
   size = 'md'
 }) => {
-  // Calculate percentages
-  const completedPercent = totalTrips > 0 
-    ? Math.round((completedTrips / totalTrips) * 100) 
-    : 0;
+  // Use centralized progress tracking if series object provided
+  const progress = series ? getRideProgress(series) : null;
   
-  const cancelledPercent = totalTrips > 0 
-    ? Math.round((cancelledTrips / totalTrips) * 100) 
+  // Use centralized values or fallback to props
+  const finalTotalTrips = progress?.total || totalTrips || 0;
+  const finalCompletedTrips = progress?.completed || completedTrips || 0;
+  const finalCancelledTrips = cancelledTrips; // Keep as prop for now
+  const completedPercent = progress?.percentage || (finalTotalTrips > 0 
+    ? Math.round((finalCompletedTrips / finalTotalTrips) * 100) 
+    : 0);
+  
+  const cancelledPercent = finalTotalTrips > 0 
+    ? Math.round((finalCancelledTrips / finalTotalTrips) * 100) 
     : 0;
 
-  const tripsRemaining = totalTrips - completedTrips - cancelledTrips;
+  const tripsRemaining = progress?.remaining || (finalTotalTrips - finalCompletedTrips - finalCancelledTrips);
 
   // Size variants
   const sizeClasses = {
@@ -63,7 +72,7 @@ const SeriesProgressBar = ({
             <div 
               className="bg-purple-600 transition-all duration-300"
               style={{ width: `${completedPercent}%` }}
-              title={`${completedTrips} completed`}
+              title={`${finalCompletedTrips} completed`}
             />
           )}
           {/* Cancelled portion */}
@@ -71,7 +80,7 @@ const SeriesProgressBar = ({
             <div 
               className="bg-red-400 transition-all duration-300"
               style={{ width: `${cancelledPercent}%` }}
-              title={`${cancelledTrips} cancelled`}
+              title={`${finalCancelledTrips} cancelled`}
             />
           )}
         </div>
@@ -83,14 +92,15 @@ const SeriesProgressBar = ({
           {showCounts && (
             <div className="flex items-center gap-3">
               <span className="text-gray-600">
-                <span className="font-semibold text-purple-700">{completedTrips}</span>
+                <span className="font-semibold text-purple-700">{finalCompletedTrips}</span>
                 {' / '}
-                <span className="font-semibold text-gray-900">{totalTrips}</span>
-                {' trips'}
+                <span className="font-semibold text-gray-900">{finalTotalTrips}</span>
+                {' '}
+                {progress?.label || 'trips'}
               </span>
-              {cancelledTrips > 0 && (
+              {finalCancelledTrips > 0 && (
                 <span className="text-red-600 text-xs">
-                  ({cancelledTrips} cancelled)
+                  ({finalCancelledTrips} cancelled)
                 </span>
               )}
             </div>

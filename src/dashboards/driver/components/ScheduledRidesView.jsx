@@ -319,7 +319,7 @@ const ScheduledRidesView = ({ onRideUpdate }) => {
                   <div className="text-right">
                     <p className="text-xs text-purple-600">Progress</p>
                     <p className="font-semibold text-purple-900">
-                      {ride.recurring_trip_series.completed_trips}/{ride.recurring_trip_series.total_trips}
+                      {ride.recurring_trip_series.completed_trips || 0}/{ride.recurring_trip_series.total_trips || 0}
                     </p>
                   </div>
                 </div>
@@ -360,7 +360,7 @@ const ScheduledRidesView = ({ onRideUpdate }) => {
                 <DollarSign className="w-4 h-4 text-green-600" />
                 <span className="text-gray-600">Fare:</span>
                 <span className="font-semibold text-green-600">
-                  ${parseFloat(ride.estimated_cost).toFixed(2)}
+                  ${(parseFloat(ride.estimated_cost) || 0).toFixed(2)}
                 </span>
               </div>
             )}

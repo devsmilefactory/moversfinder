@@ -12,19 +12,19 @@ import { calculateNumberOfTrips } from '../../../utils/recurringRides';
  * - Recurring weekend rides (Sat-Sun for a month)
  */
 const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
-  const [scheduleType, setScheduleType] = useState(initialData.scheduleType || 'instant');
+  const [scheduleType, setScheduleType] = useState(initialData.scheduleType || 'specific_dates');
   const [selectedDates, setSelectedDates] = useState(initialData.selectedDates || []);
   const [scheduleMonth, setScheduleMonth] = useState(initialData.scheduleMonth || '');
   const [tripTime, setTripTime] = useState(initialData.tripTime || '');
   const [tripCount, setTripCount] = useState(initialData.tripCount || 1);
   const [dateInput, setDateInput] = useState('');
   const [calculatedTrips, setCalculatedTrips] = useState(1);
+  // Combined date-time for single date selection
+  const [dateTimeInput, setDateTimeInput] = useState('');
 
   // Calculate number of trips whenever schedule parameters change
   useEffect(() => {
-    if (scheduleType === 'instant') {
-      setCalculatedTrips(1);
-    } else if (scheduleType === 'specific_dates') {
+    if (scheduleType === 'specific_dates') {
       setCalculatedTrips(selectedDates.length || 0);
     } else if (scheduleType === 'weekdays' || scheduleType === 'weekends') {
       if (scheduleMonth) {
@@ -39,7 +39,7 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
   if (!isOpen) return null;
 
   const handleAddDate = () => {
-    if (dateInput && !selectedDates.includes(dateInput)) {
+    if (dateInput && tripTime && !selectedDates.includes(dateInput)) {
       setSelectedDates([...selectedDates, dateInput].sort());
       setDateInput('');
     }
@@ -63,7 +63,6 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
   };
 
   const isValid = () => {
-    if (scheduleType === 'instant') return true;
     if (!tripTime) return false;
     
     if (scheduleType === 'specific_dates') {
@@ -71,7 +70,7 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
     }
     
     if (scheduleType === 'weekdays' || scheduleType === 'weekends') {
-      return scheduleMonth && tripCount > 0;
+      return scheduleMonth;
     }
     
     return false;
@@ -120,66 +119,49 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <div className="space-y-6">
-            {/* Schedule Type Selection */}
+            {/* Schedule Type Selection - Inline */}
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-3">
-                Select Schedule Type
+                Schedule Type
               </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setScheduleType('instant')}
-                  className={`p-4 rounded-lg border-2 transition-all ${
-                    scheduleType === 'instant'
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-slate-200 hover:border-slate-300'
-                  }`}
-                >
-                  <div className="text-2xl mb-1">⚡</div>
-                  <div className="font-semibold text-slate-700">Instant</div>
-                  <div className="text-xs text-slate-600">Book now</div>
-                </button>
-
+              <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={() => setScheduleType('specific_dates')}
-                  className={`p-4 rounded-lg border-2 transition-all ${
+                  className={`flex-1 p-3 rounded-lg border-2 transition-all ${
                     scheduleType === 'specific_dates'
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <div className="text-2xl mb-1">📅</div>
-                  <div className="font-semibold text-slate-700">Specific Dates</div>
-                  <div className="text-xs text-slate-600">Pick dates</div>
+                  <div className="text-xl mb-1">📅</div>
+                  <div className="font-semibold text-slate-700 text-sm">Select Dates</div>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setScheduleType('weekdays')}
-                  className={`p-4 rounded-lg border-2 transition-all ${
+                  className={`flex-1 p-3 rounded-lg border-2 transition-all ${
                     scheduleType === 'weekdays'
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <div className="text-2xl mb-1">📆</div>
-                  <div className="font-semibold text-slate-700">Weekdays</div>
-                  <div className="text-xs text-slate-600">Mon-Fri</div>
+                  <div className="text-xl mb-1">📆</div>
+                  <div className="font-semibold text-slate-700 text-sm">Weekdays</div>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setScheduleType('weekends')}
-                  className={`p-4 rounded-lg border-2 transition-all ${
+                  className={`flex-1 p-3 rounded-lg border-2 transition-all ${
                     scheduleType === 'weekends'
                       ? 'border-blue-500 bg-blue-50'
                       : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
-                  <div className="text-2xl mb-1">🎉</div>
-                  <div className="font-semibold text-slate-700">Weekends</div>
-                  <div className="text-xs text-slate-600">Sat-Sun</div>
+                  <div className="text-xl mb-1">🎉</div>
+                  <div className="font-semibold text-slate-700 text-sm">Weekends</div>
                 </button>
               </div>
             </div>
@@ -189,7 +171,7 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Add Dates
+                    Add Date & Time
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -197,9 +179,15 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
                       value={dateInput}
                       onChange={(e) => setDateInput(e.target.value)}
                       min={getMinDate()}
-                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="flex-1 px-3 py-2 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                     />
-                    <Button onClick={handleAddDate} disabled={!dateInput}>
+                    <input
+                      type="time"
+                      value={tripTime}
+                      onChange={(e) => setTripTime(e.target.value)}
+                      className="flex-1 px-3 py-2 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    />
+                    <Button onClick={handleAddDate} disabled={!dateInput || !tripTime}>
                       Add
                     </Button>
                   </div>
@@ -214,7 +202,7 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
                       {selectedDates.map((date) => (
                         <div
                           key={date}
-                          className="flex items-center justify-between bg-slate-50 px-3 py-2 rounded-lg"
+                          className="flex items-center justify-between bg-slate-50 px-3 py-2 rounded-lg border border-slate-200"
                         >
                           <span className="text-sm text-slate-700">
                             {new Date(date).toLocaleDateString('en-US', {
@@ -222,7 +210,7 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
                               year: 'numeric',
                               month: 'short',
                               day: 'numeric'
-                            })}
+                            })} at {tripTime || 'No time'}
                           </span>
                           <button
                             onClick={() => handleRemoveDate(date)}
@@ -235,66 +223,37 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
                     </div>
                   </div>
                 )}
-
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Time
-                  </label>
-                  <input
-                    type="time"
-                    value={tripTime}
-                    onChange={(e) => setTripTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
               </div>
             )}
 
             {/* Weekdays/Weekends Configuration */}
             {(scheduleType === 'weekdays' || scheduleType === 'weekends') && (
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Select Month
-                  </label>
-                  <input
-                    type="month"
-                    value={scheduleMonth}
-                    onChange={(e) => setScheduleMonth(e.target.value)}
-                    min={getMinMonth()}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Month
+                    </label>
+                    <input
+                      type="month"
+                      value={scheduleMonth}
+                      onChange={(e) => setScheduleMonth(e.target.value)}
+                      min={getMinMonth()}
+                      className="w-full px-3 py-2 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    />
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Time
-                  </label>
-                  <input
-                    type="time"
-                    value={tripTime}
-                    onChange={(e) => setTripTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">
-                    Number of Trips
-                  </label>
-                  <input
-                    type="number"
-                    value={tripCount}
-                    onChange={(e) => setTripCount(parseInt(e.target.value) || 1)}
-                    min="1"
-                    max="31"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <p className="text-xs text-slate-500 mt-1">
-                    {scheduleType === 'weekdays' 
-                      ? 'Maximum weekdays in a month: ~22' 
-                      : 'Maximum weekends in a month: ~8-10'}
-                  </p>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Time
+                    </label>
+                    <input
+                      type="time"
+                      value={tripTime}
+                      onChange={(e) => setTripTime(e.target.value)}
+                      className="w-full px-3 py-2 border-2 border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -304,7 +263,7 @@ const ScheduleModal = ({ isOpen, onClose, onConfirm, initialData = {} }) => {
         {/* Footer Actions */}
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
           {/* Display calculated number of trips */}
-          {scheduleType !== 'instant' && calculatedTrips > 0 && (
+          {calculatedTrips > 0 && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium text-slate-700">

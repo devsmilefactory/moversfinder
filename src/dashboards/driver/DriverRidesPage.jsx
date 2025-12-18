@@ -305,16 +305,17 @@ const DriverRidesPage = ({ onUiStateChange }) => {
   const handleActivateRide = async (ride) => {
     if (!user?.id) return;
 
-    // If ride is already active, just open the active trip overlay without
-    // calling the activation RPC again.
-    if (ride.status_group === 'ACTIVE') {
+    // If ride is already in an active state category, just open the active trip overlay
+    const statusCategory = getRideStatusCategory(ride.ride_status || ride.status);
+    if (statusCategory === 'active') {
       updateActiveRide(ride);
       return;
     }
 
     // For scheduled/recurring rides that are not yet active, call the
     // activation RPC and then open the overlay.
-    if (ride.schedule_type === 'SCHEDULED' || ride.schedule_type === 'RECURRING') {
+    const rideTiming = ride.ride_timing || ride.schedule_type;
+    if (rideTiming === 'scheduled_single' || rideTiming === 'scheduled_recurring' || rideTiming === 'SCHEDULED' || rideTiming === 'RECURRING') {
       try {
         const result = await activateScheduledRide(ride.id, user.id);
 
@@ -576,7 +577,7 @@ const DriverRidesPage = ({ onUiStateChange }) => {
       />
 
       {/* Main Content */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white sm:rounded-lg shadow-sm border-y sm:border border-gray-200 overflow-hidden">
         <RidesTabs
           activeTab={activeTab}
           onTabChange={changeTab}
@@ -596,7 +597,7 @@ const DriverRidesPage = ({ onUiStateChange }) => {
           hasNewRides={hasNewRides}
         />
 
-        <div className="p-3 overflow-y-auto max-h-[calc(100vh-220px)]">
+        <div className="p-2 sm:p-3 overflow-y-auto max-h-[calc(100vh-200px)]">
           {!isOnline ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -614,6 +615,7 @@ const DriverRidesPage = ({ onUiStateChange }) => {
               onMoreDetails={handleViewRideDetails}
               onAcceptRide={handlePlaceBid}
               onActivateRide={handleActivateRide}
+              onActivateNextTrip={handleActivateRide}
               feedCategory={activeTab}
             />
           )}

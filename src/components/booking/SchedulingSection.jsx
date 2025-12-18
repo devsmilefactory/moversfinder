@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { FEATURE_FLAGS, isInstantOnlyMode } from '../../config/featureFlags';
 
 /**
  * SchedulingSection Component
@@ -6,6 +7,8 @@ import React, { useState, useEffect } from 'react';
  * Handles ride scheduling options including instant booking,
  * specific date/time selection, and recurring patterns.
  * Extracted from UnifiedBookingModal for better modularity.
+ * 
+ * Respects feature flags - hides scheduling options when disabled.
  */
 const SchedulingSection = ({
   schedulingState,
@@ -160,6 +163,29 @@ const SchedulingSection = ({
   };
 
   const summary = getSchedulingSummary();
+  
+  // Force instant mode if feature flags disable scheduling
+  useEffect(() => {
+    if (isInstantOnlyMode() && scheduleType !== 'instant') {
+      handleScheduleTypeChange('instant');
+    }
+  }, []);
+
+  // If instant-only mode, show simplified UI
+  if (isInstantOnlyMode()) {
+    return (
+      <div className="space-y-4">
+        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+          ⚡ Instant Booking
+        </h3>
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-700">
+            Your ride will be booked immediately and sent to nearby drivers.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -184,63 +210,67 @@ const SchedulingSection = ({
           </div>
         </button>
 
-        <button
-          type="button"
-          onClick={() => handleScheduleTypeChange('specific_time')}
-          className={`p-3 rounded-lg border text-sm font-medium transition-colors ${
-            scheduleType === 'specific_time'
-              ? 'bg-blue-50 border-blue-200 text-blue-700'
-              : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <span>📅</span>
-            <span>Schedule</span>
-          </div>
-        </button>
+        {FEATURE_FLAGS.SCHEDULED_RIDES_ENABLED && (
+          <button
+            type="button"
+            onClick={() => handleScheduleTypeChange('specific_time')}
+            className={`p-3 rounded-lg border text-sm font-medium transition-colors ${
+              scheduleType === 'specific_time'
+                ? 'bg-blue-50 border-blue-200 text-blue-700'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span>📅</span>
+              <span>Schedule</span>
+            </div>
+          </button>
+        )}
       </div>
 
       {/* Advanced Scheduling Options */}
       {scheduleType !== 'instant' && (
         <div className="space-y-3">
-          {/* Recurring Options */}
-          <div className="grid grid-cols-3 gap-2">
-            <button
-              type="button"
-              onClick={() => handleScheduleTypeChange('specific_dates')}
-              className={`p-2 rounded border text-xs font-medium transition-colors ${
-                scheduleType === 'specific_dates'
-                  ? 'bg-purple-50 border-purple-200 text-purple-700'
-                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Specific Dates
-            </button>
+          {/* Recurring Options - Only show if recurring is enabled */}
+          {FEATURE_FLAGS.RECURRING_RIDES_ENABLED && (
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => handleScheduleTypeChange('specific_dates')}
+                className={`p-2 rounded border text-xs font-medium transition-colors ${
+                  scheduleType === 'specific_dates'
+                    ? 'bg-purple-50 border-purple-200 text-purple-700'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Specific Dates
+              </button>
 
-            <button
-              type="button"
-              onClick={() => handleScheduleTypeChange('weekdays')}
-              className={`p-2 rounded border text-xs font-medium transition-colors ${
-                scheduleType === 'weekdays'
-                  ? 'bg-purple-50 border-purple-200 text-purple-700'
-                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Weekdays
-            </button>
+              <button
+                type="button"
+                onClick={() => handleScheduleTypeChange('weekdays')}
+                className={`p-2 rounded border text-xs font-medium transition-colors ${
+                  scheduleType === 'weekdays'
+                    ? 'bg-purple-50 border-purple-200 text-purple-700'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Weekdays
+              </button>
 
-            <button
-              type="button"
-              onClick={() => handleScheduleTypeChange('weekends')}
-              className={`p-2 rounded border text-xs font-medium transition-colors ${
-                scheduleType === 'weekends'
-                  ? 'bg-purple-50 border-purple-200 text-purple-700'
-                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Weekends
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={() => handleScheduleTypeChange('weekends')}
+                className={`p-2 rounded border text-xs font-medium transition-colors ${
+                  scheduleType === 'weekends'
+                    ? 'bg-purple-50 border-purple-200 text-purple-700'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Weekends
+              </button>
+            </div>
+          )}
 
           {/* Date Selection */}
           {scheduleType === 'specific_dates' && (

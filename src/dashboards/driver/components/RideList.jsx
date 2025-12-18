@@ -72,22 +72,20 @@ const RideList = ({
     );
   }
 
-  // Group rides by batch_id for bulk rides (following existing pattern)
+  // Group rides by batch_id for bulk rides
   const groupRides = () => {
     const seen = new Set();
     const groups = [];
     
     rides.forEach((ride) => {
-      const isBulk = ride?.booking_type === 'bulk' && ride?.batch_id;
+      const isBulk = ride?.batch_id;
       const key = isBulk ? `bulk:${ride.batch_id}` : `single:${ride.id}`;
       
       if (seen.has(key)) return;
       seen.add(key);
       
       if (isBulk) {
-        const members = rides.filter(
-          r => r?.booking_type === 'bulk' && r?.batch_id === ride.batch_id
-        );
+        const members = rides.filter(r => r?.batch_id === ride.batch_id);
         if (members.length > 1) {
           groups.push({ type: 'bulk_group', batch_id: ride.batch_id, rides: members });
         } else {

@@ -17,36 +17,67 @@ export const REQUIRED_DOCUMENT_TYPES = [
   'insurance', 'roadworthy', 'police_clearance', 'medical_certificate'
 ];
 
-export const REQUIRED_PHOTO_FIELDS = ['profile_photo', 'vehicle_photo', 'license_document'];
+export const REQUIRED_PHOTO_FIELDS = ['profile_photo', 'vehicle_photo'];
 
+/**
+ * Compute Driver Completion Percentage
+ * 
+ * Logic:
+ * 1. Text Fields (REQUIRED_PROFILE_FIELDS)
+ * 2. Documents (REQUIRED_DOCUMENT_TYPES)
+ * 3. Photos (REQUIRED_PHOTO_FIELDS)
+ * 4. Payment Info (At least one of bank_name or ecocash_number)
+ * 5. BMTOA Membership (If member, must have membership number)
+ */
 export function computeDriverCompletion(profileLike = {}, docsArray = [], options = {}) {
   const { queuedDocTypes = [], selectedPhotos = {} } = options;
 
-  // Fields
-  const filledFields = REQUIRED_PROFILE_FIELDS.filter((f) => !!profileLike[f]).length;
+  // 1. Basic Required Profile Fields
+  const filledFieldsCount = REQUIRED_PROFILE_FIELDS.filter((f) => !!profileLike[f]).length;
 
-
-  // Documents presence: count if queued or has file_url in DB
+  // 2. Documents presence: count if queued or has file_url in DB
   const queuedSet = new Set(queuedDocTypes);
-  const docsPresent = REQUIRED_DOCUMENT_TYPES.filter((dt) => {
+  const docsPresentCount = REQUIRED_DOCUMENT_TYPES.filter((dt) => {
     if (queuedSet.has(dt)) return true;
     const dbDoc = (docsArray || []).find((d) => d?.document_type === dt);
     const fileUrl = dbDoc?.file_url || dbDoc?.fileUrl; // tolerate camelCase if provided
     return !!fileUrl;
   }).length;
 
-  // Photo presence: count if selected in UI (truthy) or URL exists in profileLike
+  // 3. Photo presence: count if selected in UI (truthy) or URL exists in profileLike
   // If selectedPhotos[photoType] === false, treat as an explicit removal (do not count DB value)
-  const photosPresent = REQUIRED_PHOTO_FIELDS.filter((field) => {
-    const photoType = field === 'profile_photo' ? 'profile' : field === 'vehicle_photo' ? 'vehicle' : 'license';
+  const photosPresentCount = REQUIRED_PHOTO_FIELDS.filter((field) => {
+    const photoType = field === 'profile_photo' ? 'profile' : 'vehicle';
     if (selectedPhotos && selectedPhotos[photoType] === false) return false; // explicit remove
     if (selectedPhotos && selectedPhotos[photoType]) return true; // queued file
     return !!profileLike[field]; // existing DB value
   }).length;
 
-  const totalRequired = REQUIRED_PROFILE_FIELDS.length + REQUIRED_DOCUMENT_TYPES.length + REQUIRED_PHOTO_FIELDS.length;
-  const totalFilled = filledFields + docsPresent + photosPresent;
+  // 4. Payment Info (Required: either bank_name or ecocash_number)
+  const hasPaymentInfo = !!(profileLike.bank_name || profileLike.ecocash_number);
 
-  return Math.round((totalFilled / totalRequired) * 100);
+  // 5. BMTOA Membership (If member=true, requires membership_number)
+  let bmtoaValid = true;
+  if (profileLike.bmtoa_member === true && !profileLike.bmtoa_membership_number) {
+    bmtoaValid = false;
+  }
+
+  // Total calculation
+  // We add 1 for payment info and 1 for BMTOA validity to the total required points
+  const totalRequiredPoints = 
+    REQUIRED_PROFILE_FIELDS.length + 
+    REQUIRED_DOCUMENT_TYPES.length + 
+    REQUIRED_PHOTO_FIELDS.length + 
+    1 + // Payment info point
+    1;  // BMTOA validity point
+
+  const filledPoints = 
+    filledFieldsCount + 
+    docsPresentCount + 
+    photosPresentCount + 
+    (hasPaymentInfo ? 1 : 0) + 
+    (bmtoaValid ? 1 : 0);
+
+  return Math.round((filledPoints / totalRequiredPoints) * 100);
 }
 

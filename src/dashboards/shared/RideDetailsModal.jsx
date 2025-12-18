@@ -130,23 +130,25 @@ const RideDetailsModal = ({
             </span>
           </div>
 
-          {/* Location Details */}
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-600 mb-2">Pickup Location</label>
-              <div className="flex items-start gap-2">
-                <span className="text-green-500 mt-1">📍</span>
-                <p className="text-slate-700">{ride.pickupLocation || 'N/A'}</p>
+          {/* Location Details - Hidden for Errands */}
+          {!isErrandService(serviceType) && (
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-2">Pickup Location</label>
+                <div className="flex items-start gap-2">
+                  <span className="text-green-500 mt-1">📍</span>
+                  <p className="text-slate-700">{ride.pickupLocation || ride.pickup_location || ride.pickup_address || 'N/A'}</p>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-2">Drop-off Location</label>
+                <div className="flex items-start gap-2">
+                  <span className="text-red-500 mt-1">📍</span>
+                  <p className="text-slate-700">{ride.dropoffLocation || ride.dropoff_location || ride.dropoff_address || 'N/A'}</p>
+                </div>
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-600 mb-2">Drop-off Location</label>
-              <div className="flex items-start gap-2">
-                <span className="text-red-500 mt-1">📍</span>
-                <p className="text-slate-700">{ride.dropoffLocation || 'N/A'}</p>
-              </div>
-            </div>
-          </div>
+          )}
 
           {/* Additional Stops */}
           {ride.additionalStops && ride.additionalStops.length > 0 && (
@@ -283,10 +285,10 @@ const RideDetailsModal = ({
           </div>
 
           {/* Special Instructions */}
-          {ride.specialInstructions && (
+          {(ride.special_requests || ride.specialInstructions || ride.special_instructions) && (
             <div>
               <label className="block text-sm font-medium text-slate-600 mb-2">Special Instructions</label>
-              <p className="text-slate-700 bg-slate-50 rounded-lg p-3">{ride.specialInstructions}</p>
+              <p className="text-slate-700 bg-slate-50 rounded-lg p-3">{ride.special_requests || ride.specialInstructions || ride.special_instructions}</p>
             </div>
           )}
 

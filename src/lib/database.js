@@ -58,6 +58,16 @@ export const getRides = async (userId, options = {}) => {
  */
 export const createRide = async (rideData) => {
   try {
+    // Enforce instant-only mode if feature flags are disabled
+    const { enforceInstantOnly, isInstantOnlyMode } = await import('../config/featureFlags');
+    
+    if (isInstantOnlyMode() && rideData.ride_timing && rideData.ride_timing !== 'instant') {
+      console.warn(`⚠️ Scheduled/recurring rides disabled. Forcing ride_timing to 'instant' (was: ${rideData.ride_timing})`);
+      rideData.ride_timing = 'instant';
+      rideData.scheduled_datetime = null;
+      rideData.recurrence_pattern = null;
+    }
+    
     const { data, error } = await supabase
       .from('rides')
       .insert([rideData])

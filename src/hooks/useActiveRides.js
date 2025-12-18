@@ -113,21 +113,26 @@ const useActiveRides = () => {
     
     setActiveRides(prev => {
       const existingIndex = prev.findIndex(ride => ride.id === updatedRide.id);
+      const isStillActive = ACTIVE_RIDE_STATUSES.includes(updatedRide.ride_status);
       
       if (existingIndex >= 0) {
-        // Update existing ride
-        const updated = [...prev];
-        updated[existingIndex] = { ...updated[existingIndex], ...updatedRide };
-        
-        // Check if ride is completed and should trigger rating
-        if (updatedRide.ride_status === 'trip_completed' && 
-            shouldShowRating(updatedRide.id, updatedRide.passenger_rated_at)) {
-          markRatingShown(updatedRide.id);
-          // Trigger rating modal (handled by parent component)
+        if (isStillActive) {
+          // Update existing ride
+          const updated = [...prev];
+          updated[existingIndex] = { ...updated[existingIndex], ...updatedRide };
+          
+          // Check if ride is completed and should trigger rating
+          if (updatedRide.ride_status === 'trip_completed' && 
+              shouldShowRating(updatedRide.id, updatedRide.passenger_rated_at)) {
+            markRatingShown(updatedRide.id);
+          }
+          
+          return updated;
+        } else {
+          // Remove ride that is no longer active
+          return prev.filter(ride => ride.id !== updatedRide.id);
         }
-        
-        return updated;
-      } else if (ACTIVE_RIDE_STATUSES.includes(updatedRide.ride_status)) {
+      } else if (isStillActive) {
         // Add new active ride
         return [updatedRide, ...prev];
       }

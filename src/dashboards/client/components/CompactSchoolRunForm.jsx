@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import LocationInput from '../../shared/LocationInput';
 import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
+import { useCorporateInvoiceApproval } from '../../../hooks/useCorporateInvoiceApproval';
 
 /**
  * Compact School/Work Run Booking Form
@@ -10,8 +11,19 @@ import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
  */
 
 const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
+  const { isApproved, isLoading } = useCorporateInvoiceApproval();
+
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
+
+    // Check approval if invoice payment method is selected
+    if (name === 'paymentMethod' && value === 'invoice') {
+      if (!isLoading && !isApproved) {
+        alert('⚠️ Corporate Invoice payment requires an approved corporate account. Please apply for one in your Profile under Payment Methods.');
+        return; // Prevent selection
+      }
+    }
+
     onChange(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
@@ -116,11 +128,17 @@ const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
           required
           options={[
             { value: 'cash', label: 'Cash' },
+            { value: 'invoice', label: 'Corporate Invoice' + (!isLoading && !isApproved ? ' (Requires Approval)' : '') },
             { value: 'ecocash', label: 'EcoCash' },
             { value: 'onemoney', label: 'OneMoney' },
             { value: 'card', label: 'Card' }
           ]}
         />
+        {formData.paymentMethod === 'invoice' && !isLoading && !isApproved && (
+          <p className="text-xs text-red-600 mt-1">
+            ⚠️ Corporate Invoice requires approval. Please apply in your Profile.
+          </p>
+        )}
       </div>
 
       {/* Special Instructions */}

@@ -20,29 +20,36 @@ import { isActiveRideStatus } from '../../hooks/useRideStatus';
  * - onClose: () => void
  * - profileType?: 'individual' | 'corporate' | 'driver' | 'operator' (defaults to activeProfileType)
  */
+
+// Static configurations moved outside component to avoid initialization errors
+const headerGradient = 'bg-gradient-to-r from-yellow-400 to-yellow-500';
+
+const profileMeta = {
+  individual: { label: 'Passenger', icon: User, color: 'text-blue-600', bgColor: 'bg-blue-50' },
+  corporate: { label: 'Corporate', icon: Building2, color: 'text-purple-600', bgColor: 'bg-purple-50' },
+  driver: { label: 'Driver', icon: Car, color: 'text-yellow-600', bgColor: 'bg-yellow-50' },
+  operator: { label: 'Operator', icon: Users, color: 'text-slate-600', bgColor: 'bg-slate-50' }
+};
+
 const PWALeftDrawer = ({ open, onClose, profileType }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-  const { activeProfileType } = useProfileStore();
+  const { activeProfileType, availableProfiles } = useProfileStore();
   const rides = useRidesStore((state) => state.rides);
   const [showProfileSwitcher, setShowProfileSwitcher] = useState(false);
   const { isInstalled, canPrompt, promptInstall } = usePWAInstall();
 
   const location = useLocation();
   const type = profileType || activeProfileType || 'individual';
+
+  // Determine specific switch label
+  const otherProfile = (availableProfiles || []).find(p => p.type !== type);
+  const switchLabel = otherProfile 
+    ? `Switch to ${profileMeta[otherProfile.type]?.label || 'other'} Profile`
+    : 'Switch Profile';
   const activeRidesCount = type === 'individual'
     ? (rides || []).filter((r) => isActiveRideStatus(r.ride_status || r.status)).length
     : 0;
-
-  // Unified brand scheme (yellow across all)
-  const headerGradient = 'bg-gradient-to-r from-yellow-400 to-yellow-500';
-
-  const profileMeta = {
-    individual: { label: 'Passenger', icon: User, color: 'text-blue-600', bgColor: 'bg-blue-50' },
-    corporate: { label: 'Corporate', icon: Building2, color: 'text-purple-600', bgColor: 'bg-purple-50' },
-    driver: { label: 'Driver', icon: Car, color: 'text-yellow-600', bgColor: 'bg-yellow-50' },
-    operator: { label: 'Operator', icon: Users, color: 'text-slate-600', bgColor: 'bg-slate-50' }
-  };
 
   const current = profileMeta[type] || profileMeta.individual;
   const CurrentIcon = current.icon;
@@ -67,6 +74,7 @@ const PWALeftDrawer = ({ open, onClose, profileType }) => {
     individual: [
       { icon: MapPin, label: 'Book Ride', path: '/user/book-ride' },
       { icon: FileText, label: 'My Rides', path: '/user/rides' },
+      { icon: FileText, label: 'Invoices', path: '/user/invoices' },
       { icon: User, label: 'Profile', path: '/user/profile' },
     ],
     corporate: [
@@ -74,12 +82,14 @@ const PWALeftDrawer = ({ open, onClose, profileType }) => {
       { icon: Briefcase, label: 'Dashboard', path: '/corporate/dashboard' },
       { icon: Car, label: 'Rides', path: '/corporate/rides' },
       { icon: Users, label: 'Passengers', path: '/corporate/employees' },
+      { icon: FileText, label: 'Invoices', path: '/corporate/invoices' },
       { icon: User, label: 'Profile', path: '/corporate/profile' },
     ],
     driver: [
       { icon: MapPin, label: 'Rides', path: '/driver/rides' },
       { icon: DollarSign, label: 'Earnings', path: '/driver/earnings' },
       { icon: FileText, label: 'Rides History', path: '/driver/rides-history' },
+      { icon: FileText, label: 'Invoices', path: '/driver/invoices' },
       { icon: User, label: 'Profile', path: '/driver/profile' },
     ],
     operator: [
@@ -150,7 +160,7 @@ const PWALeftDrawer = ({ open, onClose, profileType }) => {
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white text-slate-900 text-sm font-semibold shadow hover:bg-yellow-50 transition-colors"
                     >
                       <RefreshCw className="w-4 h-4 text-yellow-500" />
-                      <span>Switch profile</span>
+                      <span>{switchLabel}</span>
                     </button>
                   </div>
                 </div>

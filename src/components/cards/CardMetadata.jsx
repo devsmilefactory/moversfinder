@@ -28,6 +28,14 @@ const CardMetadata = ({
   showDriverInfo = false
 }) => {
   const isErrand = (ride.service_type || '').toLowerCase().includes('errand');
+  
+  // Use consistent field names from updated RPCs
+  const distanceKm = ride.distance_km ?? ride.distance;
+  const estimatedCost = ride.estimated_cost ?? ride.fare ?? ride.quoted_price;
+  const passengerName = ride.passenger_name;
+  const passengerPhone = ride.passenger_phone || ride.contact_number;
+  const driverName = ride.driver_name;
+  const driverPhone = ride.driver_phone;
 
   return (
     <div className="space-y-3">
@@ -46,23 +54,23 @@ const CardMetadata = ({
           )}
 
           {/* Trip Distance */}
-          {showDistance && ride.distance_km !== null && ride.distance_km !== undefined && !isErrand && (
+          {showDistance && distanceKm !== null && distanceKm !== undefined && !isErrand && (
             <div className="bg-purple-50 rounded-lg p-2 text-center">
               <Ruler className="w-5 h-5 text-purple-600 mx-auto mb-1" />
               <p className="text-xs text-gray-600 mb-0.5">Trip Dist</p>
               <p className="text-sm font-bold text-purple-700">
-                {formatDistance(ride.distance_km)}
+                {formatDistance(distanceKm)}
               </p>
             </div>
           )}
 
           {/* Cost */}
-          {showCost && ride.estimated_cost && (
+          {showCost && estimatedCost && (
             <div className="bg-green-50 rounded-lg p-2 text-center border border-green-200">
               <Wallet className="w-5 h-5 text-green-600 mx-auto mb-1" />
               <p className="text-xs text-green-700 mb-0.5">{isErrand ? 'Total Cost' : 'Price'}</p>
               <p className="text-sm font-bold text-green-800">
-                {formatPrice(parseFloat(ride.estimated_cost))}
+                {formatPrice(parseFloat(estimatedCost || 0))}
               </p>
             </div>
           )}
@@ -70,39 +78,39 @@ const CardMetadata = ({
       )}
 
       {/* Passenger Information (for drivers) */}
-      {showPassengerInfo && ride.passenger_name && (
+      {showPassengerInfo && passengerName && (
         <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
           <div className="flex items-center gap-2 mb-1">
             <User className="w-4 h-4 text-blue-600" />
             <p className="text-xs font-medium text-blue-700">Passenger</p>
           </div>
-          <p className="text-sm font-semibold text-blue-900">{ride.passenger_name}</p>
-          {ride.passenger_phone && (
+          <p className="text-sm font-semibold text-blue-900">{passengerName}</p>
+          {passengerPhone && (
             <div className="flex items-center gap-1 mt-1">
               <Phone className="w-3 h-3 text-blue-600" />
-              <p className="text-xs text-blue-700">{ride.passenger_phone}</p>
+              <p className="text-xs text-blue-700">{passengerPhone}</p>
             </div>
           )}
         </div>
       )}
 
       {/* Driver Information (for passengers) */}
-      {showDriverInfo && ride.driver_name && (
+      {showDriverInfo && driverName && (
         <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
           <div className="flex items-center gap-2 mb-1">
             <User className="w-4 h-4 text-blue-600" />
             <p className="text-xs font-medium text-blue-700">Driver</p>
           </div>
-          <p className="text-sm font-semibold text-blue-900">{ride.driver_name}</p>
-          {ride.driver_phone && (
+          <p className="text-sm font-semibold text-blue-900">{driverName}</p>
+          {driverPhone && (
             <div className="flex items-center gap-1 mt-1">
               <Phone className="w-3 h-3 text-blue-600" />
-              <p className="text-xs text-blue-700">{ride.driver_phone}</p>
+              <p className="text-xs text-blue-700">{driverPhone}</p>
             </div>
           )}
           {ride.vehicle_info && (
             <p className="text-xs text-blue-700 mt-1">
-              {ride.vehicle_info.make} {ride.vehicle_info.model} • {ride.vehicle_info.plate}
+              {ride.vehicle_info.make || ride.vehicle_info.brand} {ride.vehicle_info.model} • {ride.vehicle_info.plate_number || ride.vehicle_info.plate}
             </p>
           )}
         </div>

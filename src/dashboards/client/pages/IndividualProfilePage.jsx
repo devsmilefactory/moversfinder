@@ -3,6 +3,8 @@ import { Menu } from 'lucide-react';
 import PWALeftDrawer from '../../../components/layouts/PWALeftDrawer';
 import useAuthStore from '../../../stores/authStore';
 import { supabase } from '../../../lib/supabase';
+import { useCorporateInvoiceApproval } from '../../../hooks/useCorporateInvoiceApproval';
+import CorporateProfileForm from '../../../components/auth/CorporateProfileForm';
 
 /**
  * Individual Profile Page - PWA version
@@ -10,9 +12,11 @@ import { supabase } from '../../../lib/supabase';
  */
 const IndividualProfilePage = () => {
   const { user } = useAuthStore();
+  const { isApproved, corporateProfile, isLoading: isApprovalLoading } = useCorporateInvoiceApproval();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showCorpForm, setShowCorpForm] = useState(false);
   const [profile, setProfile] = useState({
     service_preferences: {},
     saved_places: [],
@@ -67,6 +71,16 @@ const IndividualProfilePage = () => {
     }
   };
 
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'approved': return 'bg-green-100 text-green-700 border-green-200';
+      case 'pending':
+      case 'pending_approval': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+      case 'rejected': return 'bg-red-100 text-red-700 border-red-200';
+      default: return 'bg-gray-100 text-gray-700 border-gray-200';
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-50 flex flex-col">
       {/* Header */}
@@ -92,6 +106,77 @@ const IndividualProfilePage = () => {
             </div>
           </div>
         </div>
+
+        {/* Corporate Invoice Status */}
+        <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="font-semibold text-slate-800">Corporate Invoice Account</div>
+            {!isApprovalLoading && corporateProfile && (
+              <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase border ${getStatusColor(corporateProfile.corporate_credit_status || corporateProfile.approval_status)}`}>
+                {corporateProfile.corporate_credit_status || corporateProfile.approval_status || 'Created'}
+              </span>
+            )}
+          </div>
+
+          {isApprovalLoading ? (
+            <div className="text-sm text-slate-500 animate-pulse">Checking status...</div>
+          ) : !corporateProfile ? (
+            <div className="space-y-3">
+              <p className="text-sm text-slate-600">
+                Apply for a corporate invoice account to book rides on credit and receive monthly invoices.
+              </p>
+              <button
+                onClick={() => setShowCorpForm(true)}
+                className="w-full py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-semibold hover:bg-blue-100 transition-colors"
+              >
+                Apply for Corporate Account
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <p className="text-xs text-slate-500 uppercase font-semibold">Company</p>
+                  <p className="text-slate-700">{corporateProfile.company_name}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 uppercase font-semibold">Reg Number</p>
+                  <p className="text-slate-700">{corporateProfile.business_registration}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCorpForm(true)}
+                className="w-full py-2 bg-slate-50 text-slate-600 rounded-lg text-sm font-semibold hover:bg-slate-100 transition-colors"
+              >
+                Edit Corporate Profile
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Corporate Profile Form Modal */}
+        {showCorpForm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowCorpForm(false)} />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold text-slate-800">Corporate Invoice Application</h2>
+                <button onClick={() => setShowCorpForm(false)} className="text-slate-400 hover:text-slate-600">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <CorporateProfileForm 
+                onComplete={() => {
+                  setShowCorpForm(false);
+                  window.location.reload(); // Refresh to show updated status
+                }}
+                canDismiss={true}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Saved Places */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-4">

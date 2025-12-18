@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import Button from '../../shared/Button';
-import { supabase } from '../../../lib/supabase';
 
 /**
  * Photo Upload Component
@@ -9,27 +8,26 @@ import { supabase } from '../../../lib/supabase';
  * - Image preview
  * - Drag and drop support
  * - File validation (type, size)
- * - Upload to Supabase Storage
+ * - Deferred upload (passes file to parent)
  * - Circular crop for profile photos
  */
 const PhotoUpload = ({
-  userId,
   photoType, // 'profile' | 'vehicle' | 'license'
   currentPhotoUrl,
-  onUploadSuccess,
   circular = false,
   onSelectedFile,
+  disabled = false,
 }) => {
-  const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState(currentPhotoUrl);
   const [dragActive, setDragActive] = useState(false);
 
-  // Update preview when currentPhotoUrl changes (after successful upload)
+  // Update preview when currentPhotoUrl changes (sync with external state)
   useEffect(() => {
     setPreview(currentPhotoUrl);
   }, [currentPhotoUrl]);
 
   const handleDrag = (e) => {
+    if (disabled) return;
     e.preventDefault();
     e.stopPropagation();
     if (e.type === "dragenter" || e.type === "dragover") {
@@ -40,6 +38,7 @@ const PhotoUpload = ({
   };
 
   const handleDrop = (e) => {
+    if (disabled) return;
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
@@ -50,6 +49,7 @@ const PhotoUpload = ({
   };
 
   const handleChange = (e) => {
+    if (disabled) return;
     e.preventDefault();
     if (e.target.files && e.target.files[0]) {
       handleFile(e.target.files[0]);
@@ -64,9 +64,9 @@ const PhotoUpload = ({
       return;
     }
 
-    // Validate file size (max 2MB)
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Image size must be less than 2MB');
+    // Validate file size (max 5MB) - Consistent with document uploads
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Image size must be less than 5MB');
       return;
     }
 
@@ -77,65 +77,9 @@ const PhotoUpload = ({
     };
     reader.readAsDataURL(file);
 
-    // Immediate upload disabled: pass file to parent for deferred save
+    // Pass file to parent for deferred save
     if (onSelectedFile) {
       onSelectedFile(file);
-    }
-  };
-
-  const uploadPhoto = async (file) => {
-    if (!userId) {
-      alert('User not authenticated');
-      return;
-    }
-
-    setUploading(true);
-    try {
-      // Generate unique filename
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${userId}_${photoType}_${Date.now()}.${fileExt}`;
-      const filePath = `${photoType}_photos/${fileName}`;
-
-      // Upload to Supabase Storage (upload_photos bucket)
-      const { data, error: uploadError } = await supabase.storage
-        .from('upload_photos')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: true
-        });
-
-      if (uploadError) throw uploadError;
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('upload_photos')
-        .getPublicUrl(filePath);
-
-      // Update driver profile with photo URL
-      // Database columns: profile_photo, vehicle_photo, license_document
-      const updateField = photoType === 'profile'
-        ? 'profile_photo'
-        : photoType === 'vehicle'
-        ? 'vehicle_photo'
-        : 'license_document';
-
-      const { error: updateError } = await supabase
-        .from('driver_profiles')
-        .update({ [updateField]: publicUrl })
-        .eq('user_id', userId);
-
-      if (updateError) throw updateError;
-
-      setPreview(publicUrl);
-      if (onUploadSuccess) {
-        onUploadSuccess(publicUrl);
-      }
-      alert('Photo uploaded successfully!');
-    } catch (error) {
-      console.error('Error uploading photo:', error);
-      alert(`Failed to upload photo: ${error.message}`);
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -150,10 +94,11 @@ const PhotoUpload = ({
               alt={`${photoType} photo`}
               className={`${circular ? 'w-32 h-32 rounded-full' : 'w-full h-48 rounded-lg'} object-cover border-4 border-slate-200`}
             />
-            {!uploading && (
+            {!disabled && (
               <button
+                type="button"
                 onClick={() => { setPreview(null); if (onSelectedFile) onSelectedFile(null); }}
-                className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 shadow-md"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -174,51 +119,51 @@ const PhotoUpload = ({
       </div>
 
       {/* Upload Area */}
-      <div
-        className={`border-2 border-dashed rounded-lg p-6 text-center ${
-          dragActive ? 'border-yellow-400 bg-yellow-50' : 'border-slate-300'
-        }`}
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
-        onDrop={handleDrop}
-      >
-        <input
-          type="file"
-          id={`${photoType}-upload`}
-          accept="image/jpeg,image/png,image/jpg"
-          onChange={handleChange}
-          className="hidden"
-          disabled={uploading}
-        />
-        <label
-          htmlFor={`${photoType}-upload`}
-          className="cursor-pointer"
+      {!disabled && (
+        <div
+          className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+            dragActive ? 'border-yellow-400 bg-yellow-50' : 'border-slate-300 hover:border-slate-400'
+          }`}
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
         >
-          <div className="space-y-2">
-            <p className="text-sm text-slate-600">
-              {dragActive ? 'Drop image here' : 'Drag and drop or click to upload'}
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={uploading}
-              onClick={(e) => {
-                e.preventDefault();
-                document.getElementById(`${photoType}-upload`).click();
-              }}
-            >
-              {uploading ? 'Uploading...' : 'Choose File'}
-            </Button>
-            <p className="text-xs text-slate-500">
-              JPG or PNG, max 2MB
-            </p>
-          </div>
-        </label>
-      </div>
+          <input
+            type="file"
+            id={`${photoType}-upload`}
+            accept="image/jpeg,image/png,image/jpg"
+            onChange={handleChange}
+            className="hidden"
+          />
+          <label
+            htmlFor={`${photoType}-upload`}
+            className="cursor-pointer"
+          >
+            <div className="space-y-2">
+              <p className="text-sm text-slate-600">
+                {dragActive ? 'Drop image here' : 'Drag and drop or click to upload'}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  document.getElementById(`${photoType}-upload`).click();
+                }}
+              >
+                Choose File
+              </Button>
+              <p className="text-xs text-slate-500">
+                JPG or PNG, max 5MB
+              </p>
+            </div>
+          </label>
+        </div>
+      )}
     </div>
   );
 };
 
 export default PhotoUpload;
-

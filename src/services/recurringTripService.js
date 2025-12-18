@@ -78,9 +78,9 @@ export const createRecurringSeries = async (seriesData) => {
       start_date: seriesData.startDate,
       end_date: seriesData.endDate || null,
       trip_time: seriesData.tripTime,
-      rides_total: seriesData.totalTrips,
-      rides_completed: 0,
-      rides_cancelled: 0,
+      total_trips: seriesData.totalTrips,
+      completed_trips: 0,
+      cancelled_trips: 0,
       next_trip_date: nextTripDate.toISOString(),
       status: 'active'
     };
@@ -179,7 +179,7 @@ export const getSeriesDetails = async (seriesId) => {
       };
     }
 
-    const tripsRemaining = data.rides_total - data.rides_completed - data.rides_cancelled;
+    const tripsRemaining = data.total_trips - data.completed_trips - data.cancelled_trips;
 
     return {
       success: true,
@@ -220,7 +220,7 @@ export const getUserSeries = async (userId, role = 'passenger', statuses = ['act
 
     const seriesWithRemaining = (data || []).map(series => ({
       ...series,
-      trips_remaining: series.rides_total - series.rides_completed - series.rides_cancelled
+      trips_remaining: series.total_trips - series.completed_trips - series.cancelled_trips
     }));
 
     return {
@@ -352,7 +352,7 @@ export const getSeriesProgress = async (seriesId) => {
   try {
     const { data: series, error: seriesError } = await supabase
       .from('recurring_trip_series')
-      .select('rides_total, rides_completed, rides_cancelled')
+      .select('total_trips, completed_trips, cancelled_trips')
       .eq('id', seriesId)
       .single();
 
@@ -366,17 +366,17 @@ export const getSeriesProgress = async (seriesId) => {
       };
     }
 
-    const tripsRemaining = series.rides_total - series.rides_completed - series.rides_cancelled;
-    const completionPercentage = series.rides_total > 0 
-      ? Math.round((series.rides_completed / series.rides_total) * 100) 
+    const tripsRemaining = series.total_trips - series.completed_trips - series.cancelled_trips;
+    const completionPercentage = series.total_trips > 0 
+      ? Math.round((series.completed_trips / series.total_trips) * 100) 
       : 0;
 
     return {
       success: true,
       data: {
-        total_trips: series.rides_total,
-        completed_trips: series.rides_completed,
-        cancelled_trips: series.rides_cancelled,
+        total_trips: series.total_trips,
+        completed_trips: series.completed_trips,
+        cancelled_trips: series.cancelled_trips,
         trips_remaining: tripsRemaining,
         completion_percentage: completionPercentage
       }

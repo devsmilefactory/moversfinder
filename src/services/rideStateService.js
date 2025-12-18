@@ -46,6 +46,27 @@ export const TASK_STATE = {
  * Transition ride to a new state
  */
 async function transitionRideStatus(rideId, newState, newSubState = null, actorType, actorId) {
+  // First, check current state to see if we need to call RPC or just update table
+  const { data: ride, error: fetchError } = await supabase
+    .from('rides')
+    .select('state')
+    .eq('id', rideId)
+    .single();
+
+  if (fetchError) throw fetchError;
+
+  // If already in target state and it's ACTIVE_EXECUTION, just update sub-state
+  if (ride.state === newState && newState === RIDE_STATE.ACTIVE_EXECUTION && newSubState) {
+    const { data, error } = await supabase
+      .from('rides')
+      .update({ execution_sub_state: newSubState })
+      .eq('id', rideId)
+      .select();
+    
+    if (error) throw error;
+    return { success: true, data };
+  }
+
   const { data, error } = await supabase.rpc('transition_ride_status', {
     p_ride_id: rideId,
     p_new_state: newState,
@@ -105,7 +126,7 @@ export async function startTrip(rideId, driverId) {
 export async function completeTrip(rideId, driverId) {
   return transitionRideStatus(
     rideId,
-    RIDE_STATE.ACTIVE_EXECUTION,
+    RIDE_STATE.COMPLETED_INSTANCE,
     EXECUTION_SUB_STATE.TRIP_COMPLETED,
     'DRIVER',
     driverId

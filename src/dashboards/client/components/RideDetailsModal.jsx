@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { X, User, Clock, DollarSign, Star, Check, XCircle } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, User, Clock, DollarSign, Star, Check, XCircle, MapPin, ClipboardList, Trash2 } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { acceptOfferAtomic, rejectOffer } from '../../../utils/offers';
 import Button from '../../shared/Button';
 import RatingModal from './RatingModal';
+import { parseErrandTasks, describeTaskState } from '../../../utils/errandTasks';
+import { isErrandService, normalizeServiceType } from '../../../utils/serviceTypes';
+import ErrandTaskList from '../../../components/cards/ErrandTaskList';
 
 /**
  * Ride Details Modal
@@ -20,6 +23,7 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
   const [loading, setLoading] = useState(false);
   const [processingOfferId, setProcessingOfferId] = useState(null);
   const [showRatingModal, setShowRatingModal] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // Auto-open rating modal when requested and ride is completed without rating
   useEffect(() => {
@@ -127,11 +131,17 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
         const driverProfile = profilesMap[offer.driver_id] || {};
         const driverStat = statsMap[offer.driver_id];
 
+        // Default rating is 4.9 if no ratings exist
+        const calculatedRating = driverStat && driverStat.ratings.length > 0
+          ? driverStat.ratings.reduce((a, b) => a + b, 0) / driverStat.ratings.length
+          : 4.9;
+
         return {
           ...offer,
           driver: {
             ...driverProfile,
-            rating: driverStat ? driverStat.ratings.reduce((a, b) => a + b, 0) / driverStat.ratings.length : null,
+            full_name: driverProfile.full_name || `Driver ${offer.driver_id?.slice(0, 8)}`,
+            rating: calculatedRating,
             total_rides: driverStat ? driverStat.totalRides : 0
           }
         };
@@ -186,6 +196,34 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
     }
   };
 
+  const handleCancelRide = async () => {
+    if (!window.confirm('Are you sure you want to cancel this ride? This action cannot be undone.')) return;
+    
+    setIsCancelling(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('User not found');
+
+      const { data, error } = await supabase.rpc('transition_ride_status', {
+        p_ride_id: ride.id,
+        p_new_state: 'CANCELLED',
+        p_actor_type: 'PASSENGER',
+        p_actor_id: user.id
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Failed to cancel ride');
+      
+      alert('Ride cancelled successfully');
+      onClose();
+    } catch (error) {
+      console.error('Error cancelling ride:', error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   const getStatusBadge = (status) => {
     const badges = {
       pending: { color: 'bg-yellow-100 text-yellow-800', text: 'Pending' },
@@ -221,6 +259,8 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
   if (!isOpen || !ride) return null;
 
   const pendingOffers = offers.filter(o => o.offer_status === 'pending');
+  const serviceType = normalizeServiceType(ride.service_type || 'taxi');
+  const isErrand = isErrandService(ride.service_type) || serviceType === 'errand';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -265,14 +305,27 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
             </div>
             
             <div className="space-y-2 text-sm">
-              <div>
-                <span className="text-slate-600">📍 Pickup:</span>
-                <span className="ml-2 text-slate-800">{ride.pickup_address || ride.pickup_location}</span>
-              </div>
-              <div>
-                <span className="text-slate-600">🎯 Dropoff:</span>
-                <span className="ml-2 text-slate-800">{ride.dropoff_address || ride.dropoff_location}</span>
-              </div>
+              {!isErrand ? (
+                <>
+                  <div>
+                    <span className="text-slate-600">📍 Pickup:</span>
+                    <span className="ml-2 text-slate-800">{ride.pickup_address || ride.pickup_location}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-600">🎯 Dropoff:</span>
+                    <span className="ml-2 text-slate-800">{ride.dropoff_address || ride.dropoff_location}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-2">
+                  <ErrandTaskList
+                    tasks={ride.errand_tasks}
+                    compact={false}
+                    showStatus={true}
+                    showCosts={true}
+                  />
+                </div>
+              )}
               {ride.distance_km && (
                 <div>
                   <span className="text-slate-600">📏 Distance:</span>
@@ -321,17 +374,15 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
                         </div>
                         <div>
                           <p className="font-medium text-slate-800">
-                            Driver {offer.driver_id?.slice(0, 8)}
+                            {offer.driver?.full_name}
                           </p>
-                          {offer.driver?.rating && (
-                            <div className="flex items-center gap-1 text-sm text-slate-600">
-                              <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                              <span>{offer.driver.rating.toFixed(1)}</span>
-                              <span className="text-slate-400">
-                                ({offer.driver.total_rides || 0} rides)
-                              </span>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-1 text-sm text-slate-600">
+                            <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
+                            <span>{offer.driver?.rating?.toFixed(1) || '4.9'}</span>
+                            <span className="text-slate-400">
+                              ({offer.driver?.total_rides || 0} rides)
+                            </span>
+                          </div>
                         </div>
                       </div>
                       {getOfferStatusBadge(offer.offer_status)}
@@ -390,17 +441,31 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl">
+        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 rounded-b-xl flex flex-col gap-2">
           {ride?.ride_status === 'trip_completed' && !ride?.rating && (
             <Button
               variant="primary"
               onClick={() => setShowRatingModal(true)}
-              className="w-full mb-2"
+              className="w-full"
             >
               <Star className="w-4 h-4 mr-2" />
               Rate This Ride
             </Button>
           )}
+          
+          {/* Passenger Cancel CTA */}
+          {!['trip_completed', 'completed', 'cancelled'].includes(ride?.ride_status || ride?.status) && (
+            <Button
+              variant="outline"
+              onClick={handleCancelRide}
+              disabled={isCancelling}
+              className="w-full text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              {isCancelling ? 'Cancelling...' : 'Cancel Ride'}
+            </Button>
+          )}
+
           <Button
             variant="outline"
             onClick={onClose}

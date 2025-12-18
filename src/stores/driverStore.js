@@ -107,7 +107,7 @@ const useDriverStore = create(
             .from('rides')
             .select('*')
             .eq('driver_id', userId)
-            .eq('ride_status', 'trip_completed')
+            .eq('status', 'completed')
             .gte('created_at', today.toISOString());
 
           if (ridesError) throw ridesError;
@@ -247,7 +247,7 @@ const useDriverStore = create(
             .from('rides')
             .select('*')
             .eq('driver_id', userId)
-            .eq('ride_status', 'trip_completed')
+            .eq('status', 'completed')
             .order('created_at', { ascending: false });
 
           if (ridesError) throw ridesError;
@@ -524,6 +524,29 @@ const useDriverStore = create(
             .single();
 
           if (error) throw error;
+
+          // Sync certain documents to driver_profiles for backwards compatibility and completion logic
+          const syncMap = {
+            drivers_license: 'license_document',
+            vehicle_registration: 'vehicle_registration',
+            insurance_certificate: 'insurance_certificate',
+            fitness_certificate: 'roadworthy_certificate'
+          };
+
+          const profileField = syncMap[dbDocumentType];
+          if (profileField) {
+            console.log(`[uploadDocument] Syncing ${dbDocumentType} to driver_profiles.${profileField}`);
+            await supabase
+              .from('driver_profiles')
+              .update({ [profileField]: publicUrl })
+              .eq('user_id', userId);
+            
+            // Update local state if it exists
+            const current = get().driverProfile;
+            if (current) {
+              set({ driverProfile: { ...current, [profileField]: publicUrl } });
+            }
+          }
 
           // Reload documents to update UI (skip during batch for efficiency)
           if (!options?.skipReload) {

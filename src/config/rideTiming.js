@@ -6,6 +6,7 @@
  */
 
 import { Zap, Calendar, Repeat } from 'lucide-react';
+import { getAllowedRideTimings } from './featureFlags';
 
 /**
  * Ride timing configuration mapping
@@ -73,8 +74,9 @@ export function getRideTimingConfig(rideTiming) {
 
 /**
  * Get all available ride timing types
+ * Respects feature flags - only returns enabled timing types
  * @returns {Array<string>} Array of ride timing keys
  */
 export function getAvailableRideTimings() {
-  return ['instant', 'scheduled_single', 'scheduled_recurring'];
+  return getAllowedRideTimings();
 }

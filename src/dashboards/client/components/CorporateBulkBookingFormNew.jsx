@@ -117,7 +117,6 @@ const CorporateBulkBookingFormNew = ({ serviceType, onBack, onComplete }) => {
         { value: 'sedan-3', label: 'Sedan (3 passengers)', capacity: 3 },
         { value: 'mpv-5', label: 'MPV/SUV (5 passengers)', capacity: 5 },
         { value: 'mpv-7', label: 'Large MPV (7 passengers)', capacity: 7 },
-        { value: 'combi-14', label: 'Combi/Hiace (14 passengers)', capacity: 14 },
         { value: 'bus-28', label: 'Medium Bus (28 passengers)', capacity: 28 },
         { value: 'bus-60', label: 'Large Bus (60 passengers)', capacity: 60 }
       ]

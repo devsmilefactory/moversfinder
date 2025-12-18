@@ -100,14 +100,14 @@ const RideRequestsPage = () => {
 
   return (
     <>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 overflow-x-hidden">
         {/* Header with Hamburger Menu */}
         <div className="bg-white border-b border-gray-200 sticky top-0 z-30">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between gap-4 h-16">
+          <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between gap-2 h-16">
               <button
                 onClick={() => setShowMenu(true)}
-                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
                 aria-label="Open menu"
               >
                 <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -115,48 +115,50 @@ const RideRequestsPage = () => {
                 </svg>
               </button>
 
-              <div className="flex-1 text-center">
-                <h1 className="text-xl font-bold text-gray-900">Rides</h1>
+              <div className="flex-1 text-center min-w-0">
+                <h1 className="text-lg font-bold text-gray-900 truncate">Rides</h1>
               </div>
 
-              <div className="flex items-center gap-4">
-                <div className="flex flex-col items-end text-right gap-1 min-w-[180px] max-w-[240px] md:items-start md:text-left">
-                  <div className="flex items-center gap-2">
-                    <ToggleSwitch
-                      checked={ridesUiState.isOnline}
-                      onChange={ridesUiState.onToggleOnline}
-                      disabled={ridesUiState.locationLoading}
-                      size="lg"
-                      className="flex-shrink-0"
-                    />
-                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                      {ridesUiState.isOnline ? 'Online' : 'Offline'}
-                      {ridesUiState.isOnline && ridesUiState.locationCity && (
-                        <span className="flex items-center gap-1 text-[11px] text-gray-500">
-                          <MapPinIcon className="w-3 h-3 text-green-600" />
-                          {ridesUiState.locationCity}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  {(ridesUiState.locationLoading || !ridesUiState.isOnline) && (
-                    <p className="text-xs text-gray-600">
-                      {ridesUiState.locationLoading
-                        ? 'Grabbing location...'
-                        : 'Tap to go online'}
-                    </p>
-                  )}
-                </div>
-
-                <NotificationBell className="flex-shrink-0" />
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <NotificationBell className="flex-shrink-0 scale-90 origin-right" />
               </div>
             </div>
           </div>
         </div>
 
         {/* Main Content */}
-        <div className="py-8">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="py-2">
+          <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 mb-4">
+            <div className="bg-white rounded-xl shadow-lg p-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 font-medium">Service Area</p>
+                <p className="text-lg font-bold text-slate-700">{ridesUiState.locationCity || 'Detecting...'}</p>
+                {ridesUiState.locationLoading && (
+                  <p className="text-[10px] text-blue-500 animate-pulse font-medium">Updating location...</p>
+                )}
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-slate-500 font-medium">My Status</p>
+                <div className="flex flex-col items-end">
+                  <p className={`text-lg font-bold ${ridesUiState.isOnline ? 'text-green-600' : 'text-slate-400'}`}>
+                    {ridesUiState.isOnline ? 'Online' : 'Offline'}
+                  </p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400 font-medium">
+                      {ridesUiState.isOnline ? 'Go Offline' : 'Go Online'}
+                    </span>
+                    <ToggleSwitch
+                      checked={ridesUiState.isOnline}
+                      onChange={ridesUiState.onToggleOnline}
+                      disabled={ridesUiState.locationLoading}
+                      size="sm"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="max-w-7xl mx-auto px-0 sm:px-6 lg:px-8">
             <DriverRidesPage onUiStateChange={handleRidesUiState} />
           </div>
         </div>

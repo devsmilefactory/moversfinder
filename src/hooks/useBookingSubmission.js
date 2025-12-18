@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { broadcastRideToDrivers } from '../utils/driverMatching';
 import { createRecurringSeries } from '../services/recurringTripService';
 import { prepareErrandTasksForInsert } from '../utils/errandTasks';
+import { enforceInstantOnly, FEATURE_FLAGS } from '../config/featureFlags';
 import { toGeoJSON, calculateDistance, getRouteDistanceAndDuration, getRouteWithStopsDistanceAndDuration } from '../utils/locationServices';
 import {
   calculateEstimatedFareV2,
@@ -219,7 +220,7 @@ const useBookingSubmission = ({
   }, [extractCoords]);
 
   // Calculate final fare
-  const calculateFinalFare = useCallback((selectedService, routeDetails, formData, serviceData = {}) => {
+  const calculateFinalFare = useCallback(async (selectedService, routeDetails, formData, serviceData = {}) => {
     const { distanceKm } = routeDetails;
     
     if (!distanceKm || distanceKm <= 0) {
@@ -231,14 +232,14 @@ const useBookingSubmission = ({
     try {
       switch (selectedService) {
         case 'taxi':
-          return calculateTaxiFare({
+          return await calculateTaxiFare({
             distanceKm,
             isRoundTrip: formData.isRoundTrip || false,
             numberOfDates: numberOfTrips
           });
 
         case 'courier':
-          return calculateCourierFare({
+          return await calculateCourierFare({
             distanceKm,
             vehicleType: serviceData.vehicleType || 'sedan',
             packageSize: serviceData.package?.size || 'medium',
@@ -247,28 +248,38 @@ const useBookingSubmission = ({
           });
 
         case 'school_run':
-          return calculateSchoolRunFare({
+          return await calculateSchoolRunFare({
             distanceKm,
             isRoundTrip: formData.isRoundTrip || false,
             numberOfDates: numberOfTrips
           });
 
         case 'errands':
-          return calculateErrandsFare({
+          const fare = await calculateErrandsFare({
             errands: serviceData.tasks || [],
-            numberOfDates: numberOfTrips,
-            calculateDistance
+            numberOfDates: numberOfTrips
           });
+          
+          // If we have errand tasks, update the routeDetails with total distance/duration
+          if (fare && serviceData.tasks) {
+            const totalDistance = serviceData.tasks.reduce((sum, t) => sum + (parseFloat(t.distanceKm || t.distance) || 0), 0);
+            const totalDuration = serviceData.tasks.reduce((sum, t) => sum + (parseInt(t.durationMinutes || t.duration) || 0), 0);
+            
+            if (totalDistance > 0) routeDetails.distanceKm = totalDistance;
+            if (totalDuration > 0) routeDetails.durationMinutes = totalDuration;
+          }
+          
+          return fare;
 
         case 'bulk':
-          return calculateBulkTripsFare({
-            trips: serviceData.rides || [],
-            numberOfDates: numberOfTrips
+          return await calculateBulkTripsFare({
+            distanceKm,
+            numberOfTrips
           });
 
         default:
           // Fallback to simple calculation
-          const baseFare = calculateEstimatedFareV2({ distanceKm }) || 0;
+          const baseFare = (await calculateEstimatedFareV2({ distanceKm })) || 0;
           return {
             totalFare: baseFare * numberOfTrips,
             breakdown: [{ label: 'Base fare', amount: baseFare }]
@@ -277,7 +288,7 @@ const useBookingSubmission = ({
     } catch (error) {
       console.warn('Fare calculation failed:', error);
       // Fallback calculation
-      const baseFare = calculateEstimatedFareV2({ distanceKm }) || 0;
+      const baseFare = (await calculateEstimatedFareV2({ distanceKm })) || 0;
       return {
         totalFare: baseFare * numberOfTrips,
         breakdown: [{ label: 'Base fare', amount: baseFare }]
@@ -315,9 +326,12 @@ const useBookingSubmission = ({
       baseTripCount > 1
     );
 
-    const rideTiming = hasSpecificSchedule
+    let rideTiming = hasSpecificSchedule
       ? (isRecurringPattern ? 'scheduled_recurring' : 'scheduled_single')
       : 'instant';
+    
+    // Enforce instant-only mode if feature flags disable scheduled/recurring
+    rideTiming = enforceInstantOnly(rideTiming);
 
     return {
       // User and service info
@@ -344,11 +358,11 @@ const useBookingSubmission = ({
       estimated_duration_minutes: durationMinutes,
 
       // Pricing
-      estimated_fare: roundToNearestHalfDollar(totalFare),
+      estimated_cost: roundToNearestHalfDollar(totalFare),
       payment_method: formData.paymentMethod || 'cash',
 
-      // Scheduling
-      scheduled_datetime: hasSpecificSchedule ? (() => {
+      // Scheduling (only set if not in instant-only mode)
+      scheduled_datetime: (rideTiming === 'instant' || !hasSpecificSchedule) ? null : (() => {
         let dateStr;
         if (scheduleType === 'specific_dates' && formData.selectedDates.length > 0) {
           dateStr = formData.selectedDates[0];
@@ -370,8 +384,8 @@ const useBookingSubmission = ({
         return dateObj.toISOString();
       })() : null,
 
-      // Recurrence pattern
-      recurrence_pattern: rideTiming === 'scheduled_recurring' ? (
+      // Recurrence pattern (only set if recurring is enabled)
+      recurrence_pattern: (rideTiming === 'scheduled_recurring' && FEATURE_FLAGS.RECURRING_RIDES_ENABLED) ? (
         scheduleType === 'specific_dates' ? {
           type: 'specific_dates',
           dates: formData.selectedDates,
@@ -393,7 +407,7 @@ const useBookingSubmission = ({
       remaining_rides_count: derivedNumberOfTrips,
 
       // Service-specific data
-      special_instructions: formData.specialInstructions || '',
+      special_requests: formData.specialInstructions || '',
       
       // Status
       status: 'pending',
@@ -423,7 +437,7 @@ const useBookingSubmission = ({
       const routeDetails = await calculateRouteDetails(selectedService, formData, serviceData);
 
       // Step 3: Calculate fare
-      const fareDetails = calculateFinalFare(selectedService, routeDetails, formData, serviceData);
+      const fareDetails = await calculateFinalFare(selectedService, routeDetails, formData, serviceData);
 
       // Step 4: Prepare booking data
       const bookingData = prepareBookingData(user, selectedService, formData, serviceData, routeDetails, fareDetails);
@@ -451,8 +465,10 @@ const useBookingSubmission = ({
         }
       }
 
-      // Step 7: Handle recurring rides
-      if (bookingData.ride_timing === 'scheduled_recurring' && bookingData.recurrence_pattern) {
+      // Step 7: Handle recurring rides (only if feature flag enabled)
+      if (FEATURE_FLAGS.RECURRING_RIDES_ENABLED && 
+          bookingData.ride_timing === 'scheduled_recurring' && 
+          bookingData.recurrence_pattern) {
         try {
           await createRecurringSeries({
             baseRideId: rideData.id,

@@ -2,6 +2,7 @@ import React from 'react';
 import { MapPin, Clock, User, MessageSquare } from 'lucide-react';
 import ActionButtons from './ActionButtons';
 import { formatDistance, formatCurrency, formatTime } from '../../../utils/formatters';
+import { calculateDistance, fromGeoJSON } from '../../../utils/locationServices';
 
 /**
  * RideRequestCard Component
@@ -30,11 +31,14 @@ const RideRequestCard = ({
   };
 
   const getStatusColor = (status) => {
+    // Standardize on ride_status values
     switch (status) {
       case 'pending': return 'text-green-600 bg-green-50';
-      case 'assigned': return 'text-blue-600 bg-blue-50';
-      case 'accepted': return 'text-purple-600 bg-purple-50';
-      case 'in_progress': return 'text-orange-600 bg-orange-50';
+      case 'accepted': return 'text-blue-600 bg-blue-50';
+      case 'driver_on_way': return 'text-purple-600 bg-purple-50';
+      case 'driver_arrived': return 'text-indigo-600 bg-indigo-50';
+      case 'trip_started': return 'text-orange-600 bg-orange-50';
+      case 'trip_completed':
       case 'completed': return 'text-gray-600 bg-gray-50';
       default: return 'text-gray-600 bg-gray-50';
     }
@@ -43,25 +47,19 @@ const RideRequestCard = ({
   const getDistanceFromDriver = () => {
     if (!driverLocation || !ride.pickup_coordinates) return null;
     
-    // Simple distance calculation (you might want to use a more accurate method)
-    const lat1 = driverLocation.lat;
-    const lon1 = driverLocation.lng;
-    const lat2 = ride.pickup_coordinates.lat;
-    const lon2 = ride.pickup_coordinates.lng;
+    // Support both legacy {lat, lng} and new GeoJSON format
+    let pickupCoords = ride.pickup_coordinates;
+    if (pickupCoords.type === 'Point' && Array.isArray(pickupCoords.coordinates)) {
+      pickupCoords = fromGeoJSON(pickupCoords);
+    }
     
-    const R = 6371; // Earth's radius in km
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const distance = R * c;
-    
-    return distance;
+    if (!pickupCoords || typeof pickupCoords.lat !== 'number') return null;
+
+    return calculateDistance(driverLocation, pickupCoords);
   };
 
   const distanceFromDriver = getDistanceFromDriver();
+  const currentStatus = ride.ride_status || ride.status || 'pending';
 
   return (
     <div 
@@ -77,13 +75,13 @@ const RideRequestCard = ({
             <span className="text-2xl">{getServiceIcon(ride.service_type)}</span>
             <div>
               <h3 className="font-semibold text-gray-900 capitalize">
-                {ride.service_type} Request
+                {ride.service_type?.replace('_', ' ')} Request
               </h3>
               <div className="flex items-center gap-2 text-sm text-gray-500">
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(ride.status)}`}>
-                  {ride.status.replace('_', ' ').toUpperCase()}
+                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(currentStatus)}`}>
+                  {currentStatus.replace('_', ' ').toUpperCase()}
                 </span>
-                {distanceFromDriver && (
+                {distanceFromDriver !== null && (
                   <span className="flex items-center gap-1">
                     <MapPin className="w-3 h-3" />
                     {formatDistance(distanceFromDriver)} away
@@ -95,7 +93,7 @@ const RideRequestCard = ({
           
           <div className="text-right">
             <div className="text-lg font-bold text-green-600">
-              {formatCurrency(ride.estimated_cost || ride.final_cost)}
+              {formatCurrency(ride.estimated_cost || ride.fare)}
             </div>
             {ride.distance_km && (
               <div className="text-sm text-gray-500">
@@ -111,16 +109,16 @@ const RideRequestCard = ({
             <div className="w-3 h-3 rounded-full bg-green-500 mt-1 flex-shrink-0"></div>
             <div className="flex-1">
               <p className="text-sm font-medium text-gray-900">Pickup</p>
-              <p className="text-sm text-gray-600">{ride.pickup_location}</p>
+              <p className="text-sm text-gray-600">{ride.pickup_address || ride.pickup_location}</p>
             </div>
           </div>
           
-          {ride.dropoff_location && (
+          {(ride.dropoff_address || ride.dropoff_location) && (
             <div className="flex items-start gap-2">
               <div className="w-3 h-3 rounded-full bg-red-500 mt-1 flex-shrink-0"></div>
               <div className="flex-1">
                 <p className="text-sm font-medium text-gray-900">Dropoff</p>
-                <p className="text-sm text-gray-600">{ride.dropoff_location}</p>
+                <p className="text-sm text-gray-600">{ride.dropoff_address || ride.dropoff_location}</p>
               </div>
             </div>
           )}
@@ -128,21 +126,24 @@ const RideRequestCard = ({
 
         {/* Ride Details */}
         <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
-          {ride.pickup_time && (
+          {(ride.pickup_time || ride.scheduled_datetime) && (
             <div className="flex items-center gap-1">
               <Clock className="w-4 h-4" />
-              <span>{formatTime(ride.pickup_time)}</span>
+              <span>{formatTime(ride.pickup_time || ride.scheduled_datetime)}</span>
             </div>
           )}
           
-          {ride.passenger_count && (
+          {(ride.passenger_count || ride.number_of_passengers) && (
             <div className="flex items-center gap-1">
               <User className="w-4 h-4" />
-              <span>{ride.passenger_count} passenger{ride.passenger_count > 1 ? 's' : ''}</span>
+              <span>
+                {ride.passenger_count || ride.number_of_passengers} passenger
+                {(ride.passenger_count || ride.number_of_passengers) > 1 ? 's' : ''}
+              </span>
             </div>
           )}
 
-          {ride.special_instructions && (
+          {(ride.special_requests || ride.special_instructions) && (
             <div className="flex items-center gap-1">
               <MessageSquare className="w-4 h-4" />
               <span>Special instructions</span>

@@ -21,6 +21,7 @@ import {
 import { prepareErrandTasksForInsert } from '../../../utils/errandTasks';
 import { formatPrice } from '../../../utils/formatters';
 import { isRoundTripRide } from '../../../utils/rideCostDisplay';
+import { enforceInstantOnly, FEATURE_FLAGS } from '../../../config/featureFlags';
 import {
   calculateEstimatedFareV2,
   calculateRoundTripFare,
@@ -137,6 +138,8 @@ const UnifiedBookingModal = ({
   // Derived cost and stats for errands (sum of each task priced as a taxi ride)
   const [errandsTasksCost, setErrandsTasksCost] = useState(0);
   const [errandsTasksSummary, setErrandsTasksSummary] = useState(null);
+  const [totalCost, setTotalCost] = useState(0);
+  const [fareBreakdown, setFareBreakdown] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,7 +254,7 @@ const UnifiedBookingModal = ({
               }
             }
 
-            const segCost = segKm ? (calculateEstimatedFareV2({ distanceKm: segKm }) ?? 0) : 0;
+            const segCost = segKm ? ((await calculateEstimatedFareV2({ distanceKm: segKm })) ?? 0) : 0;
             perTripEstimates.push({ distanceKm: segKm, durationMinutes: segMin, cost: segCost });
 
             totalKm += segKm;
@@ -444,56 +447,57 @@ const UnifiedBookingModal = ({
     setTripMode('new'); // Switch to new trip view with pre-filled data
   };
 
-  // Calculate estimated cost without requiring local formData locations; rely on available distance
-  const calculateCost = () => {
-    if (selectedService === 'bulk') {
-      if (computedEstimate && computedEstimate.cost != null) {
-        return roundToNearestHalfDollar(computedEstimate.cost);
+  // Calculate total cost and fare breakdown in realtime
+  useEffect(() => {
+    let aborted = false;
+    
+    const computeCost = async () => {
+      const numberOfTrips = formData.numberOfTrips || 1;
+      let cost = 0;
+      let breakdown = null;
+
+      try {
+        if (selectedService === 'bulk') {
+          if (computedEstimate && computedEstimate.cost != null) {
+            cost = roundToNearestHalfDollar(computedEstimate.cost);
+          }
+        } else if (selectedService === 'errands' && formData.tasks && formData.tasks.length > 0) {
+          const singleTripTaskPrice = errandsTasksCost;
+          cost = roundToNearestHalfDollar(singleTripTaskPrice * numberOfTrips);
+        } else if (selectedService === 'courier' && formData.packages && formData.packages.length > 0) {
+          const singleTripPackagePrice = await calculateMultiPackageFare(formData.packages);
+          cost = roundToNearestHalfDollar(singleTripPackagePrice * numberOfTrips);
+        } else {
+          const distanceKmForPrice = (computedEstimate && computedEstimate.distanceKm)
+            ? computedEstimate.distanceKm
+            : (estimate && estimate.distanceKm ? estimate.distanceKm : null);
+
+          if (distanceKmForPrice != null && distanceKmForPrice > 0) {
+            let singleTripFare;
+            if ((selectedService === 'taxi' || selectedService === 'school_run') && formData.isRoundTrip) {
+              singleTripFare = (await calculateRoundTripFare({ distanceKm: distanceKmForPrice })) ?? 0;
+            } else {
+              singleTripFare = (await calculateEstimatedFareV2({ distanceKm: distanceKmForPrice })) ?? 0;
+            }
+            cost = roundToNearestHalfDollar(singleTripFare * numberOfTrips);
+          }
+        }
+
+        if (!aborted) {
+          setTotalCost(cost);
+          setFareBreakdown(breakdown);
+        }
+      } catch (error) {
+        console.warn('Realtime cost calculation failed:', error);
       }
-      return 0;
-    }
+    };
 
-    const distanceKmForPrice = (computedEstimate && computedEstimate.distanceKm)
-      ? computedEstimate.distanceKm
-      : (estimate && estimate.distanceKm ? estimate.distanceKm : null);
+    computeCost();
+    return () => { aborted = true; };
+  }, [selectedService, formData.numberOfTrips, formData.isRoundTrip, formData.packages, formData.tasks, errandsTasksCost, computedEstimate, estimate]);
 
-    const numberOfTrips = formData.numberOfTrips || 1;
-
-    // For courier service with multiple packages
-    if (selectedService === 'courier' && formData.packages && formData.packages.length > 0) {
-      const singleTripPackagePrice = calculateMultiPackageFare(formData.packages);
-      // Multiply by number of trips for recurring bookings
-      const totalPrice = singleTripPackagePrice * numberOfTrips;
-      return roundToNearestHalfDollar(totalPrice);
-    }
-
-    // For errands service with multiple tasks
-    if (selectedService === 'errands' && formData.tasks && formData.tasks.length > 0) {
-      const singleTripTaskPrice = errandsTasksCost;
-      // Multiply by number of trips for recurring bookings
-      const totalPrice = singleTripTaskPrice * numberOfTrips;
-      return roundToNearestHalfDollar(totalPrice);
-    }
-
-    // For distance-based services (taxi, school run)
-    if (distanceKmForPrice != null && distanceKmForPrice > 0) {
-      let singleTripFare;
-
-      // Calculate single trip fare (with round trip if applicable)
-      if ((selectedService === 'taxi' || selectedService === 'school_run') && formData.isRoundTrip) {
-        singleTripFare = calculateRoundTripFare({ distanceKm: distanceKmForPrice }) ?? 0;
-      } else {
-        singleTripFare = calculateEstimatedFareV2({ distanceKm: distanceKmForPrice }) ?? 0;
-      }
-
-      // Multiply by number of trips for recurring bookings
-      const totalCost = singleTripFare * numberOfTrips;
-      return roundToNearestHalfDollar(totalCost);
-    }
-
-    // No distance yet -> 0 until route is computed
-    return 0;
-  };
+  // Keep calculateCost for UI parts that still call it, but return the state
+  const calculateCost = () => totalCost;
 
 
   // Check if form is valid based on service type
@@ -610,20 +614,24 @@ const UnifiedBookingModal = ({
 
       // Calculate final cost using new fare calculation functions with breakdowns
       let finalCost = 0;
-      let fareBreakdown = null;
+      let finalFareBreakdown = null;
       
+      // Variables for errand-specific fields
+      let errandTasksJSON = null;
+      let errandTasksCount = 0;
+
       if (selectedService === 'taxi' && finalDistanceKm && finalDistanceKm > 0) {
-        const taxiFare = calculateTaxiFare({
+        const taxiFare = await calculateTaxiFare({
           distanceKm: finalDistanceKm,
           isRoundTrip: formData.isRoundTrip,
           numberOfDates: formData.numberOfTrips || 1
         });
         if (taxiFare) {
           finalCost = roundToNearestHalfDollar(taxiFare.totalFare);
-          fareBreakdown = taxiFare.breakdown;
+          finalFareBreakdown = taxiFare.breakdown;
         }
       } else if (selectedService === 'courier' && finalDistanceKm && finalDistanceKm > 0) {
-        const courierFare = calculateCourierFare({
+        const courierFare = await calculateCourierFare({
           distanceKm: finalDistanceKm,
           vehicleType: formData.vehicleType || 'sedan',
           packageSize: formData.packages?.[0]?.packageSize || 'medium',
@@ -632,31 +640,54 @@ const UnifiedBookingModal = ({
         });
         if (courierFare) {
           finalCost = roundToNearestHalfDollar(courierFare.totalFare);
-          fareBreakdown = courierFare.breakdown;
+          finalFareBreakdown = courierFare.breakdown;
         }
       } else if (selectedService === 'school_run' && finalDistanceKm && finalDistanceKm > 0) {
-        const schoolFare = calculateSchoolRunFare({
+        const schoolFare = await calculateSchoolRunFare({
           distanceKm: finalDistanceKm,
           isRoundTrip: formData.isRoundTrip,
           numberOfDates: formData.numberOfTrips || 1
         });
         if (schoolFare) {
           finalCost = roundToNearestHalfDollar(schoolFare.totalFare);
-          fareBreakdown = schoolFare.breakdown;
+          finalFareBreakdown = schoolFare.breakdown;
         }
       } else if (selectedService === 'errands' && formData.tasks && formData.tasks.length > 0) {
-        const errandsFare = calculateErrandsFare({
+        const errandsFare = await calculateErrandsFare({
           errands: formData.tasks,
-          numberOfDates: formData.numberOfTrips || 1,
-          calculateDistance: calculateDistance
+          numberOfDates: formData.numberOfTrips || 1
         });
         if (errandsFare) {
           finalCost = roundToNearestHalfDollar(errandsFare.totalFare);
-          fareBreakdown = errandsFare.breakdown;
+          finalFareBreakdown = errandsFare.breakdown;
+          
+          // Use individual task estimates from the calculated fare
+          const normalizedTasks = prepareErrandTasksForInsert(formData.tasks);
+          const tasksWithCosts = normalizedTasks.map((task, idx) => {
+            const calculatedCost = errandsFare.errandCosts?.[idx]?.fare || 0;
+            const calculatedDistance = errandsFare.errandCosts?.[idx]?.distanceKm || 0;
+            return {
+              ...task,
+              cost: calculatedCost,
+              distanceKm: calculatedDistance
+            };
+          });
+
+          // Update final distance/duration
+          finalDistanceKm = errandsFare.errandCosts?.reduce((sum, e) => sum + (e.distanceKm || 0), 0) || finalDistanceKm;
+          // Duration is not explicitly in errandCosts, so keep what we have or estimate from distance
+          if (finalDistanceKm && (!finalDurationMin || finalDurationMin <= 0)) {
+            finalDurationMin = Math.round((finalDistanceKm / 35) * 60);
+          }
+
+          // Prepare errand specific data
+          errandTasksJSON = JSON.stringify(tasksWithCosts);
+          errandTasksCount = tasksWithCosts.length;
         }
       } else if (finalDistanceKm && finalDistanceKm > 0) {
         // Fallback to simple calculation
-        finalCost = roundToNearestHalfDollar(calculateEstimatedFareV2({ distanceKm: finalDistanceKm }) ?? 0);
+        const estimatedFare = await calculateEstimatedFareV2({ distanceKm: finalDistanceKm });
+        finalCost = roundToNearestHalfDollar(estimatedFare ?? 0);
       }
 
       // Prepare booking data with new database schema fields
@@ -669,6 +700,33 @@ const UnifiedBookingModal = ({
 
       let pickupGeo = pickupCandidateA || pickupCandidateB;
       let dropoffGeo = dropoffCandidateA || dropoffCandidateB;
+
+      // For errands, use the first task's pickup and last task's dropoff as the main ride's summary locations
+      let mainPickupAddress = formData.pickupLocation?.data?.address || formData.pickupLocation;
+      let mainDropoffAddress = formData.dropoffLocation?.data?.address || formData.dropoffLocation;
+
+      if (selectedService === 'errands' && Array.isArray(formData.tasks) && formData.tasks.length > 0) {
+        const firstTask = formData.tasks[0];
+        const lastTask = formData.tasks[formData.tasks.length - 1];
+        
+        const resolveAddr = (loc) => {
+          if (!loc) return '';
+          if (typeof loc === 'string') return loc;
+          return loc.data?.address || loc.address || loc.data?.name || loc.name || '';
+        };
+
+        mainPickupAddress = resolveAddr(firstTask.startPoint) || mainPickupAddress;
+        mainDropoffAddress = resolveAddr(lastTask.destinationPoint) || mainDropoffAddress;
+        
+        if (!pickupGeo) {
+          const firstTaskCoords = firstTask.startPoint?.data?.coordinates || firstTask.startPoint?.coordinates;
+          if (firstTaskCoords) pickupGeo = toGeoJSON(firstTaskCoords);
+        }
+        if (!dropoffGeo) {
+          const lastTaskCoords = lastTask.destinationPoint?.data?.coordinates || lastTask.destinationPoint?.coordinates;
+          if (lastTaskCoords) dropoffGeo = toGeoJSON(lastTaskCoords);
+        }
+      }
 
       // Guard: if pickup and dropoff end up identical but addresses differ, try alternate candidate for pickup
       if (pickupGeo && dropoffGeo && JSON.stringify(pickupGeo) === JSON.stringify(dropoffGeo)) {
@@ -700,9 +758,13 @@ const UnifiedBookingModal = ({
         baseTripCount > 1
       );
 
-      const rideTiming = hasSpecificSchedule
+      // Force instant-only mode if feature flags disable scheduled/recurring
+      let rideTiming = hasSpecificSchedule
         ? (isRecurringPattern ? 'scheduled_recurring' : 'scheduled_single')
         : 'instant';
+      
+      // Enforce instant-only mode (scheduled/recurring disabled)
+      rideTiming = enforceInstantOnly(rideTiming);
 
       const bookingData = {
         // User and service info
@@ -715,13 +777,13 @@ const UnifiedBookingModal = ({
         booking_source: 'individual',
 
         // Location data (standardized columns)
-        pickup_location: formData.pickupLocation?.data?.address || formData.pickupLocation,
+        pickup_location: mainPickupAddress,
         pickup_coordinates: pickupGeo,
-        dropoff_location: formData.dropoffLocation?.data?.address || formData.dropoffLocation,
+        dropoff_location: mainDropoffAddress,
         dropoff_coordinates: dropoffGeo,
         // (Optionally keep legacy address fields for compatibility)
-        pickup_address: formData.pickupLocation?.data?.address || formData.pickupLocation,
-        dropoff_address: formData.dropoffLocation?.data?.address || formData.dropoffLocation,
+        pickup_address: mainPickupAddress,
+        dropoff_address: mainDropoffAddress,
 
         // Vehicle / passengers
         vehicle_type: formData.vehicleType || 'sedan',
@@ -793,29 +855,21 @@ const UnifiedBookingModal = ({
         payment_status: 'pending',
         
         // Fare breakdown for transparency
-        fare_breakdown: fareBreakdown ? JSON.stringify(fareBreakdown) : null,
+        fare_breakdown: finalFareBreakdown ? JSON.stringify(finalFareBreakdown) : null,
 
         // Service-specific data mapping
         special_requests: formData.specialInstructions || null,
         number_of_passengers: formData.passengers || 1,
         
         // For errands: store number of tasks + normalized metadata with costs
-        ...(selectedService === 'errands' && Array.isArray(formData.tasks) && formData.tasks.length > 0
-          ? (() => {
-              const normalizedTasks = prepareErrandTasksForInsert(formData.tasks);
-              // Add costs to each task
-              const tasksWithCosts = addCostsToTasks(normalizedTasks, finalCost);
-              return {
-                number_of_tasks: tasksWithCosts.length,
-                errand_tasks: JSON.stringify(tasksWithCosts),
-                completed_tasks_count: 0,
-                remaining_tasks_count: tasksWithCosts.length,
-                active_errand_task_index: 0,
-                tasks_total: tasksWithCosts.length,
-                tasks_done: 0,
-                tasks_left: tasksWithCosts.length
-              };
-            })()
+        ...(selectedService === 'errands' && errandTasksJSON
+          ? {
+              number_of_tasks: errandTasksCount,
+              errand_tasks: errandTasksJSON,
+              completed_tasks_count: 0,
+              remaining_tasks_count: errandTasksCount,
+              active_errand_task_index: 0
+            }
           : {}),
 
         // Taxi-specific fields
@@ -915,7 +969,7 @@ if (selectedService === 'bulk') {
         }
       }
 
-      const segCost = segDistanceKm ? (calculateEstimatedFareV2({ distanceKm: segDistanceKm }) ?? 0) : 0;
+      const segCost = segDistanceKm ? ((await calculateEstimatedFareV2({ distanceKm: segDistanceKm })) ?? 0) : 0;
 
       ridesToInsert.push({
         user_id: bookingData.user_id,
@@ -1508,20 +1562,23 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                 )}
               </div>
               <div className="flex gap-2 flex-1 max-w-md">
-                <Button
-                  variant="outline"
-                  onClick={() => setShowScheduleModal(true)}
-                  disabled={!isFormValid()}
-                  className="flex-1"
-                >
-                  📅 Schedule
-                </Button>
+                {/* Hide Schedule button when scheduled/recurring rides are disabled */}
+                {FEATURE_FLAGS.SCHEDULED_RIDES_ENABLED && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowScheduleModal(true)}
+                    disabled={!isFormValid()}
+                    className="flex-1"
+                  >
+                    📅 Schedule
+                  </Button>
+                )}
                 <Button
                   variant="primary"
                   onClick={handleShowConfirmation}
                   disabled={!isFormValid()}
                   loading={loading}
-                  className="flex-1"
+                  className={FEATURE_FLAGS.SCHEDULED_RIDES_ENABLED ? "flex-1" : "flex-1 w-full"}
                 >
                   ⚡ Book Now
                 </Button>

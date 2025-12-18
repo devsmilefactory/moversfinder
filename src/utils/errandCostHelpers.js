@@ -41,6 +41,34 @@ export function distributeErrandCosts(totalCost, taskCount) {
 }
 
 /**
+ * Calculate total distance from errand tasks
+ * @param {Array|Object} input - Array of task objects with distanceKm property, or ride object with errand_tasks
+ * @returns {number} Total distance in km
+ */
+export function calculateErrandTotalDistance(input) {
+  const tasks = parseErrandTasks(input);
+  if (!tasks || tasks.length === 0) return 0;
+  
+  return tasks.reduce((total, task) => {
+    const distance = parseFloat(task.distanceKm || task.distance || 0);
+    return total + (isNaN(distance) ? 0 : distance);
+  }, 0);
+}
+
+/**
+ * Calculate average distance per errand task
+ * @param {Array|Object} input - Array of task objects with distanceKm property, or ride object with errand_tasks
+ * @returns {number} Average distance in km
+ */
+export function calculateErrandAverageDistance(input) {
+  const tasks = parseErrandTasks(input);
+  if (!tasks || tasks.length === 0) return 0;
+  
+  const totalDistance = calculateErrandTotalDistance(input);
+  return tasks.length > 0 ? totalDistance / tasks.length : 0;
+}
+
+/**
  * Calculate total cost from errand tasks or ride
  * @param {Array|Object} input - Array of task objects with cost property, or ride object with errand_tasks
  * @returns {number} Total cost
@@ -48,7 +76,7 @@ export function distributeErrandCosts(totalCost, taskCount) {
 export function calculateErrandTotalCost(input) {
   // Handle ride object input
   if (input && !Array.isArray(input) && input.errand_tasks) {
-    const tasks = input.errand_tasks;
+    const tasks = parseErrandTasks(input.errand_tasks);
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return parseFloat(input.estimated_cost) || 0;
     }

@@ -165,6 +165,7 @@ const CorporateProfileForm = ({ onComplete, canDismiss }) => {
       // Corporate profile statuses
       const approvalStatus = requiresApproval ? 'pending' : 'approved';
       const profileStatus = requiresApproval ? 'pending_approval' : 'approved';
+      const creditStatus = requiresApproval ? 'pending' : 'approved';
 
       // Main profile verification status (must match profiles table constraint)
       const verificationStatus = requiresApproval ? 'pending' : 'approved';
@@ -194,6 +195,7 @@ const CorporateProfileForm = ({ onComplete, canDismiss }) => {
             selected_services: formData.selected_services,
             approval_status: approvalStatus,
             profile_status: profileStatus,
+            corporate_credit_status: creditStatus,
             completion_percentage: 100,
             updated_at: new Date().toISOString(),
           })
@@ -214,22 +216,15 @@ const CorporateProfileForm = ({ onComplete, canDismiss }) => {
             selected_services: formData.selected_services,
             approval_status: approvalStatus,
             profile_status: profileStatus,
+            corporate_credit_status: creditStatus,
             completion_percentage: 100,
           });
 
         if (insertError) throw insertError;
       }
 
-
-
-
-
-      if (result.success) {
-        setSaving(false);
-        onComplete();
-      } else {
-        throw new Error(result.error || 'Failed to update profile');
-      }
+      setSaving(false);
+      onComplete();
     } catch (err) {
       console.error('Error saving corporate profile:', err);
       setErrors({ general: err.message || 'Failed to save profile. Please try again.' });

@@ -430,7 +430,7 @@ const IndividualRidesPage = () => {
                 if (activeTab === 'active') {
                   filteredSeriesRides = item.rides.filter(r => {
                     const s = getRideStatusCategory(r.ride_status || r.status);
-                    return s === 'active' || s === 'pending';
+                    return s === 'active';
                   });
                 } else if (activeTab === 'completed') {
                   filteredSeriesRides = item.rides.filter(r => getRideStatusCategory(r.ride_status || r.status) === 'completed');

@@ -47,12 +47,12 @@ const NotificationBell = ({ className = '' }) => {
     <div className={`relative ${className}`}>
       <button
         onClick={handleToggle}
-        className="bg-white rounded-full shadow-xl p-3 hover:bg-slate-50 transition-all transform hover:scale-105 relative"
+        className="bg-white rounded-full shadow-md p-2 sm:p-3 hover:bg-slate-50 transition-all transform hover:scale-105 relative"
         aria-label="Notifications"
       >
-        <Bell className="w-6 h-6 text-yellow-500" />
+        <Bell className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-500" />
         {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 inline-flex items-center justify-center rounded-full bg-red-600 text-white text-[10px] min-w-[1rem] h-4 px-1">
+          <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center rounded-full bg-red-600 text-white text-[9px] min-w-[0.9rem] h-3.5 px-1">
             {unreadCount}
           </span>
         )}

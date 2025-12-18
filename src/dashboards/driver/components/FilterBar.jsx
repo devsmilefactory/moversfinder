@@ -1,10 +1,12 @@
 import React from 'react';
+import { FEATURE_FLAGS } from '../../../config/featureFlags';
 
 /**
  * FilterBar Component
  * 
  * Provides ride timing filters within each tab of the Driver Rides Hub.
  * Allows drivers to filter rides by: All, Instant, Scheduled, or Recurring.
+ * Respects feature flags - only shows enabled ride timing options.
  * 
  * Features:
  * - Horizontal scrollable on mobile
@@ -26,20 +28,26 @@ const FilterBar = ({ activeFilter = 'all', onFilterChange, counts }) => {
       label: 'Instant', 
       icon: '⚡',
       color: 'blue'
-    },
-    { 
+    }
+  ];
+  
+  // Only add scheduled/recurring if feature flags are enabled
+  if (FEATURE_FLAGS.SCHEDULED_RIDES_ENABLED) {
+    filters.push({
       id: 'scheduled', 
       label: 'Scheduled', 
       icon: '📅',
       color: 'purple'
-    },
-    { 
+    });
+  }
+  if (FEATURE_FLAGS.RECURRING_RIDES_ENABLED) {
+    filters.push({
       id: 'recurring', 
       label: 'Recurring', 
       icon: '🔄',
       color: 'green'
-    }
-  ];
+    });
+  }
 
   const getButtonClasses = (filter) => {
     const isActive = activeFilter === filter.id;

@@ -229,7 +229,7 @@ const BookRidePage = () => {
         const durationSeconds = leg?.duration?.value ?? 0;
         const durationMinutes = Math.round(durationSeconds / 60);
 
-        const costVal = calculateEstimatedFareV2({ distanceKm });
+        const costVal = await calculateEstimatedFareV2({ distanceKm });
         const costRounded = typeof costVal === 'number' ? Number(costVal.toFixed(2)) : 0;
 
         setRoutePath(path);
@@ -422,7 +422,7 @@ const BookRidePage = () => {
                   <p className="text-lg font-bold text-slate-700">{detectedCity || 'Detecting...'}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-slate-500">Available Drivers</p>
+                  <p className="text-xs text-slate-500">Drivers</p>
                   <p className="text-lg font-bold text-green-600">{getAvailableDriversCount()} online</p>
                 </div>
               </div>

@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import LocationInput from '../../shared/LocationInput';
 import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
+import { useCorporateInvoiceApproval } from '../../../hooks/useCorporateInvoiceApproval';
+import { useAuthStore } from '../../../stores';
 
 /**
  * Compact Courier Booking Form
@@ -10,8 +12,20 @@ import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
  */
 
 const CompactCourierForm = ({ formData, onChange, savedPlaces = [] }) => {
+  const user = useAuthStore((state) => state.user);
+  const { isApproved, isLoading } = useCorporateInvoiceApproval();
+
   const handleChange = (e) => {
     const { name, value } = e.target;
+    
+    // Check approval if invoice payment method is selected
+    if (name === 'paymentMethod' && value === 'invoice') {
+      if (!isLoading && !isApproved) {
+        alert('⚠️ Corporate Invoice payment requires an approved corporate account. Please apply for one in your Profile under Payment Methods.');
+        return; // Prevent selection
+      }
+    }
+    
     onChange(prev => ({ ...prev, [name]: value }));
   };
 
@@ -194,20 +208,27 @@ const CompactCourierForm = ({ formData, onChange, savedPlaces = [] }) => {
       </div>
 
       {/* Payment Method */}
-      <FormSelect
-        label="Payment Method"
-        name="paymentMethod"
-        value={formData.paymentMethod || 'invoice'}
-        onChange={handleChange}
-        required
-        options={[
-          { value: 'invoice', label: 'Corporate Invoice' },
-          { value: 'ecocash', label: 'EcoCash' },
-          { value: 'onemoney', label: 'OneMoney' },
-          { value: 'cash', label: 'Cash' },
-          { value: 'card', label: 'Card' }
-        ]}
-      />
+      <div>
+        <FormSelect
+          label="Payment Method"
+          name="paymentMethod"
+          value={formData.paymentMethod || 'invoice'}
+          onChange={handleChange}
+          required
+          options={[
+            { value: 'invoice', label: 'Corporate Invoice' + (!isLoading && !isApproved ? ' (Requires Approval)' : '') },
+            { value: 'ecocash', label: 'EcoCash' },
+            { value: 'onemoney', label: 'OneMoney' },
+            { value: 'cash', label: 'Cash' },
+            { value: 'card', label: 'Card' }
+          ]}
+        />
+        {formData.paymentMethod === 'invoice' && !isLoading && !isApproved && (
+          <p className="text-xs text-red-600 mt-1">
+            ⚠️ Corporate Invoice requires approval. Please contact support or select another payment method.
+          </p>
+        )}
+      </div>
 
       {/* Special Instructions */}
       <FormTextarea

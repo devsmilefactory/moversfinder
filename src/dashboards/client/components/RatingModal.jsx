@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import SharedRatingModal from '../../../components/shared/SharedRatingModal';
+import { confirmPayment } from '../../../services/rideStateService';
 
 /**
  * Passenger RatingModal wrapper around SharedRatingModal.
@@ -17,21 +18,22 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
 
     setSubmitting(true);
     try {
-      // Per spec: Transition from A3 (trip_completed) to C1 (completed) when modal closes
-      const { error } = await supabase
+      // 1. Update rating metadata
+      const { error: metaError } = await supabase
         .from('rides')
         .update({
           rating,
           review: review || null,
           rated_at: new Date().toISOString(),
           ...(saveTrip ? { is_saved_template: true } : {}),
-          // Transition from trip_completed (A3) to completed (C1) per spec
-          ride_status: ride.ride_status === 'trip_completed' ? 'completed' : ride.ride_status,
-          status: ride.ride_status === 'trip_completed' ? 'completed' : ride.status,
         })
         .eq('id', ride.id);
 
-      if (error) throw error;
+      if (metaError) throw metaError;
+
+      // 2. Transition state to COMPLETED_FINAL via RPC (Single Source of Truth)
+      // This will update ride_status to 'completed' and categories to 'completed'
+      await confirmPayment(ride.id, ride.user_id);
 
       alert('✅ Thank you for your feedback!');
       onClose();
@@ -43,18 +45,12 @@ const RatingModal = ({ isOpen, onClose, ride }) => {
     }
   };
 
-  // Handle modal close: Transition from A3 (trip_completed) to C1 (completed) per spec
+  // Handle modal close: Transition to finalized state if not already done
   const handleClose = async () => {
     // If ride is still in trip_completed state, transition to completed when modal closes
-    if (ride?.ride_status === 'trip_completed') {
+    if (ride?.ride_status === 'trip_completed' || ride?.state === 'COMPLETED_INSTANCE') {
       try {
-        await supabase
-          .from('rides')
-          .update({
-            ride_status: 'completed',
-            status: 'completed',
-          })
-          .eq('id', ride.id);
+        await confirmPayment(ride.id, ride.user_id);
       } catch (error) {
         console.error('Error transitioning ride to completed state:', error);
       }

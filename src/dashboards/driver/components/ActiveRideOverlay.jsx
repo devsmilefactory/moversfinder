@@ -17,6 +17,12 @@ import {
 import { isErrandService } from '../../../utils/serviceTypes';
 import { fetchErrandTasksForRide, advanceErrandTask } from '../../../services/errandTaskService';
 import { isRoundTripRide } from '../../../utils/rideCostDisplay';
+import { 
+  driverOnTheWay, 
+  driverArrived, 
+  startTrip, 
+  completeTrip 
+} from '../../../services/rideStateService';
 
 const ERRAND_TASK_ACTION_DEFS = {
   [ERRAND_TASK_STATES.PENDING]: {
@@ -343,64 +349,51 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss, onComplet
         updateData.estimated_arrival_time = new Date().toISOString();
       } else if (newStatus === 'trip_started') {
         updateData.actual_pickup_time = new Date().toISOString();
-      } else if (newStatus === 'trip_completed') {
-        // Delegate to shared completion hook for canonical completion behavior
-        const result = await completeRide({
-          rideId: ride.id,
-          passengerId: ride.user_id,
-          notifyPassenger: true,
-          extraRideUpdates: {
-            // Preserve any additional overlay-specific fields
-            ...updateData,
-            ride_status: undefined, // handled in hook
-            status: undefined,
-          },
-        });
-
-        if (!result?.success) {
-          throw result.error || new Error('Failed to complete ride');
-        }
-
-        // Optimistically update local UI so the label/stepper change immediately
-        const completedRide = { ...localRide, ride_status: newStatus };
-        setLocalRide(completedRide);
-
-        // Let parent know about completion so it can refresh feeds / show rating modal
-        try {
-          if (typeof onCompleted === 'function') {
-            onCompleted(completedRide);
-          }
-        } catch (callbackError) {
-          console.error('Error in onCompleted callback:', callbackError);
-        }
-
-        // Always dismiss overlay on completion
-        try {
-          if (onDismiss) {
-            onDismiss();
-          }
-        } catch (dismissError) {
-          console.error('Error dismissing overlay after completion:', dismissError);
-        }
-
-        addToast({ type: 'success', title: 'Trip status updated successfully' });
-        return;
       }
 
-      const { error } = await supabase
+      // EXECUTE STATE TRANSITION VIA SERVICE (Single Source of Truth)
+      let transitionResult;
+      switch (newStatus) {
+        case 'driver_on_way':
+          transitionResult = await driverOnTheWay(ride.id, user?.id);
+          break;
+        case 'driver_arrived':
+          transitionResult = await driverArrived(ride.id, user?.id);
+          break;
+        case 'trip_started':
+          transitionResult = await startTrip(ride.id, user?.id);
+          break;
+        case 'trip_completed':
+          // For trip_completed, we use useRideCompletion hook's completeRide logic
+          // which is already handled in handleAdvanceErrandTask for errands
+          // and should be handled here for regular rides
+          transitionResult = await completeRide({
+            rideId: ride.id,
+            passengerId: ride.user_id,
+            notifyPassenger: true
+          });
+          break;
+        default:
+          throw new Error('Unsupported status update');
+      }
+
+      if (transitionResult && !transitionResult.success) {
+        throw new Error(transitionResult.error || 'Transition failed');
+      }
+
+      // Update additional metadata
+      const { error: metadataError } = await supabase
         .from('rides')
         .update(updateData)
-        .eq('id', ride.id)
-        .eq('driver_id', user.id)
-        .eq('ride_status', expectedCurrent);
+        .eq('id', ride.id);
 
-      if (error) {
-        console.error('Database error updating ride status:', error);
-        throw error;
+      if (metadataError) {
+        console.error('Database error updating ride metadata:', metadataError);
       }
 
       // Optimistically update local UI so the label/stepper change immediately
-      setLocalRide((prev) => ({ ...prev, ride_status: newStatus }));
+      const updatedRide = { ...localRide, ...updateData, ride_status: newStatus };
+      setLocalRide(updatedRide);
 
       // Send notifications to passenger for all status changes except completion
       const notificationMessages = {
@@ -419,7 +412,7 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss, onComplet
       };
 
       const notification = notificationMessages[newStatus];
-      if (notification && ride.user_id) {
+      if (notification && ride.user_id && newStatus !== 'trip_completed') {
         try {
           await notifyStatusUpdateFromOverlay({
             userId: ride.user_id,
@@ -433,6 +426,16 @@ const ActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss, onComplet
       }
 
       addToast({ type: 'success', title: 'Trip status updated successfully' });
+
+      // If trip is completed, trigger the completion callbacks to close the overlay
+      if (newStatus === 'trip_completed') {
+        if (typeof onCompleted === 'function') {
+          onCompleted(updatedRide);
+        }
+        if (onDismiss) {
+          onDismiss();
+        }
+      }
     } catch (e) {
       console.error('Error updating trip status:', e);
       addToast({

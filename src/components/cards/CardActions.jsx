@@ -93,10 +93,27 @@ export default function CardActions({
 
       case 'in_progress':
       case 'ACTIVE':
+      case 'active':
         // Determine CTA based on execution sub-state
-        const subState = ride.execution_sub_state || ride.ride_status;
+        const subState = (ride.execution_sub_state || ride.ride_status || '').toLowerCase();
         
-        if (subState === 'DRIVER_ON_THE_WAY' || subState === 'DRIVER_ARRIVED' || subState === 'DRIVER_EN_ROUTE') {
+        // If it's just accepted but no execution sub-state yet, show "Start Trip"
+        if (subState === 'accepted' || subState === 'driver_on_the_way' || subState === 'driver_on_way' || subState === 'driver_arrived' || subState === 'driver_en_route') {
+          return (
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => handleAction('start_trip')}
+                disabled={disabled}
+                className={buttonVariants.primary}
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {subState === 'accepted' ? 'Start Trip' : 'Continue Trip'}
+              </button>
+            </div>
+          );
+        }
+        
+        if (subState === 'trip_started' || subState === 'in_progress') {
           return (
             <div className="mt-4 flex justify-end">
               <button
@@ -104,29 +121,25 @@ export default function CardActions({
                 disabled={disabled}
                 className={buttonVariants.success}
               >
-                <Play className="h-4 w-4 mr-2" />
-                Start Trip
-              </button>
-            </div>
-          );
-        }
-        
-        if (subState === 'TRIP_STARTED' || subState === 'IN_PROGRESS') {
-          return (
-            <div className="mt-4 flex justify-end">
-              <button
-                onClick={() => handleAction('complete_trip')}
-                disabled={disabled}
-                className={buttonVariants.success}
-              >
                 <CheckCircle className="h-4 w-4 mr-2" />
-                Complete Trip
+                Manage Trip
               </button>
             </div>
           );
         }
         
-        return null;
+        return (
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={() => handleAction('start_trip')}
+              disabled={disabled}
+              className={buttonVariants.primary}
+            >
+              <Play className="h-4 w-4 mr-2" />
+              View Active Trip
+            </button>
+          </div>
+        );
 
       default:
         return null;

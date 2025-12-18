@@ -183,11 +183,11 @@ const PlaceBidModal = ({ open, ride, onClose, onSubmit }) => {
           )}
 
           {/* Special Instructions */}
-          {ride.special_instructions && (
+          {(ride.special_requests || ride.special_instructions) && (
             <div className="space-y-2">
               <p className="text-xs font-medium text-gray-500 uppercase">Special Instructions</p>
               <p className="text-sm text-gray-700 p-3 bg-yellow-50 rounded-lg border border-yellow-100">
-                {ride.special_instructions}
+                {ride.special_requests || ride.special_instructions}
               </p>
             </div>
           )}

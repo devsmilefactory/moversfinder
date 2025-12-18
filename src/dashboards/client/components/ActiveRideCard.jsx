@@ -5,6 +5,7 @@ import Button from '../../shared/Button';
 import { getRideProgressDetails } from '../../../utils/rideProgress';
 import { summarizeErrandTasks, describeTaskState } from '../../../utils/errandTasks';
 import { isErrandService, normalizeServiceType } from '../../../utils/serviceTypes';
+import { getRideCostDisplay } from '../../../utils/rideCostDisplay';
 
 /**
  * Card component for active rides (driver assigned through completed)
@@ -76,11 +77,9 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
         .eq('ride_status', 'completed')
         .not('rating', 'is', null);
 
-      let avgRating = null;
-      if (ratingData && ratingData.length > 0) {
-        const sum = ratingData.reduce((acc, r) => acc + r.rating, 0);
-        avgRating = (sum / ratingData.length).toFixed(1);
-      }
+      let avgRating = (ratingData && ratingData.length > 0)
+        ? (ratingData.reduce((acc, r) => acc + r.rating, 0) / ratingData.length).toFixed(1)
+        : '4.9';
 
       setDriverInfo({
         ...data,
@@ -154,7 +153,7 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
     : 0;
 
   const tripSummary = () => {
-    if (!progress.totalTrips) return null;
+    if (!progress.isMultiTrip && !progress.isRoundTrip) return null;
 
     if (tabContext === 'active') {
       const activeSubtitle =
@@ -174,6 +173,31 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
   };
 
   const summary = tripSummary();
+
+  const handleCancelRide = async (e) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to cancel this ride?')) return;
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase.rpc('transition_ride_status', {
+        p_ride_id: ride.id,
+        p_new_state: 'CANCELLED',
+        p_actor_type: 'PASSENGER',
+        p_actor_id: user.id
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || 'Failed to cancel ride');
+      
+      alert('Ride cancelled successfully');
+    } catch (error) {
+      console.error('Error cancelling ride:', error);
+      alert(`Error: ${error.message}`);
+    }
+  };
 
   return (
     <div
@@ -200,15 +224,43 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
             </div>
           </div>
           {/* Status Badge */}
-          <span className={`px-3 py-1.5 ${statusInfo.color} text-xs font-bold rounded-full flex items-center gap-1 inline-flex`}>
-            <StatusIcon className="w-3 h-3" />
-            {statusInfo.label}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={`px-3 py-1.5 ${statusInfo.color} text-xs font-bold rounded-full flex items-center gap-1 inline-flex`}>
+              <StatusIcon className="w-3 h-3" />
+              {statusInfo.label}
+            </span>
+            
+            {/* Cancel Button - Only show if not trip_completed/completed */}
+            {!['trip_completed', 'completed'].includes(ride.ride_status || ride.status) && (
+              <button
+                onClick={handleCancelRide}
+                className="text-red-600 hover:text-red-800 text-xs font-bold px-2 py-1.5 bg-red-50 rounded-full border border-red-200 flex items-center gap-1 transition-colors"
+              >
+                <XCircle className="w-3 h-3" />
+                Cancel
+              </button>
+            )}
+          </div>
         </div>
         <div className="text-right ml-2">
-          <div className="text-lg font-bold text-green-600">
-            ${(parseFloat(ride.fare || ride.estimated_cost) || 0).toFixed(2)}
-          </div>
+          {(() => {
+            const costDisplay = getRideCostDisplay(ride);
+            return (
+              <>
+                <div className="text-lg font-bold text-green-600">
+                  {costDisplay.perTripDisplay || costDisplay.display}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {costDisplay.perTripDisplay ? 'Per Trip' : (costDisplay.label || 'Price')}
+                </div>
+                {costDisplay.perTripDisplay && (
+                  <div className="text-xs text-slate-600 mt-1">
+                    {costDisplay.display} total
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
 
@@ -303,9 +355,11 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
       {/* Errand task progress */}
       {errandSummary && (
         <div className="mb-3 bg-green-50 rounded-lg p-3 border border-green-200">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-2">
             <div>
-              <p className="text-sm font-semibold text-green-800">Task progress</p>
+              <p className="text-sm font-bold text-green-800">
+                {errandSummary.total} Errand Task{errandSummary.total !== 1 ? 's' : ''}
+              </p>
               <p className="text-xs text-green-700">
                 Completed {errandSummary.completed}/{errandSummary.total} • {errandSummary.remaining} remaining
               </p>
@@ -314,42 +368,54 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
               {errandCompletionPct}%
             </div>
           </div>
+          
           {errandSummary.activeTask && (
-            <div className="mt-2 bg-white rounded-lg p-2 border border-green-100">
-              <p className="text-xs uppercase text-green-500 tracking-wide mb-1">Current task</p>
-              <p className="text-sm font-semibold text-green-800">{errandSummary.activeTask.title}</p>
-              <p className="text-xs text-green-700">
-                {errandSummary.activeTask.pickup || 'Pickup TBD'} → {errandSummary.activeTask.dropoff || 'Drop-off TBD'}
-              </p>
-              <p className="text-[11px] text-green-500 mt-1">
+            <div className="bg-white rounded-lg p-2 border border-green-100 mb-2">
+              <p className="text-[10px] uppercase text-green-500 font-bold tracking-wider mb-1">Current task</p>
+              <p className="text-sm font-semibold text-green-800 line-clamp-1">{errandSummary.activeTask.title}</p>
+              <p className="text-[11px] text-green-600 font-medium">
                 {describeTaskState(errandSummary.activeTask.state)}
               </p>
             </div>
           )}
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full bg-white border-green-200 text-green-700 hover:bg-green-50 text-xs py-1 h-auto"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClick();
+            }}
+          >
+            View All Tasks
+          </Button>
         </div>
       )}
 
-      {/* Locations */}
-      <div className="space-y-2 mb-3">
-        <div className="flex items-start gap-2">
-          <MapPin className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs text-slate-500">Pickup</div>
-            <div className="text-sm text-slate-800 truncate">
-              {ride.pickup_address || ride.pickup_location || '—'}
+      {/* Locations - Hidden for Errands */}
+      {!isErrandService(ride.service_type) && (
+        <div className="space-y-2 mb-3">
+          <div className="flex items-start gap-2">
+            <MapPin className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-slate-500">Pickup</div>
+              <div className="text-sm text-slate-800 truncate">
+                {ride.pickup_address || ride.pickup_location || '—'}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <MapPin className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-slate-500">Destination</div>
+              <div className="text-sm text-slate-800 truncate">
+                {ride.dropoff_address || ride.dropoff_location || '—'}
+              </div>
             </div>
           </div>
         </div>
-        <div className="flex items-start gap-2">
-          <MapPin className="w-4 h-4 text-red-600 mt-0.5 flex-shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs text-slate-500">Destination</div>
-            <div className="text-sm text-slate-800 truncate">
-              {ride.dropoff_address || ride.dropoff_location || '—'}
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* ETA Info */}
       {ride.estimated_arrival_time && (

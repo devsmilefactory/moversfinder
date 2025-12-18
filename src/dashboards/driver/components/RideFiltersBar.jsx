@@ -3,10 +3,12 @@
  * 
  * Provides ride type and schedule type filters with pagination controls.
  * Uses dropdown menus like the user rides page.
+ * Respects feature flags - only shows enabled ride timing options
  */
 
 import React from 'react';
 import { ChevronLeft, ChevronRight, RotateCw } from 'lucide-react';
+import { FEATURE_FLAGS } from '../../../config/featureFlags';
 
 const RideFiltersBar = ({
   rideTypeFilter,
@@ -30,10 +32,16 @@ const RideFiltersBar = ({
 
   const scheduleTypes = [
     { value: 'ALL', label: 'All Types' },
-    { value: 'INSTANT', label: 'Instant' },
-    { value: 'SCHEDULED', label: 'Scheduled' },
-    { value: 'RECURRING', label: 'Recurring' }
+    { value: 'INSTANT', label: 'Instant' }
   ];
+  
+  // Only add scheduled/recurring if feature flags are enabled
+  if (FEATURE_FLAGS.SCHEDULED_RIDES_ENABLED) {
+    scheduleTypes.push({ value: 'SCHEDULED', label: 'Scheduled' });
+  }
+  if (FEATURE_FLAGS.RECURRING_RIDES_ENABLED) {
+    scheduleTypes.push({ value: 'RECURRING', label: 'Recurring' });
+  }
 
   return (
     <div className="bg-white border-b border-gray-200 px-2 py-1">

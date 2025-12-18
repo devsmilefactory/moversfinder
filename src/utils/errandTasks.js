@@ -277,7 +277,7 @@ export const estimateErrandTask = async ({ startPoint, destinationPoint }) => {
     durationMinutes = Math.round((distanceKm / 35) * 60);
   }
 
-  const cost = distanceKm ? (calculateEstimatedFareV2({ distanceKm }) ?? 0) : 0;
+  const cost = distanceKm ? ((await calculateEstimatedFareV2({ distanceKm })) ?? 0) : 0;
 
   return {
     distanceKm: Math.round((distanceKm || 0) * 10) / 10,

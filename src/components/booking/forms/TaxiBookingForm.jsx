@@ -59,13 +59,31 @@ const TaxiBookingForm = ({
         <FormSelect
           label="Vehicle Type"
           value={serviceData.vehicleType || 'sedan'}
-          onChange={(value) => handleServiceChange('vehicleType', value)}
+          onChange={(value) => {
+            handleServiceChange('vehicleType', value);
+            // Auto-set passenger count based on vehicle type
+            const vehicleLimits = {
+              'sedan': { min: 1, max: 2 }, // <3 passengers (max 2)
+              'mpv': { min: 4, max: 5 },
+              'large-mpv': { min: 5, max: 7 }
+            };
+            const limits = vehicleLimits[value];
+            if (limits) {
+              const currentPassengers = formData.passengers || 1;
+              // Set to max if current is outside range, otherwise keep current if valid
+              const newPassengers = currentPassengers < limits.min 
+                ? limits.min 
+                : currentPassengers > limits.max 
+                ? limits.max 
+                : currentPassengers;
+              handleFormChange('passengers', newPassengers);
+            }
+          }}
           error={errors.vehicleType}
           options={[
-            { value: 'sedan', label: 'Sedan (1-3 passengers)' },
-            { value: 'mpv', label: 'MPV/SUV (1-5 passengers)' },
-            { value: 'large-mpv', label: 'Large MPV (1-7 passengers)' },
-            { value: 'combi', label: 'Combi/Hiace (1-14 passengers)' }
+            { value: 'sedan', label: 'Sedan/Hatchback (<3 passengers)' },
+            { value: 'mpv', label: 'MPV/SUV (4-5 passengers)' },
+            { value: 'large-mpv', label: 'Large MPV (5-7 passengers)' }
           ]}
         />
 
@@ -73,9 +91,24 @@ const TaxiBookingForm = ({
           label="Number of Passengers"
           type="number"
           value={formData.passengers || 1}
-          onChange={(value) => handleFormChange('passengers', parseInt(value) || 1)}
-          min={1}
-          max={14}
+          onChange={(value) => {
+            const numValue = parseInt(value) || 1;
+            // Validate against vehicle type limits
+            const vehicleLimits = {
+              'sedan': { min: 1, max: 2 },
+              'mpv': { min: 4, max: 5 },
+              'large-mpv': { min: 5, max: 7 }
+            };
+            const limits = vehicleLimits[serviceData.vehicleType || 'sedan'];
+            if (limits) {
+              const clampedValue = Math.max(limits.min, Math.min(limits.max, numValue));
+              handleFormChange('passengers', clampedValue);
+            } else {
+              handleFormChange('passengers', numValue);
+            }
+          }}
+          min={serviceData.vehicleType === 'sedan' ? 1 : serviceData.vehicleType === 'mpv' ? 4 : serviceData.vehicleType === 'large-mpv' ? 5 : 1}
+          max={serviceData.vehicleType === 'sedan' ? 2 : serviceData.vehicleType === 'mpv' ? 5 : serviceData.vehicleType === 'large-mpv' ? 7 : 7}
           error={errors.passengers}
           required
         />

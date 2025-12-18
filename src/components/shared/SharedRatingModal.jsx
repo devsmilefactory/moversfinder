@@ -73,9 +73,9 @@ const SharedRatingModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-slate-200 p-4 flex items-center justify-between">
+      <div className="bg-white rounded-2xl max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+        {/* Fixed Header */}
+        <div className="bg-white border-b border-slate-200 p-4 flex items-center justify-between shrink-0">
           <h2 className="text-lg font-bold text-slate-800">
             {isPassenger ? 'Rate Your Ride' : 'Rate Your Trip'}
           </h2>
@@ -87,8 +87,8 @@ const SharedRatingModal = ({
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-6">
+        {/* Scrollable Center Content */}
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
           {/* Trip Summary */}
           {ride && (
             <div className="mb-6 bg-slate-50 rounded-lg p-4">
@@ -207,20 +207,22 @@ const SharedRatingModal = ({
               )}
             </div>
           )}
+        </div>
 
-          {/* Actions */}
+        {/* Fixed Bottom Footer Content */}
+        <div className="bg-slate-50 border-t border-slate-200 p-4 shrink-0">
           <div className="flex gap-3">
             <button
               onClick={onClose}
               disabled={submitting}
-              className="flex-1 px-6 py-3 border-2 border-slate-300 text-slate-700 rounded-lg font-semibold hover:bg-slate-50 transition-colors disabled:opacity-50"
+              className="flex-1 px-6 py-3 border-2 border-slate-300 text-slate-700 rounded-xl font-bold hover:bg-slate-100 transition-colors disabled:opacity-50"
             >
               Skip
             </button>
             <button
               onClick={handleSubmit}
               disabled={submitting || rating === 0}
-              className="flex-1 px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-500 text-slate-900 rounded-lg font-semibold hover:from-yellow-500 hover:to-yellow-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 px-6 py-3 bg-gradient-to-r from-yellow-400 to-yellow-500 text-slate-900 rounded-xl font-bold hover:from-yellow-500 hover:to-yellow-600 shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? (
                 <span className="inline-flex items-center gap-2">

@@ -22,18 +22,21 @@ const CorporateBookingPage = React.lazy(() => import('./dashboards/client/pages/
 // Individual Pages
 const IndividualRidesPage = React.lazy(() => import('./dashboards/client/pages/IndividualRidesPage'));
 const IndividualProfilePage = React.lazy(() => import('./dashboards/client/pages/IndividualProfilePage'));
+const PassengerInvoicesPage = React.lazy(() => import('./dashboards/shared/InvoicesPage'));
 
 // Corporate Pages
 const CorporateDashboardPage = React.lazy(() => import('./dashboards/client/pages/CorporateDashboardPage'));
 const CorporateEmployeesPage = React.lazy(() => import('./dashboards/client/pages/CorporateEmployeesPage'));
 const CorporateRidesPage = React.lazy(() => import('./dashboards/client/pages/CorporateRidesPage'));
 const CorporateProfilePage = React.lazy(() => import('./dashboards/client/pages/CorporateProfilePage'));
+const CorporateInvoicesPage = React.lazy(() => import('./dashboards/shared/InvoicesPage'));
 
 // Driver Pages
 const RideRequestsPage = React.lazy(() => import('./dashboards/driver/pages/RideRequestsPage'));
 const EarningsPage = React.lazy(() => import('./dashboards/driver/pages/EarningsPage'));
 const MyRidesPage = React.lazy(() => import('./dashboards/driver/pages/MyRidesPage'));
 const ProfilePage = React.lazy(() => import('./dashboards/driver/pages/ProfilePage'));
+const DriverInvoicesPage = React.lazy(() => import('./dashboards/shared/InvoicesPage'));
 
 // Status Pages
 const IndividualStatusPage = React.lazy(() => import('./pages/status/IndividualStatusPage'));
@@ -213,6 +216,18 @@ const AppRoutes = () => {
         }
       />
 
+      {/* Individual Invoices */}
+      <Route
+        path="/user/invoices"
+        element={
+          <ProtectedRoute requiredProfile="individual">
+            <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>}>
+              <PassengerInvoicesPage profileType="individual" />
+            </React.Suspense>
+          </ProtectedRoute>
+        }
+      />
+
       {/* Individual Profile */}
       <Route
         path="/user/profile"
@@ -244,6 +259,18 @@ const AppRoutes = () => {
           <ProtectedRoute requiredProfile="corporate">
             <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>}>
               <CorporateRidesPage />
+            </React.Suspense>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Corporate Invoices */}
+      <Route
+        path="/corporate/invoices"
+        element={
+          <ProtectedRoute requiredProfile="corporate">
+            <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>}>
+              <CorporateInvoicesPage profileType="corporate" />
             </React.Suspense>
           </ProtectedRoute>
         }
@@ -298,6 +325,18 @@ const AppRoutes = () => {
           <ProtectedRoute requiredProfile="driver">
             <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>}>
               <MyRidesPage />
+            </React.Suspense>
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Driver Invoices */}
+      <Route
+        path="/driver/invoices"
+        element={
+          <ProtectedRoute requiredProfile="driver">
+            <React.Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>}>
+              <DriverInvoicesPage profileType="driver" />
             </React.Suspense>
           </ProtectedRoute>
         }

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Map, LocateFixed } from 'lucide-react';
 import AddressAutocomplete from '../../components/maps/AddressAutocomplete';
 import LocationPicker from '../../components/maps/LocationPicker';
 import { getCurrentLocation } from '../../utils/locationServices';
@@ -228,12 +229,52 @@ const LocationInput = ({
 
   return (
     <div className={`mb-4 ${className}`}>
-      {/* Label */}
+      {/* Label with Action Buttons */}
       {label && (
-        <label className="block text-sm font-semibold text-slate-800 mb-2">
-          {label}
-          {required && <span className="text-red-500 ml-1">*</span>}
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-semibold text-slate-800">
+            {label}
+            {required && <span className="text-red-500 ml-1">*</span>}
+          </label>
+          
+          {/* Compact Action Buttons - Next to Label */}
+          <div className="flex items-center gap-1.5">
+            {/* Current Location Button */}
+            <button
+              type="button"
+              onClick={handleCurrentLocation}
+              disabled={isDetectingLocation}
+              className="flex flex-col items-center justify-center px-2.5 py-1.5 hover:bg-blue-50 disabled:bg-slate-50 disabled:cursor-not-allowed rounded transition-colors border border-transparent hover:border-blue-200 disabled:border-slate-200 min-w-[48px]"
+              title="Use current location"
+            >
+              {isDetectingLocation ? (
+                <>
+                  <LocateFixed className="w-4 h-4 text-slate-400 animate-spin" />
+                  <span className="text-[11px] text-slate-400 leading-tight mt-1">Detecting</span>
+                </>
+              ) : (
+                <>
+                  <LocateFixed className="w-4 h-4 text-blue-600" />
+                  <span className="text-[11px] text-blue-600 leading-tight mt-1 font-medium">Current</span>
+                </>
+              )}
+            </button>
+
+            {/* Vertical Divider Line */}
+            <div className="h-7 w-px bg-slate-300"></div>
+
+            {/* Select on Map Button */}
+            <button
+              type="button"
+              onClick={handleMapSelect}
+              className="flex flex-col items-center justify-center px-2.5 py-1.5 hover:bg-slate-50 rounded transition-colors border border-transparent hover:border-slate-200 min-w-[48px]"
+              title="Select on map"
+            >
+              <Map className="w-4 h-4 text-slate-600" />
+              <span className="text-[11px] text-slate-600 leading-tight mt-1 font-medium">Map</span>
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Main Input Field - Using AddressAutocomplete */}
@@ -305,37 +346,6 @@ const LocationInput = ({
             </div>
           </div>
         )}
-      </div>
-
-      {/* Input Method Buttons - Under Input with Text Labels */}
-      <div className="flex gap-2 mt-2">
-        <button
-          type="button"
-          onClick={handleCurrentLocation}
-          disabled={isDetectingLocation}
-          className="flex-1 px-3 py-2 bg-blue-50 hover:bg-blue-100 disabled:bg-slate-100 disabled:cursor-not-allowed rounded-lg text-xs font-medium text-blue-700 disabled:text-slate-400 transition-colors flex items-center justify-center gap-2 border border-blue-200"
-        >
-          {isDetectingLocation ? (
-            <>
-              <span className="animate-spin text-sm">⌛</span>
-              <span>Detecting...</span>
-            </>
-          ) : (
-            <>
-              <span className="text-sm">📍</span>
-              <span>Current Location</span>
-            </>
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={handleMapSelect}
-          className="flex-1 px-3 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-medium text-slate-700 transition-colors flex items-center justify-center gap-2 border border-slate-200"
-        >
-          <span className="text-sm">🗺️</span>
-          <span>Select on Map</span>
-        </button>
       </div>
 
       {/* Map Modal */}

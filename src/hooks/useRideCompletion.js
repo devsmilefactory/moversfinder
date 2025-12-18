@@ -36,21 +36,7 @@ export function useRideCompletion() {
       try {
         const now = new Date().toISOString();
 
-        const extraUpdates = { ...extraRideUpdates };
-        delete extraUpdates.ride_status;
-        delete extraUpdates.status;
-
-        const rideUpdate = {
-          ride_status: RIDE_STATUSES.TRIP_COMPLETED,
-          status: RIDE_STATUSES.TRIP_COMPLETED,
-          trip_completed_at: now,
-          actual_dropoff_time: now,
-          payment_status: 'paid',
-          status_updated_at: now,
-          ...extraUpdates,
-        };
-
-        // Get ride details first to check if it's a recurring ride
+        // 1. Get ride details first to check for recurring rides and other metadata
         const { data: rideData, error: rideFetchError } = await supabase
           .from('rides')
           .select('*, series_id, number_of_trips, estimated_cost, payment_method, company_id')
@@ -62,23 +48,49 @@ export function useRideCompletion() {
           throw rideFetchError;
         }
 
+        // 2. Prepare metadata updates (separate from state transition)
+        const metadataUpdates = {
+          trip_completed_at: now,
+          actual_dropoff_time: now,
+          payment_status: 'paid', // Or pending based on business logic, keeping 'paid' as per existing
+          ...extraRideUpdates,
+        };
+
         // For recurring rides, calculate per-trip cost if needed
         let tripCost = parseFloat(rideData.fare || rideData.estimated_cost || 0);
         if (rideData.number_of_trips && rideData.number_of_trips > 1 && rideData.estimated_cost) {
-          // This is a recurring ride - use per-trip cost
           tripCost = parseFloat(rideData.estimated_cost) / rideData.number_of_trips;
-          // Update the fare field with the per-trip cost for this specific trip
-          rideUpdate.fare = tripCost;
+          metadataUpdates.fare = tripCost;
         }
 
-        const { error: rideError } = await supabase
+        // 3. EXECUTE STATE TRANSITION VIA RPC (Single Source of Truth)
+        // Move state to COMPLETED_INSTANCE
+        const { data: transitionData, error: transitionError } = await supabase.rpc('transition_ride_status', {
+          p_ride_id: rideId,
+          p_new_state: 'COMPLETED_INSTANCE', 
+          p_new_sub_state: 'TRIP_COMPLETED',
+          p_actor_type: 'DRIVER',
+          p_actor_id: user?.id
+        });
+
+        if (transitionError) {
+          console.error('RPC Transition Error:', transitionError);
+          throw transitionError;
+        }
+
+        if (!transitionData?.success) {
+          throw new Error(transitionData?.error || 'State transition failed');
+        }
+
+        // 4. Update additional metadata
+        const { error: metadataError } = await supabase
           .from('rides')
-          .update(rideUpdate)
+          .update(metadataUpdates)
           .eq('id', rideId);
 
-        if (rideError) {
-          console.error('Error completing ride:', rideError);
-          throw rideError;
+        if (metadataError) {
+          console.error('Error updating ride metadata:', metadataError);
+          // Don't fail the whole process if metadata update fails after transition
         }
 
         // Handle automatic deduction for corporate account_balance payments

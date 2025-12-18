@@ -1,0 +1,21 @@
+# Project Context & Phase Constraints
+
+## Current Phase: Focus on Ride Types & Instant Booking
+**Goal**: Stabilize core ride types (Taxi, Courier, Errands, School Run) using Instant Booking ONLY.
+
+### Persistent Constraints (ALWAYS FOLLOW)
+1. **No Scheduling/Recurring**: For this phase, all scheduling and recurring logic must remain disabled.
+2. **Feature Flags**: Respect `src/config/featureFlags.js`. Do NOT enable `SCHEDULED_RIDES_ENABLED` or `RECURRING_RIDES_ENABLED` unless explicitly asked.
+3. **Preserve Code**: Do NOT delete existing scheduling or recurring code. It is kept for future use. Just ensure it is not active in the current UI/Flow.
+4. **Instant-Only Flow**: All ride creation should use `ride_timing: 'instant'`.
+5. **Database Schema**: Maintain compatibility with the full schema even while using a subset of features.
+
+### Reference Documents
+- `SIMPLIFICATION_GUIDE.md`: Detailed guide on how features are disabled and how to re-enable them.
+- `IMPLEMENTATION_SUMMARY.md`: Summary of recent architectural changes.
+
+### Field Naming Standards (Database Source of Truth)
+- Use `ride_status` for life-cycle state.
+- Use `scheduled_datetime` for pickup time (even if null for instant).
+- Use `number_of_passengers` for passenger count.
+- Use `courier_packages` (JSON) for multi-package data.

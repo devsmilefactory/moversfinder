@@ -1,8 +1,10 @@
 import React from 'react';
 import { Filter, Car, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Calendar, Repeat } from 'lucide-react';
+import { FEATURE_FLAGS } from '../../../config/featureFlags';
 
 /**
  * Filter bar for rides - allows filtering by service type and ride timing
+ * Respects feature flags - only shows enabled ride timing options
  */
 const RideFilterBar = ({ filters, onFilterChange }) => {
   const serviceTypes = [
@@ -16,10 +18,16 @@ const RideFilterBar = ({ filters, onFilterChange }) => {
 
   const rideTimings = [
     { value: 'all', label: 'All Types', icon: Filter },
-    { value: 'instant', label: 'Instant', icon: Zap },
-    { value: 'scheduled_single', label: 'Scheduled', icon: Calendar },
-    { value: 'scheduled_recurring', label: 'Recurring', icon: Repeat }
+    { value: 'instant', label: 'Instant', icon: Zap }
   ];
+  
+  // Only add scheduled/recurring if feature flags are enabled
+  if (FEATURE_FLAGS.SCHEDULED_RIDES_ENABLED) {
+    rideTimings.push({ value: 'scheduled_single', label: 'Scheduled', icon: Calendar });
+  }
+  if (FEATURE_FLAGS.RECURRING_RIDES_ENABLED) {
+    rideTimings.push({ value: 'scheduled_recurring', label: 'Recurring', icon: Repeat });
+  }
 
   return (
     <div className="bg-white border-b border-slate-200 px-2 py-1.5">

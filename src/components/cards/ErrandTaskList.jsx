@@ -6,9 +6,10 @@
  */
 
 import React from 'react';
-import { CheckCircle, Circle, Clock, DollarSign } from 'lucide-react';
+import { CheckCircle, Circle, Clock, DollarSign, MapPin } from 'lucide-react';
 import { summarizeErrandTasks, describeTaskState, ERRAND_TASK_STATES } from '../../utils/errandTasks';
-import { calculateErrandTotalCost } from '../../utils/errandCostHelpers';
+import { calculateErrandTotalCost, calculateErrandTotalDistance, calculateErrandAverageDistance } from '../../utils/errandCostHelpers';
+import { formatDistance } from '../../utils/formatters';
 
 /**
  * Get task status icon
@@ -59,10 +60,16 @@ const ErrandTaskList = ({
   showCosts = true
 }) => {
   const summary = summarizeErrandTasks(tasks);
+  const parsedTasks = summary.allTasks || [];
   
   // Calculate total cost from tasks
-  const totalCost = showCosts ? calculateErrandTotalCost(tasks) : null;
-  const hasCosts = tasks && tasks.some(task => task.cost && task.cost > 0);
+  const totalCost = showCosts ? calculateErrandTotalCost(parsedTasks) : null;
+  const hasCosts = parsedTasks.some(task => task.cost && task.cost > 0);
+  
+  // Calculate total and average distance
+  const totalDistance = calculateErrandTotalDistance(parsedTasks);
+  const averageDistance = summary.total > 0 ? calculateErrandAverageDistance(parsedTasks) : 0;
+  const hasDistances = totalDistance > 0;
 
   if (!summary || summary.total === 0) {
     return (
@@ -83,6 +90,9 @@ const ErrandTaskList = ({
             </p>
             <p className="text-xs text-emerald-700">
               {summary.completed} completed • {summary.remaining} remaining
+              {hasDistances && (
+                <> • {formatDistance(totalDistance)} total</>
+              )}
             </p>
           </div>
           <div className="flex flex-col items-end gap-1">
@@ -96,6 +106,14 @@ const ErrandTaskList = ({
                 <DollarSign className="w-3.5 h-3.5 text-green-600" />
                 <span className="text-sm font-bold text-green-600">
                   ${totalCost.toFixed(2)}
+                </span>
+              </div>
+            )}
+            {hasDistances && (
+              <div className="flex items-center gap-1">
+                <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                <span className="text-xs font-semibold text-blue-600">
+                  {formatDistance(averageDistance)} avg
                 </span>
               </div>
             )}
@@ -179,6 +197,29 @@ const ErrandTaskList = ({
                 ${totalCost.toFixed(2)}
               </p>
               <p className="text-xs text-green-600">Total</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Distance Breakdown Section */}
+      {hasDistances && !compact && (
+        <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-bold text-blue-800 flex items-center gap-1">
+                <MapPin className="w-4 h-4" />
+                Distance Breakdown
+              </p>
+              <p className="text-xs text-blue-700">
+                {summary.total} task{summary.total === 1 ? '' : 's'} • {formatDistance(averageDistance)} avg per task
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-lg font-bold text-blue-600">
+                {formatDistance(totalDistance)}
+              </p>
+              <p className="text-xs text-blue-600">Total Distance</p>
             </div>
           </div>
         </div>

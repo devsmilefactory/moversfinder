@@ -162,15 +162,15 @@ const DashboardSidebar = ({ userType, user, isOpen, isMobileOpen, onClose }) => 
           </div>
         )}
 
-        {/* Switch Profile Button - Driver only, separate from navigation */}
-        {userType === 'driver' && isOpen && (
+        {/* Switch Profile Button - separate from navigation */}
+        {isOpen && (userType === 'driver' || userType === 'individual') && (
           <div className="px-3 mt-4">
             <button
               onClick={() => {/* TODO: Add profile switcher */}}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white text-slate-900 font-semibold shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors"
             >
               <span className="text-yellow-500 text-lg">🔄</span>
-              <span>Switch Profile</span>
+              <span>{userType === 'driver' ? 'Switch to Passenger Profile' : 'Switch to Driver Profile'}</span>
             </button>
           </div>
         )}
@@ -342,15 +342,15 @@ const DashboardSidebar = ({ userType, user, isOpen, isMobileOpen, onClose }) => 
           </div>
         )}
 
-        {/* Switch Profile Button - Driver only, separate from navigation */}
-        {userType === 'driver' && (
+        {/* Switch Profile Button - separate from navigation */}
+        {(userType === 'driver' || userType === 'individual') && (
           <div className="px-3 mt-4">
             <button
               onClick={() => {/* TODO: Add profile switcher */}}
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white text-slate-900 font-semibold shadow-sm border border-slate-200 hover:bg-slate-50 transition-colors"
             >
               <span className="text-yellow-500 text-lg">🔄</span>
-              <span>Switch Profile</span>
+              <span>{userType === 'driver' ? 'Switch to Passenger Profile' : 'Switch to Driver Profile'}</span>
             </button>
           </div>
         )}

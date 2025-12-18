@@ -116,6 +116,7 @@ const DriverRideDetailsModal = ({ open, onClose, ride }) => {
   const [passenger, setPassenger] = useState({ name: null, phone: null });
   const isActive = !['cancelled', 'completed'].includes(ride?.ride_status);
   const recurringInfo = useMemo(() => buildRecurringInfo(ride), [ride]);
+  const costDisplay = useMemo(() => getRideCostDisplay(ride), [ride]);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,16 +161,20 @@ const DriverRideDetailsModal = ({ open, onClose, ride }) => {
             ride.service_type === 'school_run' ? 'School Run' :
             ride.service_type || 'Ride'
           } />
-          <Row label="Pickup" value={ride.pickup_address || ride.pickup_location} />
-          <Row label="Dropoff" value={ride.dropoff_address || ride.dropoff_location} />
+          {ride.service_type !== 'errands' && (
+            <>
+              <Row label="Pickup" value={ride.pickup_address || ride.pickup_location} />
+              <Row label="Dropoff" value={ride.dropoff_address || ride.dropoff_location} />
+            </>
+          )}
           {ride.scheduled_datetime && (
             <Row label="Scheduled" value={new Date(ride.scheduled_datetime).toLocaleString()} />
           )}
           {(ride.scheduled_date && ride.scheduled_time) && (
             <Row label="Scheduled" value={`${ride.scheduled_date} ${ride.scheduled_time}`} />
           )}
-          {ride.special_instructions && (
-            <Row label="Instructions" value={ride.special_instructions} />
+          {(ride.special_requests || ride.special_instructions) && (
+            <Row label="Instructions" value={ride.special_requests || ride.special_instructions} />
           )}
           {ride.courier_package_details && (
             <Row label="Package" value={ride.courier_package_details} />

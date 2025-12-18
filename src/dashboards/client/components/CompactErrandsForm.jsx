@@ -3,6 +3,7 @@ import LocationInput from '../../shared/LocationInput';
 import FormInput, { FormSelect, FormTextarea, FormCheckbox } from '../../shared/FormInput';
 import Button from '../../shared/Button';
 import { getTaskAddressValue, estimateErrandTask } from '../../../utils/errandTasks';
+import { useCorporateInvoiceApproval } from '../../../hooks/useCorporateInvoiceApproval';
 
 /**
  * Compact Errands Service Booking Form
@@ -12,6 +13,7 @@ import { getTaskAddressValue, estimateErrandTask } from '../../../utils/errandTa
  */
 
 const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimates = null, taskTotalCost = 0 }) => {
+  const { isApproved, isLoading } = useCorporateInvoiceApproval();
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [editingTaskIndex, setEditingTaskIndex] = useState(null);
   const [taskFormData, setTaskFormData] = useState({
@@ -27,6 +29,15 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+
+    // Check approval if invoice payment method is selected
+    if (name === 'paymentMethod' && value === 'invoice') {
+      if (!isLoading && !isApproved) {
+        alert('⚠️ Corporate Invoice payment requires an approved corporate account. Please apply for one in your Profile under Payment Methods.');
+        return; // Prevent selection
+      }
+    }
+
     onChange(prev => ({ ...prev, [name]: value }));
   };
 
@@ -235,6 +246,29 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
                 <span>{taskEstimates.totalDurationMinutes ?? 0} min</span>
               </div>
             </div>
+          )}
+        </div>
+
+        {/* Payment */}
+        <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+          <FormSelect
+            label="Payment Method"
+            name="paymentMethod"
+            value={formData.paymentMethod || 'cash'}
+            onChange={handleChange}
+            required
+            options={[
+              { value: 'cash', label: 'Cash' },
+              { value: 'invoice', label: 'Corporate Invoice' + (!isLoading && !isApproved ? ' (Requires Approval)' : '') },
+              { value: 'ecocash', label: 'EcoCash' },
+              { value: 'onemoney', label: 'OneMoney' },
+              { value: 'card', label: 'Card' }
+            ]}
+          />
+          {formData.paymentMethod === 'invoice' && !isLoading && !isApproved && (
+            <p className="text-xs text-red-600 mt-1">
+              ⚠️ Corporate Invoice requires approval. Please apply in your Profile.
+            </p>
           )}
         </div>
 

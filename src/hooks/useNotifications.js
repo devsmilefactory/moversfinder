@@ -16,6 +16,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../components/ui/ToastProvider';
+import { subscribePostgresChanges, subscribeChannelStatus } from '../lib/realtimeRegistry';
 
 const NOTIFICATION_SOUND = '/notification.mp3';
 const MAX_NOTIFICATIONS = 100;
@@ -67,6 +68,9 @@ export function useNotifications(userId, options = {}) {
   const retryAttempts = useRef(new Map());
   const channelRef = useRef(null);
   const audioRef = useRef(null);
+  const lastNotificationTime = useRef(new Map()); // Throttle duplicate notifications
+  const handleNewNotificationRef = useRef(null);
+  const handleNotificationUpdateRef = useRef(null);
 
   // Initialize audio for sound notifications
   useEffect(() => {
@@ -225,12 +229,24 @@ export function useNotifications(userId, options = {}) {
   const handleNewNotification = useCallback((payload) => {
     const notification = normalizeNotification(payload.new);
     
-    // Deduplication check
+    // Deduplication check - prevent processing same notification twice
     if (seenNotificationIds.current.has(notification.id)) {
       return;
     }
 
-    console.log('📬 New notification received:', notification);
+    // Throttle duplicate notifications by content (prevent same notification shown multiple times within 2 seconds)
+    const notificationKey = `${notification.title}-${notification.message}`;
+    const lastTime = lastNotificationTime.current.get(notificationKey) || 0;
+    const now = Date.now();
+    if (now - lastTime < 2000) {
+      // Same notification content within 2 seconds - skip
+      return;
+    }
+    lastNotificationTime.current.set(notificationKey, now);
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useNotifications.js:233',message:'New notification received',data:{notificationId:notification?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
 
     // Mark as seen
     seenNotificationIds.current.add(notification.id);
@@ -260,6 +276,10 @@ export function useNotifications(userId, options = {}) {
     });
   }, [maxNotifications, autoMarkRead, showNotification, processNotificationQueue]);
 
+  useEffect(() => {
+    handleNewNotificationRef.current = handleNewNotification;
+  }, [handleNewNotification]);
+
   // Handle notification update (e.g., marked as read)
   const handleNotificationUpdate = useCallback((payload) => {
     const updatedNotification = normalizeNotification(payload.new);
@@ -276,6 +296,10 @@ export function useNotifications(userId, options = {}) {
     }
   }, []);
 
+  useEffect(() => {
+    handleNotificationUpdateRef.current = handleNotificationUpdate;
+  }, [handleNotificationUpdate]);
+
   // Set up real-time subscription
   useEffect(() => {
     if (!userId) {
@@ -286,50 +310,49 @@ export function useNotifications(userId, options = {}) {
     // Load initial notifications
     loadNotifications();
 
-    // Set up real-time subscription
-    const channel = supabase
-      .channel(`notifications-${userId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${userId}`,
-        },
-        handleNewNotification
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${userId}`,
-        },
-        handleNotificationUpdate
-      )
-      .subscribe((status) => {
-        console.log('📡 Notification subscription status:', status);
-        setSubscriptionStatus(status);
-        
-        if (status === 'SUBSCRIBED') {
-          // Process any queued notifications
-          processNotificationQueue();
-        }
-      });
+    const channelName = `notifications-${userId}`;
 
-    channelRef.current = channel;
+    const unsubStatus = subscribeChannelStatus(channelName, (status) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useNotifications.js:313',message:'Notification subscription status',data:{status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      setSubscriptionStatus(status);
+      if (status === 'SUBSCRIBED') {
+        processNotificationQueue();
+      }
+    });
+
+    const unsubInsert = subscribePostgresChanges({
+      channelName,
+      table: 'notifications',
+      event: 'INSERT',
+      filter: `user_id=eq.${userId}`,
+      listener: (payload) => handleNewNotificationRef.current?.(payload),
+    });
+
+    const unsubUpdate = subscribePostgresChanges({
+      channelName,
+      table: 'notifications',
+      event: 'UPDATE',
+      filter: `user_id=eq.${userId}`,
+      listener: (payload) => handleNotificationUpdateRef.current?.(payload),
+    });
+
+    channelRef.current = { unsubStatus, unsubInsert, unsubUpdate };
 
     // Cleanup
     return () => {
-      console.log('📡 Cleaning up notification subscription');
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useNotifications.js:326',message:'Cleaning up notification subscription',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
       if (channelRef.current) {
-        channelRef.current.unsubscribe();
+        try { channelRef.current.unsubInsert?.(); } catch (e) {}
+        try { channelRef.current.unsubUpdate?.(); } catch (e) {}
+        try { channelRef.current.unsubStatus?.(); } catch (e) {}
         channelRef.current = null;
       }
     };
-  }, [userId, loadNotifications, handleNewNotification, handleNotificationUpdate, processNotificationQueue]);
+  }, [userId, loadNotifications, processNotificationQueue]);
 
   // Mark notification as read
   const markAsRead = useCallback(async (notificationId) => {

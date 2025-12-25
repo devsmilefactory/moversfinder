@@ -56,14 +56,9 @@ export async function fetchPassengerRides(
     // Map service type
     const serviceType = rideTypeFilter === 'ALL' ? null : RIDE_TYPE_TO_SERVICE_TYPE[rideTypeFilter];
 
-    // Log RPC call parameters
-    console.log('[Passenger Feed] Calling get_passenger_feed:', {
-      p_user_id: userId,
-      p_feed_category: feedCategory,
-      p_service_type: serviceType,
-      p_limit: pageSize,
-      p_offset: offset
-    });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'passengerRidesApi.js:60',message:'Calling get_passenger_feed',data:{feedCategory,serviceType,page,pageSize},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     const { data, error } = await supabase.rpc('get_passenger_feed', {
       p_user_id: userId,
@@ -86,21 +81,17 @@ export async function fetchPassengerRides(
 
     // Log performance warning if slow
     if (duration > 500) {
-      console.warn('[Passenger Feed] Slow query detected:', {
-        feedCategory,
-        duration: `${duration.toFixed(2)}ms`,
-        resultCount: data?.length || 0
-      });
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'passengerRidesApi.js:88',message:'Slow query detected',data:{feedCategory,duration:duration.toFixed(2),resultCount:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
     }
 
     // Get total count for pagination
     const count = data?.length || 0;
 
-    console.log('[Passenger Feed] Success:', {
-      feedCategory,
-      resultCount: count,
-      duration: `${duration.toFixed(2)}ms`
-    });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'passengerRidesApi.js:99',message:'Fetch success',data:{feedCategory,resultCount:count,duration:duration.toFixed(2)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     return { data: data || [], error: null, count };
   } catch (error) {

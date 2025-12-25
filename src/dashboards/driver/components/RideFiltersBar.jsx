@@ -43,6 +43,27 @@ const RideFiltersBar = ({
     scheduleTypes.push({ value: 'RECURRING', label: 'Recurring' });
   }
 
+  // Quick filter presets (ported conceptually from legacy flow)
+  // NOTE: We only apply these to existing supported filters (rideType + schedule).
+  // We intentionally do NOT introduce legacy "status" filtering or scheduling logic.
+  const quickFilters = [
+    { key: 'all', label: 'All', rideType: 'ALL' },
+    { key: 'taxi', label: 'Taxi', rideType: 'TAXI' },
+    { key: 'courier', label: 'Courier', rideType: 'COURIER' },
+    { key: 'errands', label: 'Errands', rideType: 'ERRANDS' },
+    { key: 'school', label: 'School', rideType: 'SCHOOL_RUN' },
+  ];
+
+  const applyQuickFilter = (preset) => {
+    if (!preset) return;
+    if (preset.rideType) onRideTypeChange?.(preset.rideType);
+    // Keep instant-only flow: prefer INSTANT unless user explicitly chose otherwise
+    // (scheduled/recurring remain feature-flagged and disabled in this phase).
+    if (scheduleFilter !== 'INSTANT' && scheduleTypes.some(s => s.value === 'INSTANT')) {
+      onScheduleChange?.('INSTANT');
+    }
+  };
+
   return (
     <div className="bg-white border-b border-gray-200 px-2 py-1">
       <div className="flex items-center gap-1.5 overflow-x-auto mb-1 flex-nowrap scrollbar-hide">
@@ -108,6 +129,28 @@ const RideFiltersBar = ({
             Clear
           </button>
         )}
+      </div>
+
+      {/* Quick Filters (chips) */}
+      <div className="flex items-center gap-1 overflow-x-auto pb-1 flex-nowrap scrollbar-hide">
+        {quickFilters.map((preset) => {
+          const isActive = preset.rideType === rideTypeFilter;
+          return (
+            <button
+              key={preset.key}
+              type="button"
+              onClick={() => applyQuickFilter(preset)}
+              className={`flex-shrink-0 px-2 py-1 rounded-full text-[10px] font-semibold border transition-colors ${
+                isActive
+                  ? 'bg-yellow-400 border-yellow-400 text-slate-900'
+                  : 'bg-white border-gray-200 text-gray-700 hover:bg-yellow-50 hover:border-yellow-300'
+              }`}
+              aria-pressed={isActive}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Pagination Controls */}

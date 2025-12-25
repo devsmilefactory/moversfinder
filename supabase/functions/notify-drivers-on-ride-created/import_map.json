@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "@/shared/": "../_shared/",
+    "@/shared/client.ts": "../_shared/client.ts",
+    "@/shared/cors.ts": "../_shared/cors.ts",
+    "@/shared/driverDiscovery.ts": "../_shared/driverDiscovery.ts"
+  }
+}
+
+
+

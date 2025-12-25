@@ -53,6 +53,7 @@ export function useRideCompletion() {
           trip_completed_at: now,
           actual_dropoff_time: now,
           payment_status: 'paid', // Or pending based on business logic, keeping 'paid' as per existing
+          ride_status: RIDE_STATUSES.TRIP_COMPLETED,
           ...extraRideUpdates,
         };
 
@@ -138,15 +139,26 @@ export function useRideCompletion() {
           }
         }
 
-        // Mark driver available again if we know the current user is a driver
-        if (user?.id) {
+        // Mark driver available again - use ride's driver_id to ensure we update the correct driver
+        // This handles cases where the completion might be triggered by admin/system
+        const driverId = rideData.driver_id || user?.id;
+        if (driverId) {
           try {
-            await supabase
+            const { error: availError } = await supabase
               .from('driver_locations')
-              .update({ is_available: true })
-              .eq('driver_id', user.id);
+              .update({ 
+                is_available: true,
+                active_ride_id: null 
+              })
+              .eq('driver_id', driverId);
+            
+            if (availError) {
+              console.error('Error updating driver availability after completion:', availError);
+            } else {
+              console.log(`✅ Driver ${driverId} marked as available after ride completion`);
+            }
           } catch (availErr) {
-            console.error('Error updating driver availability after completion:', availErr);
+            console.error('Exception updating driver availability after completion:', availErr);
           }
         }
 

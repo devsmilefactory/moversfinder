@@ -215,9 +215,9 @@ const AddressAutocomplete = ({
           placeholder={placeholder}
           required={required}
           disabled={!ready}
-          className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all ${
-            error ? 'border-red-500' : 'border-slate-300'
-          } ${!ready ? 'bg-slate-100 cursor-not-allowed' : ''}`}
+          className={`w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+            error ? 'border-red-500 bg-red-50' : 'border-blue-200 bg-white'
+          } ${!ready ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
         />
         {(isLoading || !ready) && (
           <div className="absolute right-3 top-1/2 transform -translate-y-1/2">

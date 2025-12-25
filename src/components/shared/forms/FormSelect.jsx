@@ -29,9 +29,9 @@ const FormSelect = ({
 }) => {
   const baseSelectClasses = `
     w-full border rounded-lg transition-all duration-200 
-    focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-transparent
+    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
     ${disabled ? 'bg-slate-100 cursor-not-allowed opacity-60' : 'bg-white cursor-pointer'}
-    ${error ? 'border-red-500 focus:ring-red-400' : warning ? 'border-yellow-500 focus:ring-yellow-400' : 'border-slate-300'}
+    ${error ? 'border-red-500 focus:ring-red-400' : warning ? 'border-yellow-500 focus:ring-yellow-400' : 'border-blue-200'}
   `;
 
   const sizeClasses = {

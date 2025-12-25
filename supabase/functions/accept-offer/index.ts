@@ -25,7 +25,8 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const { offer_id } = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
+    const { offer_id, passenger_id } = body;
     if (!offer_id || typeof offer_id !== 'string') {
       return new Response(JSON.stringify({ success: false, error: 'Missing or invalid offer_id' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
@@ -41,6 +42,8 @@ Deno.serve(async (req: Request) => {
     try {
       // Start transaction
       await client.queryArray('BEGIN');
+      
+      console.log('Processing offer acceptance:', { offer_id, passenger_id });
 
       // Lock the offer and associated ride row for update to prevent race conditions
       const offerRes = await client.queryObject<{ id: string; ride_id: string; driver_id: string; offer_status: string; quoted_price: number }>(
@@ -57,8 +60,8 @@ Deno.serve(async (req: Request) => {
         return new Response(JSON.stringify({ success: false, error: 'Offer is not pending' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
-      const rideRes = await client.queryObject<{ id: string; ride_status: string }>(
-        `SELECT id, ride_status FROM public.rides WHERE id = $1 FOR UPDATE`,
+      const rideRes = await client.queryObject<{ id: string; ride_status: string; user_id: string; driver_id: string | null }>(
+        `SELECT id, ride_status, user_id, driver_id FROM public.rides WHERE id = $1 FOR UPDATE`,
         [offer.ride_id]
       );
       if (rideRes.rows.length === 0) {
@@ -66,6 +69,19 @@ Deno.serve(async (req: Request) => {
         return new Response(JSON.stringify({ success: false, error: 'Ride not found' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       const rideRow = rideRes.rows[0];
+      
+      // Validate passenger owns the ride (security check)
+      if (passenger_id && rideRow.user_id !== passenger_id) {
+        await client.queryArray('ROLLBACK');
+        return new Response(JSON.stringify({ success: false, error: 'Unauthorized: You do not own this ride' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      
+      // Check if ride already has a driver assigned
+      if (rideRow.driver_id !== null && rideRow.driver_id !== undefined) {
+        await client.queryArray('ROLLBACK');
+        return new Response(JSON.stringify({ success: false, error: 'Ride has already been assigned to another driver' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      
       if (rideRow.ride_status !== 'pending') {
         await client.queryArray('ROLLBACK');
         return new Response(JSON.stringify({ success: false, error: 'Ride is no longer pending' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -92,12 +108,36 @@ Deno.serve(async (req: Request) => {
       );
       const acceptedOffer = (acceptedOfferRes.rows as any[])[0];
 
-      // Update ride
+      // Update ride with state + legacy columns to avoid trigger overrides
       const updatedRideRes = await client.queryObject(
-        `UPDATE public.rides SET ride_status = 'accepted', driver_id = $1, fare = $2, status_updated_at = NOW() WHERE id = $3 RETURNING *`,
+        `UPDATE public.rides 
+         SET 
+           ride_status = 'accepted',
+           status = 'accepted',
+           state = 'ACTIVE_PRE_TRIP',
+           execution_sub_state = 'DRIVER_ON_THE_WAY',
+           driver_id = $1, 
+           fare = $2, 
+           status_updated_at = NOW(), 
+           acceptance_status = 'accepted'
+         WHERE id = $3 
+         RETURNING *`,
         [offer.driver_id, offer.quoted_price, offer.ride_id]
       );
       const updatedRide = (updatedRideRes.rows as any[])[0];
+
+      // Mark driver as engaged (set active_ride_id and is_available = false)
+      // Use UPSERT to handle case where driver_locations row doesn't exist
+      await client.queryArray(
+        `INSERT INTO public.driver_locations (driver_id, active_ride_id, is_available, updated_at, coordinates)
+         VALUES ($2, $1, false, NOW(), '{"lat": 0, "lng": 0}'::jsonb)
+         ON CONFLICT (driver_id) 
+         DO UPDATE SET 
+           active_ride_id = $1, 
+           is_available = false, 
+           updated_at = NOW()`,
+        [offer.ride_id, offer.driver_id]
+      );
 
       // Reject competing pending offers
       await client.queryArray(
@@ -117,6 +157,32 @@ Deno.serve(async (req: Request) => {
 
       const notifications: Array<{ user_id: string; title: string; message: string; type: string; notification_type: string; category: string; priority: string; action_url: string }> = [];
 
+      // Notify the accepted driver
+      notifications.push({
+        user_id: offer.driver_id,
+        title: '✅ Bid Accepted',
+        message: 'Your bid has been accepted! Start heading to the pickup location.',
+        type: 'ride',
+        notification_type: 'offer_accepted',
+        category: 'OFFERS',
+        priority: 'HIGH',
+        action_url: `/driver/rides?tab=active`
+      });
+
+      // Notify the passenger
+      if (rideRow.user_id) {
+        notifications.push({
+          user_id: rideRow.user_id,
+          title: '🚗 Driver Assigned',
+          message: 'A driver has been assigned to your ride!',
+          type: 'ride',
+          notification_type: 'ride_activated',
+          category: 'RIDE_PROGRESS',
+          priority: 'HIGH',
+          action_url: `/rides?tab=active`
+        });
+      }
+
       // Notify other drivers who were not accepted
       for (const row of rejectedDriversRes.rows) {
         const driverId = (row as any).driver_id as string;
@@ -126,7 +192,7 @@ Deno.serve(async (req: Request) => {
             title: 'Ride accepted by another driver',
             message: `The ride to ${dropoffText} has been accepted by another driver.`,
             type: 'ride',
-            notification_type: 'OFFER_REJECTED',
+            notification_type: 'offer_rejected',
             category: 'OFFERS',
             priority: 'NORMAL',
             action_url: `/driver/rides?tab=available`
@@ -154,9 +220,11 @@ Deno.serve(async (req: Request) => {
 
       await client.queryArray('COMMIT');
 
+      console.log('Offer accepted successfully:', { offer_id, ride_id: offer.ride_id });
       return new Response(JSON.stringify({ success: true, ride: updatedRide, acceptedOffer }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     } catch (err) {
       try { await client.queryArray('ROLLBACK'); } catch (_) {}
+      console.error('Error accepting offer:', { offer_id, error: err?.message || String(err), stack: err?.stack });
       return new Response(JSON.stringify({ success: false, error: err?.message || String(err) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     } finally {
       await client.end();

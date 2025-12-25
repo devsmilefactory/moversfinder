@@ -19,3 +19,12 @@
 - Use `scheduled_datetime` for pickup time (even if null for instant).
 - Use `number_of_passengers` for passenger count.
 - Use `courier_packages` (JSON) for multi-package data.
+
+### Ride Feed Rules (CRITICAL)
+6. **Mutual Exclusivity**: Instant rides MUST appear in exactly ONE tab (pending, active, completed, or cancelled). A ride cannot appear in multiple tabs simultaneously. The database function `get_passenger_feed` enforces this by:
+   - Pending: `ride_status = 'pending' AND driver_id IS NULL` (no driver assigned)
+   - Active: `ride_status IN ('accepted', 'driver_on_way', 'driver_arrived', 'trip_started') OR (ride_status = 'pending' AND driver_id IS NOT NULL)` (has driver or active status)
+   - Completed: `ride_status IN ('completed', 'trip_completed')`
+   - Cancelled: `ride_status = 'cancelled'`
+
+

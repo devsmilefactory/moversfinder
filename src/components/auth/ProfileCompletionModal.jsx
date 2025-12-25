@@ -11,6 +11,7 @@ import Icon from '../ui/AppIcon';
 import Button from '../ui/Button';
 import useAuthStore from '../../stores/authStore';
 import useProfileCompletion from '../../hooks/useProfileCompletion';
+import useProfileStore from '../../stores/profileStore';
 import IndividualProfileForm from './IndividualProfileForm';
 import CorporateProfileForm from './CorporateProfileForm';
 import DriverProfileForm from './DriverProfileForm';
@@ -20,6 +21,11 @@ const ProfileCompletionModal = () => {
   const [canDismiss, setCanDismiss] = useState(true);
   
   const user = useAuthStore((state) => state.user);
+  const activeProfileType = useProfileStore((state) => state.activeProfileType);
+
+  // Respect the currently selected profile; driver accounts browsing as
+  // passengers should not be forced through driver completion here.
+  const currentProfileType = activeProfileType || user?.user_type || user?.userType;
   const {
     completionPercentage,
     completionStatus,
@@ -66,10 +72,8 @@ const ProfileCompletionModal = () => {
 
   if (!isOpen || !user) return null;
 
-  const userType = user.user_type || user.userType;
-
   // Individual users don't need profile completion (optional)
-  if (userType === 'individual') {
+  if (currentProfileType === 'individual') {
     return (
       <div
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
@@ -155,11 +159,11 @@ const ProfileCompletionModal = () => {
 
         {/* Content */}
         <div className="p-8">
-          {userType === 'corporate' && (
+          {currentProfileType === 'corporate' && (
             <CorporateProfileForm onComplete={handleComplete} canDismiss={canDismiss} />
           )}
           
-          {userType === 'driver' && (
+          {currentProfileType === 'driver' && (
             <DriverProfileForm onComplete={handleComplete} canDismiss={canDismiss} />
           )}
         </div>

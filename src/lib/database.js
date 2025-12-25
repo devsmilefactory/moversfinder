@@ -76,34 +76,11 @@ export const createRide = async (rideData) => {
 
     if (error) throw error;
 
-    // If instant ride, broadcast to nearby drivers
+    // If instant ride, the database trigger will automatically call the edge function
+    // via webhook to broadcast notifications to nearby drivers
+    // No need to call it manually here - the trigger handles it
     if (data && data.ride_timing === 'instant') {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-      try {
-        const response = await fetch(
-          `${supabaseUrl}/functions/v1/broadcast-ride-to-drivers`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${supabaseAnonKey}`
-            },
-            body: JSON.stringify({
-              rideId: data.id,
-              pickupCoordinates: data.pickup_coordinates,
-              radiusKm: 5
-            })
-          }
-        );
-
-        const result = await response.json();
-        console.log(`✅ Notified ${result.driversNotified} drivers`);
-      } catch (broadcastError) {
-        console.error('❌ Error broadcasting ride to drivers:', broadcastError);
-        // Don't fail the ride creation if broadcast fails
-      }
+      console.log('✅ Instant ride created - notifications will be sent via edge function');
     }
 
     return { data, error: null };

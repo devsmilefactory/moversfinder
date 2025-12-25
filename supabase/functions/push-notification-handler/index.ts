@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { isFcmV1Configured, sendFcmV1 } from '../_shared/fcm.ts';
 
 interface NotificationPayload {
   type: 'INSERT';
@@ -18,7 +19,6 @@ interface NotificationPayload {
   schema: 'public';
 }
 
-const FCM_SERVER_KEY = Deno.env.get('FCM_SERVER_KEY')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -55,23 +55,26 @@ serve(async (req) => {
       ? 'default'
       : 'notification_sound.mp3';
     
-    // Build FCM message
-    const fcmMessage = {
-      to: profile.fcm_token,
-      priority: androidPriority,
+    console.log('Sending to FCM (HTTP v1)...');
+
+    if (!isFcmV1Configured()) {
+      throw new Error(
+        'FCM v1 not configured. Set Supabase secret FIREBASE_SERVICE_ACCOUNT_JSON (service account JSON string).'
+      );
+    }
+
+    const fcmResult = await sendFcmV1({
+      token: profile.fcm_token,
       notification: {
         title: notification.title,
         body: notification.message,
-        sound: sound,
-        badge: '1',
-        click_action: notification.action_url || '/',
-        icon: '/icon-192x192.png',
-        tag: notification.notification_type,
       },
       data: {
         notification_id: notification.id,
         notification_type: notification.notification_type,
         action_url: notification.action_url || '/',
+        priority: notification.priority,
+        sound,
         ...notification.context_data,
       },
       webpush: {
@@ -83,33 +86,32 @@ serve(async (req) => {
           body: notification.message,
           icon: '/icon-192x192.png',
           badge: '/badge-72x72.png',
-          vibrate: notification.priority === 'urgent' || notification.priority === 'high' 
-            ? [200, 100, 200] 
-            : [100],
+          vibrate:
+            notification.priority === 'urgent' || notification.priority === 'high'
+              ? [200, 100, 200]
+              : [100],
           data: {
             url: notification.action_url || '/',
+            action_url: notification.action_url || '/',
+            notification_id: notification.id,
+            notification_type: notification.notification_type,
           },
-          actions: notification.action_url ? [
-            { action: 'open', title: 'View' },
-            { action: 'close', title: 'Dismiss' }
-          ] : [],
+          actions: notification.action_url
+            ? [
+                { action: 'open', title: 'View' },
+                { action: 'close', title: 'Dismiss' },
+              ]
+            : [],
         },
       },
-    };
-    
-    console.log('Sending to FCM...');
-    
-    // Send to FCM
-    const fcmResponse = await fetch('https://fcm.googleapis.com/fcm/send', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `key=${FCM_SERVER_KEY}`,
+      android: {
+        priority: androidPriority === 'high' ? 'HIGH' : 'NORMAL',
+        notification: {
+          sound,
+          channel_id: 'default',
+        },
       },
-      body: JSON.stringify(fcmMessage),
     });
-    
-    const fcmResult = await fcmResponse.json();
     
     console.log('FCM Response:', fcmResult);
     
@@ -117,11 +119,11 @@ serve(async (req) => {
     await supabase
       .from('notifications')
       .update({
-        push_sent: fcmResult.success === 1,
+        push_sent: true,
         push_sent_at: new Date().toISOString(),
-        push_delivery_confirmed: fcmResult.success === 1,
-        push_delivery_confirmed_at: fcmResult.success === 1 ? new Date().toISOString() : null,
-        push_error: fcmResult.failure === 1 ? JSON.stringify(fcmResult.results) : null,
+        push_delivery_confirmed: true,
+        push_delivery_confirmed_at: new Date().toISOString(),
+        push_error: null,
         retry_count: notification.retry_count || 0,
       })
       .eq('id', notification.id);
@@ -133,8 +135,8 @@ serve(async (req) => {
         notification_id: notification.id,
         attempt_number: (notification.retry_count || 0) + 1,
         delivery_method: 'push',
-        success: fcmResult.success === 1,
-        error_message: fcmResult.failure === 1 ? JSON.stringify(fcmResult.results) : null,
+        success: true,
+        error_message: null,
       });
     
     return new Response(
@@ -150,3 +152,4 @@ serve(async (req) => {
     );
   }
 });
+

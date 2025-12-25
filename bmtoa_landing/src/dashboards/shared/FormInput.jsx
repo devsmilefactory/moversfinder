@@ -33,9 +33,9 @@ const FormInput = ({
         placeholder={placeholder}
         required={required}
         disabled={disabled}
-        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all ${
-          error ? 'border-red-500' : 'border-slate-300'
-        } ${disabled ? 'bg-slate-100 cursor-not-allowed' : 'bg-white'}`}
+        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+          error ? 'border-red-500 bg-red-50' : 'border-blue-200 bg-white'
+        } ${disabled ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
         {...props}
       />
       {error && (
@@ -75,9 +75,9 @@ export const FormTextarea = ({
         required={required}
         disabled={disabled}
         rows={rows}
-        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all ${
-          error ? 'border-red-500' : 'border-slate-300'
-        } ${disabled ? 'bg-slate-100 cursor-not-allowed' : 'bg-white'}`}
+        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+          error ? 'border-red-500 bg-red-50' : 'border-blue-200 bg-white'
+        } ${disabled ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
         {...props}
       />
       {error && (
@@ -115,9 +115,9 @@ export const FormSelect = ({
         onChange={onChange}
         required={required}
         disabled={disabled}
-        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all ${
-          error ? 'border-red-500' : 'border-slate-300'
-        } ${disabled ? 'bg-slate-100 cursor-not-allowed' : 'bg-white'}`}
+        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+          error ? 'border-red-500 bg-red-50' : 'border-blue-200 bg-white'
+        } ${disabled ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
         {...props}
       >
         <option value="">{placeholder}</option>
@@ -153,7 +153,7 @@ export const FormCheckbox = ({
           checked={checked}
           onChange={onChange}
           disabled={disabled}
-          className="w-4 h-4 text-yellow-400 border-slate-300 rounded focus:ring-yellow-400"
+          className="w-4 h-4 text-blue-600 border-blue-300 rounded focus:ring-blue-500"
           {...props}
         />
         <span className="ml-2 text-sm text-slate-700">{label}</span>
@@ -206,9 +206,9 @@ export const FormFileUpload = ({
         accept={accept}
         required={required}
         disabled={disabled}
-        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-transparent transition-all ${
-          error ? 'border-red-500' : 'border-slate-300'
-        } ${disabled ? 'bg-slate-100 cursor-not-allowed' : 'bg-white'}`}
+        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+          error ? 'border-red-500 bg-red-50' : 'border-blue-200 bg-white'
+        } ${disabled ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
         {...props}
       />
       <p className="mt-1 text-xs text-slate-500">Max file size: {maxSize}MB</p>

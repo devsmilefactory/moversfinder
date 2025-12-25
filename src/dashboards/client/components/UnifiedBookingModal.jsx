@@ -2,12 +2,10 @@ import React, { useState, useEffect } from 'react';
 
 import Button from '../../shared/Button';
 import ToggleSwitch from '../../../components/ui/ToggleSwitch';
-import CompactTaxiForm from './CompactTaxiForm';
-import CompactCourierForm from './CompactCourierForm';
-import CompactSchoolRunForm from './CompactSchoolRunForm';
-import CompactErrandsForm from './CompactErrandsForm';
-import CompactBulkForm from './CompactBulkForm';
 import ScheduleModal from './ScheduleModal';
+import ServiceFormSwitcher from './booking/ServiceFormSwitcher';
+import BookingConfirmationModal from './booking/BookingConfirmationModal';
+import { useBookingValidation } from '../../../hooks/useBookingValidation';
 import { useAuthStore, useSavedPlacesStore } from '../../../stores';
 import { supabase } from '../../../lib/supabase';
 import { broadcastRideToDrivers } from '../../../utils/driverMatching';
@@ -21,7 +19,7 @@ import {
 import { prepareErrandTasksForInsert } from '../../../utils/errandTasks';
 import { formatPrice } from '../../../utils/formatters';
 import { isRoundTripRide } from '../../../utils/rideCostDisplay';
-import { enforceInstantOnly, FEATURE_FLAGS } from '../../../config/featureFlags';
+import { enforceInstantOnly, FEATURE_FLAGS, normalizeRoundTripSelection, isRoundTripEnabled } from '../../../config/featureFlags';
 import {
   calculateEstimatedFareV2,
   calculateRoundTripFare,
@@ -43,6 +41,7 @@ import {
 } from '../../../utils/errandTasks';
 
 import { getRouteWithStopsDistanceAndDuration, getRouteDistanceAndDuration, toGeoJSON, fromGeoJSON, calculateDistance, getCurrentLocation } from '../../../utils/locationServices';
+import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
 
 
 /**
@@ -133,6 +132,7 @@ const UnifiedBookingModal = ({
     tasks: [],
     returnToStart: false
   });
+  const roundTripEnabled = isRoundTripEnabled();
 
   const [loading, setLoading] = useState(false);
   // Derived cost and stats for errands (sum of each task priced as a taxi ride)
@@ -202,6 +202,13 @@ const UnifiedBookingModal = ({
       loadSavedPlaces(user.id);
     }
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Force round trip off when disabled
+  useEffect(() => {
+    if (!roundTripEnabled && formData.isRoundTrip) {
+      setFormData((prev) => ({ ...prev, isRoundTrip: false }));
+    }
+  }, [roundTripEnabled, formData.isRoundTrip]);
 
   // Locally computed estimate that includes additional stops/deliveries when present
   const [computedEstimate, setComputedEstimate] = useState(null);
@@ -370,7 +377,8 @@ const UnifiedBookingModal = ({
           passengerName: initialData.passengerName || '',
           contactNumber: initialData.contactNumber || '',
           tasks: initialData.tasks || [],
-          returnToStart: initialData.returnToStart || false
+          returnToStart: initialData.returnToStart || false,
+          isRoundTrip: roundTripEnabled ? (initialData.isRoundTrip || false) : false
         });
       } else {
         // Default empty form
@@ -399,7 +407,8 @@ const UnifiedBookingModal = ({
           passengerName: '',
           contactNumber: '',
           tasks: [],
-          returnToStart: false
+          returnToStart: false,
+          isRoundTrip: false
         });
       }
     }
@@ -453,6 +462,7 @@ const UnifiedBookingModal = ({
     
     const computeCost = async () => {
       const numberOfTrips = formData.numberOfTrips || 1;
+      const roundTripSelected = normalizeRoundTripSelection(formData.isRoundTrip);
       let cost = 0;
       let breakdown = null;
 
@@ -474,7 +484,7 @@ const UnifiedBookingModal = ({
 
           if (distanceKmForPrice != null && distanceKmForPrice > 0) {
             let singleTripFare;
-            if ((selectedService === 'taxi' || selectedService === 'school_run') && formData.isRoundTrip) {
+            if ((selectedService === 'taxi' || selectedService === 'school_run') && roundTripSelected) {
               singleTripFare = (await calculateRoundTripFare({ distanceKm: distanceKmForPrice })) ?? 0;
             } else {
               singleTripFare = (await calculateEstimatedFareV2({ distanceKm: distanceKmForPrice })) ?? 0;
@@ -500,45 +510,8 @@ const UnifiedBookingModal = ({
   const calculateCost = () => totalCost;
 
 
-  // Check if form is valid based on service type
-  const isFormValid = () => {
-    // Service-specific validations
-    switch (selectedService) {
-      case 'taxi':
-        return formData.pickupLocation && formData.dropoffLocation;
-
-      case 'courier':
-        return formData.pickupLocation && formData.dropoffLocation &&
-               formData.recipientName && formData.recipientPhone && formData.packageDetails;
-
-      case 'school_run':
-        return formData.pickupLocation && formData.dropoffLocation &&
-               formData.passengerName && formData.contactNumber &&
-               !!formData.tripTime;
-
-      case 'errands': {
-        const tasks = Array.isArray(formData.tasks) ? formData.tasks : [];
-        if (tasks.length === 0) return false;
-        return tasks.every(
-          (task) =>
-            task &&
-            task.startPoint &&
-            task.destinationPoint
-        );
-      }
-
-      case 'bulk': {
-        const mode = formData.bulkMode || 'multi_pickup';
-        if (mode === 'multi_pickup') {
-          return formData.dropoffLocation && (formData.bulkPickups || []).length > 0;
-        }
-        return formData.pickupLocation && (formData.bulkDropoffs || []).length > 0;
-      }
-
-      default:
-        return false;
-    }
-  };
+  // Use booking validation hook
+  const { isValid: isFormValid } = useBookingValidation(selectedService, formData);
 
   // Handle schedule modal confirmation
   const handleScheduleConfirm = (scheduleData) => {
@@ -550,13 +523,22 @@ const UnifiedBookingModal = ({
 
   // Show confirmation modal before booking
   const handleShowConfirmation = () => {
-    if (!isFormValid()) return;
+    if (!isFormValid) return;
     setShowConfirmationModal(true);
   };
 
   // Handle booking submission (called after confirmation)
   const handleBooking = async () => {
-    if (!isFormValid()) return;
+    if (!isFormValid) return;
+
+    // Get authenticated user ID directly from Supabase auth to ensure RLS policy compliance
+    const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+    if (authError || !authUser?.id) {
+      console.error('Authentication error:', authError);
+      alert('❌ You must be logged in to book a ride. Please log in and try again.');
+      setLoading(false);
+      return;
+    }
 
     setShowConfirmationModal(false);
     setLoading(true);
@@ -612,51 +594,36 @@ const UnifiedBookingModal = ({
 
 
 
-      // Calculate final cost using new fare calculation functions with breakdowns
+      // Calculate final cost using handler system
       let finalCost = 0;
       let finalFareBreakdown = null;
       
       // Variables for errand-specific fields
       let errandTasksJSON = null;
       let errandTasksCount = 0;
+      const roundTripSelected = normalizeRoundTripSelection(formData.isRoundTrip);
 
-      if (selectedService === 'taxi' && finalDistanceKm && finalDistanceKm > 0) {
-        const taxiFare = await calculateTaxiFare({
+      // Use handler system for fare calculation
+      const handler = getRideTypeHandler(selectedService);
+      
+      // Prepare service data for handler
+      const serviceData = {
+        tasks: formData.tasks,
+        vehicleType: formData.vehicleType || 'sedan',
+        package: formData.packages?.[0] ? {
+          size: formData.packages[0].packageSize || 'medium'
+        } : null
+      };
+
+      if (selectedService === 'errands' && formData.tasks && formData.tasks.length > 0) {
+        // For errands, calculate fare using handler
+        const errandsFare = await handler.calculateFare({
           distanceKm: finalDistanceKm,
-          isRoundTrip: formData.isRoundTrip,
-          numberOfDates: formData.numberOfTrips || 1
+          formData,
+          serviceData,
+          numberOfTrips: formData.numberOfTrips || 1
         });
-        if (taxiFare) {
-          finalCost = roundToNearestHalfDollar(taxiFare.totalFare);
-          finalFareBreakdown = taxiFare.breakdown;
-        }
-      } else if (selectedService === 'courier' && finalDistanceKm && finalDistanceKm > 0) {
-        const courierFare = await calculateCourierFare({
-          distanceKm: finalDistanceKm,
-          vehicleType: formData.vehicleType || 'sedan',
-          packageSize: formData.packages?.[0]?.packageSize || 'medium',
-          isRecurring: false,
-          numberOfDates: formData.numberOfTrips || 1
-        });
-        if (courierFare) {
-          finalCost = roundToNearestHalfDollar(courierFare.totalFare);
-          finalFareBreakdown = courierFare.breakdown;
-        }
-      } else if (selectedService === 'school_run' && finalDistanceKm && finalDistanceKm > 0) {
-        const schoolFare = await calculateSchoolRunFare({
-          distanceKm: finalDistanceKm,
-          isRoundTrip: formData.isRoundTrip,
-          numberOfDates: formData.numberOfTrips || 1
-        });
-        if (schoolFare) {
-          finalCost = roundToNearestHalfDollar(schoolFare.totalFare);
-          finalFareBreakdown = schoolFare.breakdown;
-        }
-      } else if (selectedService === 'errands' && formData.tasks && formData.tasks.length > 0) {
-        const errandsFare = await calculateErrandsFare({
-          errands: formData.tasks,
-          numberOfDates: formData.numberOfTrips || 1
-        });
+        
         if (errandsFare) {
           finalCost = roundToNearestHalfDollar(errandsFare.totalFare);
           finalFareBreakdown = errandsFare.breakdown;
@@ -685,9 +652,25 @@ const UnifiedBookingModal = ({
           errandTasksCount = tasksWithCosts.length;
         }
       } else if (finalDistanceKm && finalDistanceKm > 0) {
-        // Fallback to simple calculation
-        const estimatedFare = await calculateEstimatedFareV2({ distanceKm: finalDistanceKm });
-        finalCost = roundToNearestHalfDollar(estimatedFare ?? 0);
+        // Use handler for other service types
+        const fareResult = await handler.calculateFare({
+          distanceKm: finalDistanceKm,
+          formData: {
+            ...formData,
+            isRoundTrip: roundTripSelected
+          },
+          serviceData,
+          numberOfTrips: formData.numberOfTrips || 1
+        });
+        
+        if (fareResult) {
+          finalCost = roundToNearestHalfDollar(fareResult.totalFare);
+          finalFareBreakdown = fareResult.breakdown;
+        } else {
+          // Fallback to simple calculation
+          const estimatedFare = await calculateEstimatedFareV2({ distanceKm: finalDistanceKm });
+          finalCost = roundToNearestHalfDollar(estimatedFare ?? 0);
+        }
       }
 
       // Prepare booking data with new database schema fields
@@ -740,7 +723,8 @@ const UnifiedBookingModal = ({
       const scheduleType = formData.scheduleType || 'specific_dates';
       const selectedDatesCount = Array.isArray(formData.selectedDates) ? formData.selectedDates.length : 0;
       const baseTripCount = formData.numberOfTrips || selectedDatesCount || 1;
-      const roundTripMultiplier = formData.isRoundTrip ? 2 : 1;
+      const normalizedRoundTrip = normalizeRoundTripSelection(formData.isRoundTrip);
+      const roundTripMultiplier = normalizedRoundTrip ? 2 : 1;
       const derivedNumberOfTrips = Math.max(baseTripCount * roundTripMultiplier, 1);
 
       const hasSpecificSchedule = Boolean(
@@ -767,8 +751,8 @@ const UnifiedBookingModal = ({
       rideTiming = enforceInstantOnly(rideTiming);
 
       const bookingData = {
-        // User and service info
-        user_id: user.id,
+        // User and service info (use authenticated user ID for RLS compliance)
+        user_id: authUser.id,
         service_type: selectedService === 'bulk' ? 'taxi' : selectedService,
 
         // Ride timing and type
@@ -847,6 +831,10 @@ const UnifiedBookingModal = ({
         // Status fields
         acceptance_status: 'pending',
         ride_status: 'pending',
+        status: 'pending',
+        state: 'PENDING',
+        execution_sub_state: 'NONE',
+        // Note: driver_feed_category and passenger_feed_category are generated columns - do not set on insert
         status_updated_at: new Date().toISOString(),
 
         // Payment and cost
@@ -874,7 +862,7 @@ const UnifiedBookingModal = ({
 
         // Taxi-specific fields
         ...(selectedService === 'taxi' && {
-          is_round_trip: formData.isRoundTrip || false
+          is_round_trip: normalizedRoundTrip
         }),
 
 
@@ -890,11 +878,16 @@ const UnifiedBookingModal = ({
         ...(selectedService === 'school_run' && {
           passenger_name: formData.passengerName || null,
           contact_number: formData.contactNumber || null,
-          is_round_trip: formData.isRoundTrip || false
+          is_round_trip: normalizedRoundTrip
         }),
 
         // Timestamps
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+
+        // Series normalization (instant-only phase)
+        series_id: null,
+        series_trip_number: 1,
+        series_occurrence_index: null
       };
 
 
@@ -988,6 +981,9 @@ if (selectedService === 'bulk') {
         number_of_trips: 1,
         is_round_trip: false,
         is_saved_template: false,
+        state: 'PENDING',
+        execution_sub_state: 'NONE',
+        // Note: driver_feed_category and passenger_feed_category are generated columns - do not set on insert
         acceptance_status: 'pending',
         ride_status: 'pending',
         status_updated_at: new Date().toISOString(),
@@ -1254,61 +1250,11 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
     return 'Not scheduled';
   };
 
-  // Helper functions for confirmation modal
-  const getLocationAddress = (location) => {
-    if (!location) return 'Not specified';
-    if (typeof location === 'string') return location;
-    return location?.data?.address || location?.address || 'Not specified';
-  };
-
-  const getScheduleDisplay = () => {
-    if (formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 0) {
-      if (formData.selectedDates.length === 1) {
-        // Single scheduled ride
-        const date = new Date(formData.selectedDates[0]);
-        const formattedDate = date.toLocaleDateString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        });
-        return `${formattedDate} at ${formData.tripTime || 'Not set'}`;
-      }
-      // Multiple specific dates (recurring)
-      return `${formData.selectedDates.length} rides on specific dates starting ${formData.selectedDates[0]} at ${formData.tripTime || 'Not set'}`;
-    }
-
-    if (formData.scheduleType === 'weekdays' && formData.scheduleMonth) {
-      const [year, month] = formData.scheduleMonth.split('-');
-      const monthName = new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      return `All weekdays (Mon-Fri) in ${monthName} at ${formData.tripTime || 'Not set'} (${formData.tripCount || 0} trips)`;
-    }
-
-    if (formData.scheduleType === 'weekends' && formData.scheduleMonth) {
-      const [year, month] = formData.scheduleMonth.split('-');
-      const monthName = new Date(year, month - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      return `All weekends (Sat-Sun) in ${monthName} at ${formData.tripTime || 'Not set'} (${formData.tripCount || 0} trips)`;
-    }
-
-    return 'Not scheduled';
-  };
-
-  const getServiceIcon = () => {
-    const service = services.find(s => s.id === selectedService);
-    return service ? service.icon : '🚕';
-  };
-
-  const getServiceName = () => {
-    const service = services.find(s => s.id === selectedService);
-    return service ? service.name : 'Taxi';
-  };
-
-  if (!isOpen) return null;
 
   if (!isOpen) return null;
 
   return (
-    <>
+    <React.Fragment>
       <div className="fixed inset-0 z-50 flex items-center justify-center md:p-4">
         {/* Backdrop */}
         <div
@@ -1362,7 +1308,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                 <div className={`w-1.5 h-1.5 rounded-full ${formData.dropoffLocation ? 'bg-green-500' : 'bg-slate-300'}`} />
                 <span>Dropoff</span>
                 <div className="flex-1 h-px bg-slate-200 max-w-[60px]" />
-                <div className={`w-1.5 h-1.5 rounded-full ${isFormValid() ? 'bg-green-500' : 'bg-slate-300'}`} />
+                <div className={`w-1.5 h-1.5 rounded-full ${isFormValid ? 'bg-green-500' : 'bg-slate-300'}`} />
                 <span>Ready</span>
               </div>
             )}
@@ -1444,72 +1390,15 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
           ) : (
             /* New Trip Form - Service Details Section */
             <div className="p-4">
-
-
-
-                {selectedService === 'taxi' && (
-                  <CompactTaxiForm
+              <ServiceFormSwitcher
+                selectedService={selectedService}
                     formData={formData}
-
-
-                    onChange={setFormData}
+                onFormDataUpdate={setFormData}
                     savedPlaces={savedPlaces}
                   />
-                )}
-
-                {selectedService === 'courier' && (
-                  <CompactCourierForm
-                    formData={formData}
-                    onChange={setFormData}
-                    savedPlaces={savedPlaces}
-                  />
-                )}
-
-                {selectedService === 'school_run' && (
-                  <CompactSchoolRunForm
-                    formData={formData}
-                    onChange={setFormData}
-                    savedPlaces={savedPlaces}
-                  />
-                )}
-
-                {selectedService === 'bulk' && (
-                  <div className="flex flex-col items-center justify-center py-16 px-4">
-                    <div className="text-center max-w-md">
-                      <div className="text-6xl mb-4">🚧</div>
-                      <h3 className="text-2xl font-bold text-slate-800 mb-3">Coming Soon!</h3>
-                      <p className="text-slate-600 mb-6">
-                        Bulk booking feature is currently under development. We're working hard to bring you the ability to book multiple rides at once.
-                      </p>
-                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                        <p className="text-sm text-yellow-800">
-                          <span className="font-semibold">Stay tuned!</span> This feature will be available soon.
-                        </p>
-                      </div>
-                    </div>
-                    {/* Keep the actual form hidden but in the code for future use */}
-                    <div className="hidden">
-                      <CompactBulkForm
-                        formData={formData}
-                        onChange={setFormData}
-                        savedPlaces={savedPlaces}
-                      />
-                    </div>
                   </div>
                 )}
 
-
-                {selectedService === 'errands' && (
-                  <CompactErrandsForm
-                    formData={formData}
-                    onChange={setFormData}
-                    savedPlaces={savedPlaces}
-                    taskEstimates={errandsTasksSummary}
-                    taskTotalCost={errandsTasksCost}
-                  />
-                )}
-            </div>
-          )}
         </div>
 
         {/* Fixed Bottom Bar - Compact */}
@@ -1567,7 +1456,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                   <Button
                     variant="outline"
                     onClick={() => setShowScheduleModal(true)}
-                    disabled={!isFormValid()}
+                    disabled={!isFormValid}
                     className="flex-1"
                   >
                     📅 Schedule
@@ -1576,7 +1465,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
                 <Button
                   variant="primary"
                   onClick={handleShowConfirmation}
-                  disabled={!isFormValid()}
+                  disabled={!isFormValid}
                   loading={loading}
                   className={FEATURE_FLAGS.SCHEDULED_RIDES_ENABLED ? "flex-1" : "flex-1 w-full"}
                 >
@@ -1602,291 +1491,22 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
       </div>
 
       {/* Confirmation Modal */}
-      {showConfirmationModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-        {/* Backdrop */}
-        <div
-          className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-          onClick={() => setShowConfirmationModal(false)}
-        />
-
-        {/* Confirmation Modal Container */}
-        <div
-          className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div className="px-6 py-4 border-b border-slate-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">{getServiceIcon()}</span>
-                <h2 className="text-xl font-bold text-slate-800">Confirm Your Booking</h2>
-              </div>
-              <button
-                onClick={() => setShowConfirmationModal(false)}
-                className="text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
-
-          {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto px-6 py-4 bg-slate-150">
-            <div className="space-y-4">
-              {/* Service Type */}
-              <div className="bg-slate-150 rounded-lg p-4">
-                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Service Type</p>
-                <p className="text-lg font-semibold text-slate-800">{getServiceName()}</p>
-              </div>
-
-              {/* Locations */}
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-1">📍 Pickup Location</p>
-                  <p className="text-sm text-slate-700">{getLocationAddress(formData.pickupLocation)}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-1">📍 Dropoff Location</p>
-                  <p className="text-sm text-slate-700">{getLocationAddress(formData.dropoffLocation)}</p>
-                </div>
-              </div>
-
-              {/* Additional Stops (Taxi) */}
-              {selectedService === 'taxi' && formData.additionalStops && formData.additionalStops.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-2">🛑 Additional Stops</p>
-                  <div className="space-y-1">
-                    {formData.additionalStops.map((stop, index) => (
-                      <p key={index} className="text-sm text-slate-700 pl-4">
-                        {index + 1}. {getLocationAddress(stop.location || stop)}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Additional Deliveries (Courier) */}
-              {selectedService === 'courier' && formData.additionalDeliveries && formData.additionalDeliveries.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-2">📦 Additional Deliveries</p>
-                  <div className="space-y-2">
-                    {formData.additionalDeliveries.map((delivery, index) => (
-                      <div key={index} className="text-sm text-slate-700 pl-4 border-l-2 border-blue-300">
-                        <p className="font-medium">{index + 1}. {getLocationAddress(delivery.location)}</p>
-                        {delivery.recipientName && <p className="text-xs">Recipient: {delivery.recipientName}</p>}
-                        {delivery.recipientPhone && <p className="text-xs">Phone: {delivery.recipientPhone}</p>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Tasks (Errands) */}
-              {selectedService === 'errands' && formData.tasks && formData.tasks.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-2">🛍️ Tasks</p>
-                  {errandsTasksSummary && (
-                    <p className="text-xs text-slate-500 mb-2">
-                      {errandsTasksSummary.totalTasks} task{errandsTasksSummary.totalTasks === 1 ? '' : 's'} •{' '}
-                      {Number(errandsTasksSummary.totalDistanceKm ?? 0).toFixed(1)} km combined •{' '}
-                      {errandsTasksSummary.totalDurationMinutes ?? 0} min estimated
-                    </p>
-                  )}
-                  <div className="space-y-2">
-                    {formData.tasks.map((task, index) => {
-                      const pickup = getTaskAddressValue(task?.startPoint);
-                      const dropoff = getTaskAddressValue(task?.destinationPoint);
-                      const summary = errandsTasksSummary?.perTask?.[index];
-                      return (
-                        <div key={index} className="text-sm text-slate-700 pl-4 border-l-2 border-purple-200">
-                          <p className="font-medium">{index + 1}. {task.description || `Task ${index + 1}`}</p>
-                          <p className="text-xs text-slate-500 mt-0.5">Pickup: {pickup || 'Not set'}</p>
-                          <p className="text-xs text-slate-500">Drop-off: {dropoff || 'Not set'}</p>
-                          {summary && (
-                            <p className="text-[11px] text-slate-500 mt-0.5">
-                              ≈ {Number(summary.distanceKm ?? 0).toFixed(1)} km • {summary.durationMinutes ?? 0} min • {formatPrice(summary.cost)}
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {formData.returnToStart && (
-                    <p className="text-xs text-blue-600 mt-2 pl-4">↩️ Return to starting point</p>
-                  )}
-                </div>
-              )}
-
-              {/* Schedule */}
-              <div className="bg-blue-50 rounded-lg p-4">
-                <p className="text-xs font-semibold text-blue-700 uppercase mb-2">⏰ Schedule</p>
-                <p className="text-sm font-medium text-blue-900 mb-2">{getScheduleDisplay()}</p>
-
-                {/* Show all dates for specific dates recurring rides */}
-                {formData.scheduleType === 'specific_dates' && formData.selectedDates.length > 1 && (
-                  <div className="mt-3 pt-3 border-t border-blue-200">
-                    <p className="text-xs font-semibold text-blue-700 mb-2">All Scheduled Dates:</p>
-                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
-                      {formData.selectedDates.map((date, index) => (
-                        <div key={index} className="text-xs bg-white rounded px-2 py-1 text-blue-800">
-                          {new Date(date).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            weekday: 'short'
-                          })}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Show trip count for weekdays/weekends */}
-                {(formData.scheduleType === 'weekdays' || formData.scheduleType === 'weekends') && (
-                  <div className="mt-2 pt-2 border-t border-blue-200">
-                    <p className="text-xs text-blue-700">
-                      <span className="font-semibold">Total Rides:</span> {formData.tripCount || 0} trips
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Service-Specific Details */}
-              <div className="grid grid-cols-2 gap-3">
-                {(selectedService === 'taxi' || selectedService === 'school_run') && (
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase mb-1">👥 Passengers</p>
-                    <p className="text-sm text-slate-700">{formData.passengers || 1}</p>
-                  </div>
-                )}
-
-                {selectedService === 'courier' && (
-                  <>
-                    <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase mb-1">📦 Package Size</p>
-                      <p className="text-sm text-slate-700 capitalize">{(formData.packages && formData.packages[0]?.packageSize) || 'Small'}</p>
-                    </div>
-                    {formData.packageDetails && (
-                      <div className="col-span-2">
-                        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Package Details</p>
-                        <p className="text-sm text-slate-700">{formData.packageDetails}</p>
-                      </div>
-                    )}
-                    {formData.recipientName && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Recipient</p>
-                        <p className="text-sm text-slate-700">{formData.recipientName}</p>
-                      </div>
-                    )}
-                    {formData.recipientPhone && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Recipient Phone</p>
-                        <p className="text-sm text-slate-700">{formData.recipientPhone}</p>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {selectedService === 'school_run' && (
-                  <>
-                    <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Direction</p>
-                      <p className="text-sm text-slate-700 capitalize">{formData.tripDirection || 'One-way'}</p>
-                    </div>
-                    {formData.passengerName && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Passenger Name</p>
-                        <p className="text-sm text-slate-700">{formData.passengerName}</p>
-                      </div>
-                    )}
-                    {formData.contactNumber && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Contact Number</p>
-                        <p className="text-sm text-slate-700">{formData.contactNumber}</p>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* Estimate Details */}
-              <div className="bg-green-50 rounded-lg p-4 space-y-2">
-                <p className="text-xs font-semibold text-green-700 uppercase mb-2">💰 Estimate</p>
-                <div className="grid grid-cols-3 gap-3">
-                  {(computedEstimate?.distanceKm ?? estimate?.distanceKm) != null && (
-                    <div>
-                      <p className="text-xs text-green-600">Distance</p>
-                      <p className="text-lg font-bold text-green-800">
-                        {(computedEstimate?.distanceKm ?? estimate.distanceKm).toFixed(1)} km
-                      </p>
-                    </div>
-                  )}
-                  {(computedEstimate?.durationMinutes ?? estimate?.durationMinutes) != null && (
-                    <div>
-                      <p className="text-xs text-green-600">Duration</p>
-                      <p className="text-lg font-bold text-green-800">
-                        {Math.round(computedEstimate?.durationMinutes ?? estimate.durationMinutes)} min
-                      </p>
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-xs text-green-600">Estimated Cost</p>
-                    <p className="text-2xl font-bold text-green-800">{formatPrice(calculateCost())}</p>
-                  </div>
-                {selectedService === 'bulk' && computedEstimate?.perTripEstimates?.length > 0 && (
-                  <div className="text-[11px] text-green-700 mt-1">
-                    {computedEstimate.tripCount} trips: {computedEstimate.perTripEstimates.slice(0,3).map((t) => `$${((t.cost || 0)).toFixed(0)}`).join(' + ')}
-                    {computedEstimate.tripCount > 3 ? ' + …' : ''} = ${calculateCost().toFixed(0)}
-                  </div>
-                )}
-
-                </div>
-                <p className="text-xs text-green-600 mt-2">
-                  * Final fare calculated based on actual distance
-                </p>
-              </div>
-
-              {/* Payment Method */}
-              <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">💳 Payment Method</p>
-                <p className="text-sm text-slate-700 capitalize">{formData.paymentMethod || 'Cash'}</p>
-              </div>
-
-              {/* Special Instructions */}
-              {formData.specialInstructions && (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase mb-1">📝 Special Instructions</p>
-                  <p className="text-sm text-slate-700 bg-slate-150 rounded p-3">{formData.specialInstructions}</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Footer Actions */}
-          <div className="px-6 py-4 border-t border-slate-200 bg-slate-200 rounded-b-xl">
-            <div className="flex gap-3">
-              <Button
-                variant="outline"
-                onClick={() => setShowConfirmationModal(false)}
-                className="flex-1"
-              >
-                ← Go Back
-              </Button>
-              <Button
-                variant="primary"
-                onClick={handleBooking}
-                loading={loading}
-                className="flex-1"
-              >
-                ✓ Confirm & Book
-              </Button>
-            </div>
-          </div>
-        </div>
-        </div>
-      )}
+      <BookingConfirmationModal
+        isOpen={showConfirmationModal}
+        onClose={() => setShowConfirmationModal(false)}
+        onConfirm={handleBooking}
+        bookingData={{
+          selectedService,
+          formData,
+          totalCost,
+          fareBreakdown,
+          computedEstimate,
+          estimate,
+          errandsTasksSummary,
+          services
+        }}
+        loading={loading}
+      />
 
       {/* Schedule Modal */}
       <ScheduleModal
@@ -1901,7 +1521,7 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
           tripCount: formData.tripCount
         }}
       />
-    </>
+    </React.Fragment>
   );
 };
 

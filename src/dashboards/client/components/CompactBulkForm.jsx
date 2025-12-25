@@ -87,7 +87,7 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
       {mode === 'multi_pickup' ? (
         <>
           {/* Single Drop-off (required first) */}
-          <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+          <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
             <LocationInput
               label="Drop-off Location"
               value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}
@@ -97,7 +97,7 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
               placeholder="Where to drop off?"
             />
             {!hasSingleDropoff && (
-              <p className="text-xs text-slate-500 mt-2">Set a drop-off first to add multiple pickups.</p>
+              <p className="text-xs text-blue-500 mt-2">Set a drop-off first to add multiple pickups.</p>
             )}
           </div>
 
@@ -109,14 +109,14 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
                 type="button"
                 onClick={() => addArrayItem('bulkPickups')}
                 disabled={!hasSingleDropoff}
-                className={`text-xs px-2 py-1 rounded ${!hasSingleDropoff ? 'opacity-50 cursor-not-allowed bg-yellow-100 text-yellow-700' : 'text-yellow-700 bg-yellow-100 hover:bg-yellow-200'}`}
+                className={`text-xs px-2 py-1 rounded ${!hasSingleDropoff ? 'opacity-50 cursor-not-allowed bg-blue-100 text-blue-700' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}
               >
                 + Add Pickup
               </button>
             </div>
             <div className="max-h-56 overflow-y-auto pr-1 -mr-1 space-y-3">
               {(formData.bulkPickups || []).map((val, idx) => (
-                <div key={idx} className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div key={idx} className="bg-blue-50 rounded-lg border border-blue-200 p-3">
                   <LocationInput
                     label={`Pickup ${idx + 1}`}
                     value={typeof val === 'string' ? val : (val?.data?.address || '')}
@@ -143,7 +143,7 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
       ) : (
         <>
           {/* Single Pickup */}
-          <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+          <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
             <LocationInput
               label="Pickup Location"
               value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
@@ -162,14 +162,14 @@ const CompactBulkForm = ({ formData, onChange, savedPlaces = [] }) => {
                 type="button"
                 onClick={() => addArrayItem('bulkDropoffs')}
                 disabled={!hasSinglePickup}
-                className={`text-xs px-2 py-1 rounded ${!hasSinglePickup ? 'opacity-50 cursor-not-allowed bg-yellow-100 text-yellow-700' : 'text-yellow-700 bg-yellow-100 hover:bg-yellow-200'}`}
+                className={`text-xs px-2 py-1 rounded ${!hasSinglePickup ? 'opacity-50 cursor-not-allowed bg-blue-100 text-blue-700' : 'text-blue-700 bg-blue-100 hover:bg-blue-200'}`}
               >
                 + Add Drop-off
               </button>
             </div>
             <div className="max-h-56 overflow-y-auto pr-1 -mr-1 space-y-3">
               {(formData.bulkDropoffs || []).map((val, idx) => (
-                <div key={idx} className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div key={idx} className="bg-blue-50 rounded-lg border border-blue-200 p-3">
                   <LocationInput
                     label={`Drop-off ${idx + 1}`}
                     value={typeof val === 'string' ? val : (val?.data?.address || '')}

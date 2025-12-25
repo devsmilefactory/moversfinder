@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { MapPin, Navigation, Star, Clock } from 'lucide-react';
+import { getCurrentLocation, detectCurrentLocationWithCity } from '../../utils/locationServices';
 
 /**
  * LocationSection Component
@@ -120,7 +121,7 @@ const LocationSection = ({
             onChange={(e) => handleAddressChange('pickup', e.target.value)}
             placeholder="Enter pickup address..."
             className={`w-full px-3 py-2 pr-20 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-              errors.pickup ? 'border-red-300 bg-red-50' : 'border-slate-300'
+              errors.pickup ? 'border-red-300 bg-red-50' : 'border-blue-200 bg-blue-50'
             }`}
           />
           
@@ -189,7 +190,7 @@ const LocationSection = ({
             onChange={(e) => handleAddressChange('dropoff', e.target.value)}
             placeholder="Enter destination address..."
             className={`w-full px-3 py-2 pr-20 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-              errors.dropoff ? 'border-red-300 bg-red-50' : 'border-slate-300'
+              errors.dropoff ? 'border-red-300 bg-red-50' : 'border-blue-200 bg-blue-50'
             }`}
           />
           
@@ -286,27 +287,80 @@ const LocationSection = ({
   );
 };
 
-// Helper function to get current position
-const getCurrentPosition = () => {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not supported'));
-      return;
-    }
-    
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
+// Helper function to get current position (uses centralized service)
+const getCurrentPosition = async () => {
+  try {
+    const location = await getCurrentLocation({
       enableHighAccuracy: true,
       timeout: 10000,
-      maximumAge: 300000 // 5 minutes
+      maxRetries: 2
     });
-  });
+    
+    // Return in the format expected by the component
+    return {
+      coords: {
+        latitude: location.lat,
+        longitude: location.lng,
+        accuracy: location.accuracy
+      },
+      timestamp: location.timestamp || Date.now()
+    };
+  } catch (error) {
+    throw error;
+  }
 };
 
-// Helper function for reverse geocoding
+// Helper function for reverse geocoding (uses Google Maps Geocoder)
 const reverseGeocode = async (coordinates) => {
-  // This would integrate with your geocoding service
-  // For now, return a placeholder
-  return `Location at ${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}`;
+  try {
+    // Wait for Google Maps to be available
+    let attempts = 0;
+    while (!window.google?.maps && attempts < 20) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+
+    if (!window.google?.maps) {
+      throw new Error('Google Maps not available');
+    }
+
+    // Get Geocoder
+    let GeocoderCtor = window.google?.maps?.Geocoder;
+    if (!GeocoderCtor && typeof window.google.maps.importLibrary === 'function') {
+      try {
+        const geocodingLib = await window.google.maps.importLibrary('geocoding');
+        GeocoderCtor = geocodingLib?.Geocoder || null;
+      } catch (error) {
+        console.error('Failed to import Google geocoding library:', error);
+      }
+    }
+
+    if (!GeocoderCtor) {
+      throw new Error('Google Maps Geocoder not available');
+    }
+
+    const geocoder = new GeocoderCtor();
+    
+    // Reverse geocode the provided coordinates
+    const result = await new Promise((resolve, reject) => {
+      geocoder.geocode(
+        { location: { lat: coordinates.lat, lng: coordinates.lng } },
+        (results, status) => {
+          if (status === 'OK' && results && results.length > 0) {
+            resolve(results[0].formatted_address);
+          } else {
+            reject(new Error(`Geocoding failed: ${status}`));
+          }
+        }
+      );
+    });
+
+    return result;
+  } catch (error) {
+    console.warn('Reverse geocoding failed:', error);
+    // Fallback to coordinates
+    return `Location at ${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}`;
+  }
 };
 
 export default LocationSection;

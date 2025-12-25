@@ -111,24 +111,42 @@ export const redirectToDashboard = async (user, navigate = null) => {
   try {
     if (user.user_type === 'driver') {
       const { supabase } = await import('./supabase');
+      const { getDriverStatus } = await import('../utils/driverStatusCheck');
+      
+      // Load driver profile
       const { data: dp } = await supabase
         .from('driver_profiles')
-        .select('approval_status, profile_completion_status, account_status')
+        .select('*')
         .eq('user_id', user.id)
         .maybeSingle();
 
-      const account = dp?.account_status || user.account_status || 'active';
-      if (account === 'disabled' || account === 'suspended') return go('/driver/status');
+      if (!dp) {
+        // No profile exists - go to profile creation
+        return go('/driver/profile');
+      }
 
-      const completion = dp?.profile_completion_status || 'incomplete';
-      const approval = dp?.approval_status || 'pending';
+      // Load documents for proper completion calculation
+      const { data: documents } = await supabase
+        .from('driver_documents')
+        .select('*')
+        .eq('driver_id', user.id);
 
-      if (completion === 'incomplete' || completion === 'partial') return go('/driver/profile');
-      if (approval === 'pending') return go('/driver/status');
-      if (approval === 'approved') return go('/driver/rides');
-      if (approval === 'rejected') return go('/driver/status');
+      // Use unified status check - single source of truth
+      const driverStatus = getDriverStatus(dp, documents || []);
 
-      return go('/driver/profile');
+      // Check account status first
+      if (driverStatus.accountStatus === 'disabled' || driverStatus.accountStatus === 'suspended') {
+        return go('/driver/status');
+      }
+
+      // BLOCK ACCESS if profile is incomplete or pending/rejected approval
+      // User must complete profile and get approval before accessing features
+      if (!driverStatus.canAccessRides) {
+        return go('/driver/status');
+      }
+
+      // Only allow access if profile is complete AND approved
+      return go('/driver/rides');
     }
 
     if (user.user_type === 'corporate') {

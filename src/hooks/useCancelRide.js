@@ -36,6 +36,18 @@ export function useCancelRide() {
       try {
         const now = new Date().toISOString();
 
+        // First, get the ride to check if it has a driver assigned
+        const { data: rideData, error: rideFetchError } = await supabase
+          .from('rides')
+          .select('driver_id')
+          .eq('id', rideId)
+          .single();
+
+        if (rideFetchError) {
+          console.error('Error fetching ride details:', rideFetchError);
+          // Continue anyway - we'll still try to cancel the ride
+        }
+
         const rideUpdate = {
           ride_status: 'cancelled',
           status: 'cancelled',
@@ -54,6 +66,28 @@ export function useCancelRide() {
         if (rideError) {
           console.error('Error cancelling ride:', rideError);
           throw rideError;
+        }
+
+        // Mark driver as available again if ride had a driver assigned
+        const driverId = rideData?.driver_id;
+        if (driverId) {
+          try {
+            const { error: availError } = await supabase
+              .from('driver_locations')
+              .update({ 
+                is_available: true,
+                active_ride_id: null 
+              })
+              .eq('driver_id', driverId);
+            
+            if (availError) {
+              console.error('Error updating driver availability after cancellation:', availError);
+            } else {
+              console.log(`✅ Driver ${driverId} marked as available after ride cancellation`);
+            }
+          } catch (availErr) {
+            console.error('Exception updating driver availability after cancellation:', availErr);
+          }
         }
 
         if (otherPartyUserId) {

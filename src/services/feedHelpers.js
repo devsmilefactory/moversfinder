@@ -222,9 +222,26 @@ export function getPassengerFeed(ride, passengerId) {
   if (ride.passenger_id !== passengerId && ride.user_id !== passengerId) {
     return null;
   }
+
+  // If ride_status clearly indicates terminal state, prefer it over state
+  const normalizedStatus = (ride.ride_status || '').toLowerCase();
+  const statusDerivedState = normalizedStatus.includes('cancel')
+    ? 'CANCELLED'
+    : (normalizedStatus.includes('complete') ? 'COMPLETED_FINAL' : null);
+  
+  // Use ride_status-derived state first to keep feeds in sync with UI status
+  // then fall back to explicit state, then legacy ride_status mapping
+  const state = statusDerivedState || ride.state || (
+    ride.ride_status === 'pending'
+      ? (ride.driver_id ? 'ACTIVE_EXECUTION' : 'PENDING')
+      : (ride.ride_status === 'accepted' || ride.ride_status === 'driver_on_way' || 
+         ride.ride_status === 'driver_arrived' || ride.ride_status === 'trip_started') ? 'ACTIVE_EXECUTION' :
+        (ride.ride_status === 'trip_completed' || ride.ride_status === 'completed') ? 'COMPLETED_FINAL' :
+        ride.ride_status === 'cancelled' ? 'CANCELLED' : null
+  );
   
   // State-based feed determination (mutually exclusive)
-  switch (ride.state) {
+  switch (state) {
     case 'PENDING':
       return 'pending';
       
@@ -287,20 +304,51 @@ export function getDriverFeed(ride, driverId, driverOffers = []) {
     o.ride_id === ride.id && 
     o.driver_id === driverId
   );
+  const hasDriverOffer = !!driverOffer;
+  const offerStatus = (driverOffer?.status || driverOffer?.offer_status || '').toUpperCase();
+
+  // If ride_status indicates completion or cancellation, respect that even if state lags
+  const normalizedStatus = (ride.ride_status || '').toLowerCase();
+  const statusDerivedState = normalizedStatus.includes('cancel')
+    ? 'CANCELLED'
+    : (normalizedStatus.includes('complete') ? 'COMPLETED_FINAL' : null);
+  
+  // Use ride_status-derived state first to keep feeds in sync with UI status
+  // then explicit state, then legacy ride_status mapping
+  const state = statusDerivedState || ride.state || (
+    ride.ride_status === 'pending'
+      ? (ride.driver_id ? 'ACTIVE_EXECUTION' : 'PENDING')
+      : (ride.ride_status === 'accepted' || ride.ride_status === 'driver_on_way' || 
+         ride.ride_status === 'driver_arrived' || ride.ride_status === 'trip_started') ? 'ACTIVE_EXECUTION' :
+        (ride.ride_status === 'trip_completed' || ride.ride_status === 'completed') ? 'COMPLETED_FINAL' :
+        ride.ride_status === 'cancelled' ? 'CANCELLED' : null
+  );
   
   // State-based feed determination
-  switch (ride.state) {
+  switch (state) {
     case 'PENDING':
-      // Available: Can bid (no existing PENDING/ACCEPTED offer)
-      if (!driverOffer || 
-          !['PENDING', 'ACCEPTED', 'pending', 'accepted'].includes(driverOffer.status || driverOffer.offer_status)) {
-        return 'available';
+      // If a driver is already assigned:
+      // - If it's this driver, treat as in-progress (even if ride_status still pending)
+      // - If it's another driver, exclude from this driver's feeds
+      if (ride.driver_id) {
+        if (ride.driver_id === driverId) {
+          return 'in_progress';
+        }
+        return null;
       }
-      // My Bids: Has pending offer, ride not yet assigned
-      if ((driverOffer.status === 'PENDING' || driverOffer.offer_status === 'pending') && !ride.driver_id) {
+      
+      // If this driver has any offer (any status), keep it out of available
+      if (hasDriverOffer) {
+        // Pending/accepted offers stay in My Bids until assignment moves it to in_progress
+        if (['PENDING', 'ACCEPTED'].includes(offerStatus)) {
+          return 'my_bids';
+        }
+        // For any other offer state, still keep it out of available per requirement
         return 'my_bids';
       }
-      return null;
+      
+      // Available: no assignment and no prior offers from this driver
+      return 'available';
       
     case 'ACTIVE_PRE_TRIP':
     case 'ACTIVE_EXECUTION':
@@ -589,9 +637,15 @@ export function isRecurringRide(ride) {
  * @see Requirements: 13.1-13.5
  */
 export function isErrandRide(ride) {
-  return ride && 
-         (ride.ride_type === 'ERRAND' || ride.service_type === 'errands') &&
-         (ride.tasks_total > 0 || ride.number_of_tasks > 0);
+  if (!ride) return false;
+  
+  // Use handler system for service type check
+  // Dynamic import to avoid circular dependencies
+  const { getRideTypeHandler } = require('../utils/rideTypeHandlers');
+  const handler = getRideTypeHandler(ride.service_type);
+  const isErrandService = handler.isServiceType(ride, 'errands') || ride.ride_type === 'ERRAND';
+  
+  return isErrandService && (ride.tasks_total > 0 || ride.number_of_tasks > 0);
 }
 
 /**

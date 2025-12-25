@@ -119,8 +119,12 @@ BEGIN
     r.user_id = p_user_id
     AND (
       CASE 
-        WHEN p_feed_category = 'pending' THEN r.ride_status = 'pending'
-        WHEN p_feed_category = 'active' THEN r.ride_status IN ('accepted', 'driver_on_way', 'driver_arrived', 'trip_started')
+        -- Pending: only rides with no driver assigned (mutually exclusive with active)
+        WHEN p_feed_category = 'pending' THEN r.ride_status = 'pending' AND r.driver_id IS NULL
+        -- Active: rides with accepted status OR rides with driver assigned (even if status is pending)
+        WHEN p_feed_category = 'active' THEN 
+          r.ride_status IN ('accepted', 'driver_on_way', 'driver_arrived', 'trip_started')
+          OR (r.ride_status = 'pending' AND r.driver_id IS NOT NULL)
         WHEN p_feed_category = 'completed' THEN r.ride_status IN ('completed', 'trip_completed')
         WHEN p_feed_category = 'cancelled' THEN r.ride_status = 'cancelled'
         ELSE FALSE
@@ -417,3 +421,6 @@ BEGIN
   OFFSET p_offset;
 END;
 $function$;
+
+
+

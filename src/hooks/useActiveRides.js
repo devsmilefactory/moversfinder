@@ -81,7 +81,7 @@ const useActiveRides = () => {
     try {
       const { data, error } = await supabase
         .from('driver_locations')
-        .select('latitude, longitude, updated_at')
+        .select('coordinates, updated_at')
         .eq('driver_id', driverId)
         .order('updated_at', { ascending: false })
         .limit(1)
@@ -92,15 +92,22 @@ const useActiveRides = () => {
         return;
       }
 
-      if (data) {
-        setDriverLocations(prev => ({
-          ...prev,
-          [rideId]: {
-            lat: data.latitude,
-            lng: data.longitude,
-            updated_at: data.updated_at
-          }
-        }));
+      if (data && data.coordinates) {
+        // Coordinates are stored as JSONB: { lat, lng } or GeoJSON format
+        const coords = data.coordinates;
+        const lat = coords.lat || coords.latitude || (coords.coordinates && coords.coordinates[1]);
+        const lng = coords.lng || coords.longitude || (coords.coordinates && coords.coordinates[0]);
+        
+        if (lat && lng) {
+          setDriverLocations(prev => ({
+            ...prev,
+            [rideId]: {
+              lat,
+              lng,
+              updated_at: data.updated_at
+            }
+          }));
+        }
       }
     } catch (error) {
       console.error('Error loading driver location:', error);
@@ -143,9 +150,12 @@ const useActiveRides = () => {
     // Show status update toast
     const statusMessages = {
       'driver_on_way': '🚗 Your driver is on the way!',
+      'driver_on_the_way': '🚗 Your driver is on the way!',
       'driver_arrived': '📍 Your driver has arrived at pickup',
       'trip_started': '🎯 Your trip has started',
-      'trip_completed': '✅ Trip completed successfully'
+      'in_progress': '🎯 Your trip has started',
+      'trip_completed': '✅ Trip completed successfully',
+      'completed': '✅ Trip completed successfully'
     };
 
     const message = statusMessages[updatedRide.ride_status];
@@ -162,14 +172,29 @@ const useActiveRides = () => {
   const handleDriverLocationUpdate = useCallback((payload) => {
     const locationUpdate = payload.new;
     
+    // Parse coordinates from JSONB
+    if (!locationUpdate.coordinates) {
+      console.warn('Location update missing coordinates:', locationUpdate);
+      return;
+    }
+    
+    const coords = locationUpdate.coordinates;
+    const lat = coords.lat || coords.latitude || (coords.coordinates && coords.coordinates[1]);
+    const lng = coords.lng || coords.longitude || (coords.coordinates && coords.coordinates[0]);
+    
+    if (!lat || !lng) {
+      console.warn('Invalid coordinates format:', coords);
+      return;
+    }
+    
     // Find rides with this driver
     activeRides.forEach(ride => {
       if (ride.driver_id === locationUpdate.driver_id) {
         setDriverLocations(prev => ({
           ...prev,
           [ride.id]: {
-            lat: locationUpdate.latitude,
-            lng: locationUpdate.longitude,
+            lat,
+            lng,
             updated_at: locationUpdate.updated_at
           }
         }));

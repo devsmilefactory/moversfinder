@@ -8,7 +8,7 @@
  * @see Requirements: 1.1-1.5, 2.1-2.5, 3.1-3.5, 4.1-4.5
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchPassengerRides } from '../services/passengerRidesApi';
 
 /**
@@ -34,13 +34,14 @@ export function usePassengerRidesFeed(userId) {
   
   // Pagination state
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const PAGE_SIZE = 10; // Constant - not in dependencies
   const [totalCount, setTotalCount] = useState(0);
   
   // Data state
   const [rides, setRides] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const nextFetchMetaRef = useRef(null);
 
   /**
    * Core function to fetch rides for current tab with filters
@@ -48,6 +49,21 @@ export function usePassengerRidesFeed(userId) {
    */
   const fetchRidesForTab = useCallback(async () => {
     if (!userId) return;
+    const fetchMeta = nextFetchMetaRef.current;
+    nextFetchMetaRef.current = null;
+
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'usePassengerRidesFeed.js:49',message:'fetchRidesForTab called',data:{userId,activeTab,rideTypeFilter,page},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    
+    // Optional: inspect refresh origins without affecting production UX.
+    // Enable via localStorage.setItem('FEED_REFRESH_DEBUG','1')
+    try {
+      if (typeof window !== 'undefined' && window?.localStorage?.getItem('FEED_REFRESH_DEBUG') === '1') {
+        // eslint-disable-next-line no-console
+        console.debug('[PassengerFeed] fetchRidesForTab', { userId, activeTab, rideTypeFilter, page, fetchMeta });
+      }
+    } catch (_) {}
 
     setIsLoading(true);
     setError(null);
@@ -58,7 +74,7 @@ export function usePassengerRidesFeed(userId) {
         activeTab,
         rideTypeFilter,
         page,
-        pageSize
+        PAGE_SIZE
       );
 
       if (result.error) {
@@ -75,7 +91,7 @@ export function usePassengerRidesFeed(userId) {
     } finally {
       setIsLoading(false);
     }
-  }, [userId, activeTab, rideTypeFilter, page, pageSize]);
+  }, [userId, activeTab, rideTypeFilter, page]); // pageSize is constant, not in deps
 
   /**
    * Fetch rides when dependencies change
@@ -88,14 +104,17 @@ export function usePassengerRidesFeed(userId) {
    * Change active tab
    * Resets page to 1 and fetches new data
    * Forces a fresh data load by clearing current rides
+   * ALWAYS loads latest data from server (for manual and automated navigation)
    * 
    * @param {string} newTab - PENDING | ACTIVE | COMPLETED | CANCELLED
    */
-  const changeTab = useCallback((newTab) => {
+  const changeTab = useCallback((newTab, meta = null) => {
     if (newTab !== activeTab) {
+      nextFetchMetaRef.current = { reason: 'tab_change', requestedTab: newTab, ...meta };
       setRides([]); // Clear current rides for fresh load
       setActiveTab(newTab);
       setPage(1);
+      // Tab change will trigger fetchRidesForTab via useEffect dependency
     }
   }, [activeTab]);
 
@@ -177,14 +196,15 @@ export function usePassengerRidesFeed(userId) {
    * Refresh current tab
    * Re-fetches data with current filters and page
    */
-  const refreshCurrentTab = useCallback(() => {
+  const refreshCurrentTab = useCallback((meta = null) => {
+    nextFetchMetaRef.current = { reason: 'refresh_current_tab', activeTab, ...meta };
     fetchRidesForTab();
   }, [fetchRidesForTab]);
 
   /**
    * Calculate total pages and hasMore for pagination
    */
-  const totalPages = Math.ceil(totalCount / pageSize);
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
   const hasMore = page < totalPages;
 
   /**
@@ -202,7 +222,7 @@ export function usePassengerRidesFeed(userId) {
     activeTab,
     rideTypeFilter,
     page,
-    pageSize,
+    pageSize: PAGE_SIZE, // Export constant as pageSize for API compatibility
     totalPages,
     totalCount,
     rides,

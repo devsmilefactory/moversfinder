@@ -172,7 +172,7 @@ const Register = () => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 I want to register as:
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setUserType('individual')}
                   className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${
@@ -182,16 +182,6 @@ const Register = () => {
                   }`}
                 >
                   Individual
-                </button>
-                <button
-                  onClick={() => setUserType('corporate')}
-                  className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-                    userType === 'corporate'
-                      ? 'bg-primary text-white shadow-md'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  Corporate
                 </button>
                 <button
                   onClick={() => setUserType('driver')}

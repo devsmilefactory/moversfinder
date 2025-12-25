@@ -12,6 +12,7 @@
 
 import { formatPrice } from './formatters';
 import { parseErrandTasks } from './errandTasks';
+import { getRideTypeHandler } from './rideTypeHandlers';
 
 /**
  * Determine if ride is a round trip
@@ -54,7 +55,7 @@ export function calculatePerTripCost(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getSimpleCostDisplay(ride) {
+export function getSimpleCostDisplay(ride) {
   const total = parseFloat(ride.estimated_cost || ride.fare) || 0;
   
   return {
@@ -70,7 +71,7 @@ function getSimpleCostDisplay(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getRoundTripCostDisplay(ride) {
+export function getRoundTripCostDisplay(ride) {
   const total = parseFloat(ride.estimated_cost) || 0;
   const outboundCost = parseFloat(ride.outbound_cost) || (total / 2);
   const returnCost = parseFloat(ride.return_cost) || (total / 2);
@@ -94,7 +95,7 @@ function getRoundTripCostDisplay(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getRecurringTripCostDisplay(ride) {
+export function getRecurringTripCostDisplay(ride) {
   const total = parseFloat(ride.estimated_cost) || 0;
   const tripCount = parseInt(ride.number_of_trips) || 1;
   const completed = parseInt(ride.completed_rides_count) || 0;
@@ -122,7 +123,7 @@ function getRecurringTripCostDisplay(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getRecurringRoundTripCostDisplay(ride) {
+export function getRecurringRoundTripCostDisplay(ride) {
   const total = parseFloat(ride.estimated_cost) || 0;
   const totalLegs = parseInt(ride.number_of_trips) || 2;
   const totalOccurrences = Math.ceil(totalLegs / 2);
@@ -157,7 +158,7 @@ function getRecurringRoundTripCostDisplay(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getErrandCostDisplay(ride) {
+export function getErrandCostDisplay(ride) {
   const total = parseFloat(ride.estimated_cost) || 0;
   const tasks = parseErrandTasks(ride.errand_tasks);
   const taskCount = tasks.length;
@@ -187,7 +188,7 @@ function getErrandCostDisplay(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getRecurringErrandCostDisplay(ride) {
+export function getRecurringErrandCostDisplay(ride) {
   const total = parseFloat(ride.estimated_cost) || 0;
   const occurrenceCount = parseInt(ride.number_of_trips) || 1;
   const completed = parseInt(ride.completed_rides_count) || 0;
@@ -231,6 +232,7 @@ function getRecurringErrandCostDisplay(ride) {
 /**
  * Get comprehensive cost display for any ride type
  * Main entry point for cost display logic
+ * Now uses ride type handlers for modular, scalable cost calculation
  * 
  * @param {Object} ride - Ride object
  * @returns {Object} Cost display object with type-specific fields
@@ -240,9 +242,19 @@ export function getRideCostDisplay(ride) {
     return getSimpleCostDisplay({ estimated_cost: 0 });
   }
   
+  // Use ride type handler for cost breakdown
+  try {
+    const handler = getRideTypeHandler(ride.service_type);
+    return handler.getCostBreakdown(ride);
+  } catch (error) {
+    console.warn('Error using ride type handler for cost, falling back to legacy:', error);
+  }
+  
+  // Legacy fallback logic (kept for backward compatibility)
   const isRoundTrip = isRoundTripRide(ride);
   const isRecurring = (ride.number_of_trips > 1) || ride.series_id;
-  const isErrand = ride.service_type === 'errands';
+  const handler = getRideTypeHandler(ride.service_type);
+  const isErrand = handler.isServiceType(ride, 'errands');
   
   // Recurring round trip
   if (isRoundTrip && isRecurring) {

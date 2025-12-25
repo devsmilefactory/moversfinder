@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { FormInput, FormSelect, FormTextarea } from '../../shared/forms';
+import { FEATURE_FLAGS, normalizeRoundTripSelection } from '../../../config/featureFlags';
 
 /**
  * TaxiBookingForm Component
@@ -18,6 +19,15 @@ const TaxiBookingForm = ({
   errors = {},
   warnings = {}
 }) => {
+  const roundTripEnabled = FEATURE_FLAGS.ROUND_TRIPS_ENABLED;
+  const normalizedRoundTrip = normalizeRoundTripSelection(formData.isRoundTrip || false);
+
+  useEffect(() => {
+    if (!roundTripEnabled && formData.isRoundTrip) {
+      onFormDataUpdate({ isRoundTrip: false });
+    }
+  }, [roundTripEnabled, formData.isRoundTrip, onFormDataUpdate]);
+
   // Handle service-specific field updates
   const handleServiceChange = (field, value) => {
     onServiceDataUpdate({ [field]: value });
@@ -115,27 +125,29 @@ const TaxiBookingForm = ({
       </div>
 
       {/* Round Trip Option */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={formData.isRoundTrip || false}
-            onChange={(e) => handleFormChange('isRoundTrip', e.target.checked)}
-            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 mt-0.5"
-          />
-          <div className="flex-1">
-            <div className="font-medium text-slate-700 text-sm">Round Trip</div>
-            <div className="text-xs text-slate-600 mt-1">
-              Return to pickup location after drop-off. The return trip will be automatically scheduled.
-            </div>
-            {formData.isRoundTrip && (
-              <div className="text-xs text-blue-600 mt-2 font-medium">
-                💡 Round trip pricing: ~80% of single trip cost for return journey
+      {roundTripEnabled && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={normalizedRoundTrip}
+              onChange={(e) => handleFormChange('isRoundTrip', e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 mt-0.5"
+            />
+            <div className="flex-1">
+              <div className="font-medium text-slate-700 text-sm">Round Trip</div>
+              <div className="text-xs text-slate-600 mt-1">
+                Return to pickup location after drop-off. The return trip will be automatically scheduled.
               </div>
-            )}
-          </div>
-        </label>
-      </div>
+              {normalizedRoundTrip && (
+                <div className="text-xs text-blue-600 mt-2 font-medium">
+                  💡 Round trip pricing: ~80% of single trip cost for return journey
+                </div>
+              )}
+            </div>
+          </label>
+        </div>
+      )}
 
       {/* Additional Stops */}
       <div className="space-y-3">

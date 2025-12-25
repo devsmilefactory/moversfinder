@@ -60,33 +60,31 @@ const useDriverStore = create(
       loadDashboardData: async (userId) => {
         set({ loading: true, error: null });
         try {
-          // Fetch driver profile; create if missing to avoid 406 (PGRST116)
+          // Fetch driver profile - don't create if missing (RLS policy issue)
+          // If profile doesn't exist, it should be created through proper registration flow
           const { data: maybeProfile, error: profileError } = await supabase
             .from('driver_profiles')
             .select('*')
             .eq('user_id', userId)
             .maybeSingle();
 
-          if (profileError) throw profileError;
-
-          let driverProfileRow = maybeProfile;
-          if (!driverProfileRow) {
-            const { data: created, error: createError } = await supabase
-              .from('driver_profiles')
-              .insert({
-                user_id: userId,
-                profile_status: 'in_progress',
-                profile_completion_status: 'incomplete',
-                approval_status: 'pending',
-                account_status: 'active',
-                completion_percentage: 0,
-                platform: 'taxicab'
-              })
-              .select()
-              .single();
-            if (createError) throw createError;
-            driverProfileRow = created;
+          if (profileError && profileError.code !== 'PGRST116') {
+            // Only throw if it's not a "not found" error
+            throw profileError;
           }
+
+          // If profile doesn't exist, return early with empty state
+          // Profile should be created through registration/profile creation flow
+          if (!maybeProfile) {
+            set({
+              driverProfile: null,
+              loading: false,
+              error: null
+            });
+            return;
+          }
+
+          const driverProfileRow = maybeProfile;
 
 
 

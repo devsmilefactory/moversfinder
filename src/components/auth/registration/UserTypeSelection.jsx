@@ -15,12 +15,6 @@ const UserTypeSelection = ({ selectedUserType, onUserTypeSelect }) => {
       icon: 'User',
     },
     {
-      id: 'corporate',
-      title: 'Corporate',
-      subtitle: 'Manage company transportation',
-      icon: 'Building',
-    },
-    {
       id: 'driver',
       title: 'Driver',
       subtitle: 'Drive and earn with TaxiCab',

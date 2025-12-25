@@ -1,5 +1,14 @@
-import { useEffect, useState, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
+/**
+ * @deprecated Not used by the current driver/passenger UI.
+ * The app now uses `useSmartRealtimeFeed`, `useNotifications`, and the shared
+ * `src/lib/realtimeRegistry.js` to avoid duplicate Supabase Realtime subscriptions.
+ *
+ * Kept for reference in case we revive an aggregated "all-in-one" realtime hook later.
+ * See: `docs/DEPRECATED_CODE_MAP.md`
+ */
+
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { subscribePostgresChanges, subscribeChannelStatus } from '../lib/realtimeRegistry';
 
 /**
  * Centralized Realtime Hook for Ride Management
@@ -27,6 +36,14 @@ export const useRideRealtime = (userId, userType = 'passenger', options = {}) =>
   const [notifications, setNotifications] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [error, setError] = useState(null);
+  const unsubscribersRef = useRef([]);
+  const onRideUpdateRef = useRef(onRideUpdate);
+  const onOfferUpdateRef = useRef(onOfferUpdate);
+  const onNotificationRef = useRef(onNotification);
+
+  useEffect(() => { onRideUpdateRef.current = onRideUpdate; }, [onRideUpdate]);
+  useEffect(() => { onOfferUpdateRef.current = onOfferUpdate; }, [onOfferUpdate]);
+  useEffect(() => { onNotificationRef.current = onNotification; }, [onNotification]);
 
   // Handle ride updates
   const handleRideUpdate = useCallback((payload) => {
@@ -50,10 +67,8 @@ export const useRideRealtime = (userId, userType = 'passenger', options = {}) =>
     }
 
     // Call custom handler if provided
-    if (onRideUpdate) {
-      onRideUpdate(payload);
-    }
-  }, [onRideUpdate]);
+    onRideUpdateRef.current?.(payload);
+  }, []);
 
   // Handle offer updates
   const handleOfferUpdate = useCallback((payload) => {
@@ -77,10 +92,8 @@ export const useRideRealtime = (userId, userType = 'passenger', options = {}) =>
     }
 
     // Call custom handler if provided
-    if (onOfferUpdate) {
-      onOfferUpdate(payload);
-    }
-  }, [onOfferUpdate]);
+    onOfferUpdateRef.current?.(payload);
+  }, []);
 
   // Handle notification updates
   const handleNotificationUpdate = useCallback((payload) => {
@@ -95,10 +108,8 @@ export const useRideRealtime = (userId, userType = 'passenger', options = {}) =>
     }
 
     // Call custom handler if provided
-    if (onNotification) {
-      onNotification(payload.new);
-    }
-  }, [onNotification]);
+    onNotificationRef.current?.(payload.new);
+  }, []);
 
   useEffect(() => {
     if (!userId) {
@@ -109,90 +120,64 @@ export const useRideRealtime = (userId, userType = 'passenger', options = {}) =>
     console.log(`🔌 Setting up realtime subscriptions for ${userType}:`, userId);
     setConnectionStatus('connecting');
 
-    const channels = [];
-
     try {
+      // Cleanup any existing subs for this hook instance
+      unsubscribersRef.current.forEach((unsub) => {
+        try { unsub?.(); } catch (e) {}
+      });
+      unsubscribersRef.current = [];
+
+      const channelName = `ride-realtime-${userType}-${userId}`;
+
+      const unsubStatus = subscribeChannelStatus(channelName, (status) => {
+        if (status === 'SUBSCRIBED') setConnectionStatus('connected');
+        if (status === 'CHANNEL_ERROR') {
+          setError('Failed to connect to realtime updates');
+          setConnectionStatus('error');
+        }
+        if (status === 'CLOSED') setConnectionStatus('disconnected');
+      });
+
+      unsubscribersRef.current.push(unsubStatus);
+
       // Subscribe to rides table
       if (subscribeToRides) {
-        const ridesChannel = supabase
-          .channel(`${userType}-rides-${userId}`)
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'rides',
-              filter: userType === 'passenger'
-                ? `user_id=eq.${userId}`
-                : `driver_id=eq.${userId}`
-            },
-            handleRideUpdate
-          )
-          .subscribe((status) => {
-            console.log(`🔌 Rides subscription status (${userType}):`, status);
-            
-            if (status === 'SUBSCRIBED') {
-              setConnectionStatus('connected');
-            } else if (status === 'SUBSCRIPTION_ERROR') {
-              console.error('❌ Rides subscription error');
-              setError('Failed to connect to ride updates');
-              setConnectionStatus('error');
-            } else if (status === 'CLOSED') {
-              console.warn('⚠️ Rides connection closed');
-              setConnectionStatus('disconnected');
-            }
-          });
-
-        channels.push(ridesChannel);
+        const filter =
+          userType === 'passenger' ? `user_id=eq.${userId}` : `driver_id=eq.${userId}`;
+        unsubscribersRef.current.push(
+          subscribePostgresChanges({
+            channelName,
+            table: 'rides',
+            event: '*',
+            filter,
+            listener: handleRideUpdate,
+          })
+        );
       }
 
       // Subscribe to ride_offers (for passengers)
       if (subscribeToOffers && userType === 'passenger') {
-        const offersChannel = supabase
-          .channel(`passenger-offers-${userId}`)
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'ride_offers'
-            },
-            handleOfferUpdate
-          )
-          .subscribe((status) => {
-            console.log('🔌 Offers subscription status:', status);
-            
-            if (status === 'SUBSCRIPTION_ERROR') {
-              console.error('❌ Offers subscription error');
-            }
-          });
-
-        channels.push(offersChannel);
+        unsubscribersRef.current.push(
+          subscribePostgresChanges({
+            channelName,
+            table: 'ride_offers',
+            event: '*',
+            listener: handleOfferUpdate,
+          })
+        );
       }
 
       // Subscribe to notifications
       if (subscribeToNotifications) {
-        const notificationsChannel = supabase
-          .channel(`notifications-${userId}`)
-          .on(
-            'postgres_changes',
-            {
-              event: 'INSERT',
-              schema: 'public',
-              table: 'notifications',
-              filter: `user_id=eq.${userId}`
-            },
-            handleNotificationUpdate
-          )
-          .subscribe((status) => {
-            console.log('🔌 Notifications subscription status:', status);
-            
-            if (status === 'SUBSCRIPTION_ERROR') {
-              console.error('❌ Notifications subscription error');
-            }
-          });
-
-        channels.push(notificationsChannel);
+        unsubscribersRef.current.push(
+          subscribePostgresChanges({
+            channelName,
+            table: 'notifications',
+            event: 'INSERT',
+            filter: `user_id=eq.${userId}`,
+            listener: handleNotificationUpdate,
+          })
+        );
       }
 
     } catch (err) {
@@ -204,13 +189,12 @@ export const useRideRealtime = (userId, userType = 'passenger', options = {}) =>
     // Cleanup subscriptions
     return () => {
       console.log(`🔌 Cleaning up realtime subscriptions for ${userType}`);
-      channels.forEach(channel => {
-        try {
-          channel.unsubscribe();
-        } catch (err) {
+      unsubscribersRef.current.forEach((unsub) => {
+        try { unsub?.(); } catch (err) {
           console.error('Error unsubscribing channel:', err);
         }
       });
+      unsubscribersRef.current = [];
       setConnectionStatus('disconnected');
     };
   }, [

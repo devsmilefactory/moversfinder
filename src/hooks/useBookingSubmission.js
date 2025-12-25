@@ -6,13 +6,9 @@ import { prepareErrandTasksForInsert } from '../utils/errandTasks';
 import { enforceInstantOnly, FEATURE_FLAGS } from '../config/featureFlags';
 import { toGeoJSON, calculateDistance, getRouteDistanceAndDuration, getRouteWithStopsDistanceAndDuration } from '../utils/locationServices';
 import {
-  calculateEstimatedFareV2,
-  calculateTaxiFare,
-  calculateCourierFare,
-  calculateSchoolRunFare,
-  calculateErrandsFare,
-  calculateBulkTripsFare
+  calculateEstimatedFareV2
 } from '../utils/pricingCalculator';
+import { getRideTypeHandler } from '../utils/rideTypeHandlers';
 
 /**
  * useBookingSubmission Hook
@@ -230,61 +226,25 @@ const useBookingSubmission = ({
     const numberOfTrips = formData.numberOfTrips || 1;
 
     try {
-      switch (selectedService) {
-        case 'taxi':
-          return await calculateTaxiFare({
-            distanceKm,
-            isRoundTrip: formData.isRoundTrip || false,
-            numberOfDates: numberOfTrips
-          });
-
-        case 'courier':
-          return await calculateCourierFare({
-            distanceKm,
-            vehicleType: serviceData.vehicleType || 'sedan',
-            packageSize: serviceData.package?.size || 'medium',
-            isRecurring: numberOfTrips > 1,
-            numberOfDates: numberOfTrips
-          });
-
-        case 'school_run':
-          return await calculateSchoolRunFare({
-            distanceKm,
-            isRoundTrip: formData.isRoundTrip || false,
-            numberOfDates: numberOfTrips
-          });
-
-        case 'errands':
-          const fare = await calculateErrandsFare({
-            errands: serviceData.tasks || [],
-            numberOfDates: numberOfTrips
-          });
-          
-          // If we have errand tasks, update the routeDetails with total distance/duration
-          if (fare && serviceData.tasks) {
-            const totalDistance = serviceData.tasks.reduce((sum, t) => sum + (parseFloat(t.distanceKm || t.distance) || 0), 0);
-            const totalDuration = serviceData.tasks.reduce((sum, t) => sum + (parseInt(t.durationMinutes || t.duration) || 0), 0);
-            
-            if (totalDistance > 0) routeDetails.distanceKm = totalDistance;
-            if (totalDuration > 0) routeDetails.durationMinutes = totalDuration;
-          }
-          
-          return fare;
-
-        case 'bulk':
-          return await calculateBulkTripsFare({
-            distanceKm,
-            numberOfTrips
-          });
-
-        default:
-          // Fallback to simple calculation
-          const baseFare = (await calculateEstimatedFareV2({ distanceKm })) || 0;
-          return {
-            totalFare: baseFare * numberOfTrips,
-            breakdown: [{ label: 'Base fare', amount: baseFare }]
-          };
+      // Use handler system for pricing calculation
+      const handler = getRideTypeHandler(selectedService);
+      const fareResult = await handler.calculateFare({
+        distanceKm,
+        formData,
+        serviceData,
+        numberOfTrips
+      });
+      
+      // Special handling for errands: update routeDetails with total distance/duration
+      if (selectedService === 'errands' && fareResult && serviceData.tasks) {
+        const totalDistance = serviceData.tasks.reduce((sum, t) => sum + (parseFloat(t.distanceKm || t.distance) || 0), 0);
+        const totalDuration = serviceData.tasks.reduce((sum, t) => sum + (parseInt(t.durationMinutes || t.duration) || 0), 0);
+        
+        if (totalDistance > 0) routeDetails.distanceKm = totalDistance;
+        if (totalDuration > 0) routeDetails.durationMinutes = totalDuration;
       }
+      
+      return fareResult;
     } catch (error) {
       console.warn('Fare calculation failed:', error);
       // Fallback calculation
@@ -332,6 +292,7 @@ const useBookingSubmission = ({
     
     // Enforce instant-only mode if feature flags disable scheduled/recurring
     rideTiming = enforceInstantOnly(rideTiming);
+    const rideIsInstant = rideTiming === 'instant';
 
     return {
       // User and service info
@@ -385,7 +346,7 @@ const useBookingSubmission = ({
       })() : null,
 
       // Recurrence pattern (only set if recurring is enabled)
-      recurrence_pattern: (rideTiming === 'scheduled_recurring' && FEATURE_FLAGS.RECURRING_RIDES_ENABLED) ? (
+      recurrence_pattern: (!rideIsInstant && rideTiming === 'scheduled_recurring' && FEATURE_FLAGS.RECURRING_RIDES_ENABLED) ? (
         scheduleType === 'specific_dates' ? {
           type: 'specific_dates',
           dates: formData.selectedDates,
@@ -401,16 +362,26 @@ const useBookingSubmission = ({
         } : null
       ) : null,
 
-      // Series info
-      total_rides_in_series: derivedNumberOfTrips,
+      // Series info (normalize instant to single)
+      total_rides_in_series: rideIsInstant ? 1 : derivedNumberOfTrips,
       completed_rides_count: 0,
-      remaining_rides_count: derivedNumberOfTrips,
+      remaining_rides_count: rideIsInstant ? 1 : derivedNumberOfTrips,
 
       // Service-specific data
       special_requests: formData.specialInstructions || '',
       
-      // Status
+      // Status and state alignment (feed categories are generated in DB)
       status: 'pending',
+      ride_status: 'pending',
+      state: 'PENDING',
+      execution_sub_state: 'NONE',
+      status_updated_at: new Date().toISOString(),
+
+      // Series fields (normalized for instant-only)
+      series_id: null,
+      series_trip_number: 1,
+      series_occurrence_index: null,
+
       created_at: new Date().toISOString()
     };
   }, [roundToNearestHalfDollar]);
@@ -424,6 +395,12 @@ const useBookingSubmission = ({
     setSubmitSuccess(false);
 
     try {
+      // Get authenticated user ID directly from Supabase auth to ensure RLS policy compliance
+      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser();
+      if (authError || !authUser?.id) {
+        throw new Error('You must be logged in to book a ride. Please log in and try again.');
+      }
+
       // Step 1: Validate form data
       const validation = validateBookingData(selectedService, formData, serviceData);
       if (!validation.isValid) {
@@ -439,8 +416,8 @@ const useBookingSubmission = ({
       // Step 3: Calculate fare
       const fareDetails = await calculateFinalFare(selectedService, routeDetails, formData, serviceData);
 
-      // Step 4: Prepare booking data
-      const bookingData = prepareBookingData(user, selectedService, formData, serviceData, routeDetails, fareDetails);
+      // Step 4: Prepare booking data (use authenticated user ID for RLS compliance)
+      const bookingData = prepareBookingData(authUser, selectedService, formData, serviceData, routeDetails, fareDetails);
 
       // Step 5: Insert into database
       const { data: rideData, error: rideError } = await supabase

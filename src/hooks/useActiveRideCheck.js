@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { fetchActiveInstantRide, fetchImminentScheduledRides } from '../services/driverRidesApi';
+import { fetchActiveInstantRide, fetchImminentScheduledRides, ensureDriverAvailability } from '../services/driverRidesApi';
 
 export function useActiveRideCheck(driverId) {
   // Active instant ride state
@@ -115,6 +115,26 @@ export function useActiveRideCheck(driverId) {
       setHasActiveRideToast(false);
     }
   }, []);
+
+  /**
+   * On page focus/visibility, ensure driver availability is reset if no active ride
+   */
+  useEffect(() => {
+    const onResume = async () => {
+      if (!driverId) return;
+      // If we don't currently track an active ride, mark available defensively
+      if (!activeInstantRide) {
+        await ensureDriverAvailability(driverId);
+      }
+    };
+
+    window.addEventListener('visibilitychange', onResume);
+    window.addEventListener('focus', onResume);
+    return () => {
+      window.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('focus', onResume);
+    };
+  }, [driverId, activeInstantRide]);
 
   /**
    * Run priority checks on mount

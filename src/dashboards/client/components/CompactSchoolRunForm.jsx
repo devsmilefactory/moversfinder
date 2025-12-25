@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import LocationInput from '../../shared/LocationInput';
 import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
 import { useCorporateInvoiceApproval } from '../../../hooks/useCorporateInvoiceApproval';
+import { FEATURE_FLAGS, normalizeRoundTripSelection } from '../../../config/featureFlags';
 
 /**
  * Compact School/Work Run Booking Form
@@ -12,6 +13,16 @@ import { useCorporateInvoiceApproval } from '../../../hooks/useCorporateInvoiceA
 
 const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
   const { isApproved, isLoading } = useCorporateInvoiceApproval();
+  const roundTripEnabled = FEATURE_FLAGS.ROUND_TRIPS_ENABLED;
+  const normalizedRoundTrip = normalizeRoundTripSelection(
+    formData.isRoundTrip || formData.tripDirection === 'round-trip' || false
+  );
+
+  useEffect(() => {
+    if (!roundTripEnabled && (formData.isRoundTrip || formData.tripDirection === 'round-trip') && onChange) {
+      onChange((prev) => ({ ...prev, isRoundTrip: false, tripDirection: 'one-way' }));
+    }
+  }, [roundTripEnabled, formData.isRoundTrip, formData.tripDirection, onChange]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -57,23 +68,31 @@ const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
   return (
     <div className="space-y-4">
       {/* Round Trip Option (standardized with Taxi) */}
-      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={formData.isRoundTrip || formData.tripDirection === 'round-trip' || false}
-            onChange={(e) => onChange({ ...formData, isRoundTrip: e.target.checked, tripDirection: e.target.checked ? 'round-trip' : 'one-way' })}
-            className="w-4 h-4 text-yellow-600 border-slate-300 rounded focus:ring-yellow-500"
-          />
-          <div className="flex-1">
-            <div className="font-medium text-slate-700 text-sm">Round Trip</div>
-            <div className="text-xs text-slate-600">Return to pickup location (doubles the fare)</div>
-          </div>
-        </label>
-      </div>
+      {roundTripEnabled && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={normalizedRoundTrip}
+              onChange={(e) =>
+                onChange((prev) => ({
+                  ...prev,
+                  isRoundTrip: e.target.checked,
+                  tripDirection: e.target.checked ? 'round-trip' : 'one-way'
+                }))
+              }
+              className="w-4 h-4 text-blue-600 border-blue-300 rounded focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <div className="font-medium text-slate-700 text-sm">Round Trip</div>
+              <div className="text-xs text-slate-600">Return to pickup location (doubles the fare)</div>
+            </div>
+          </label>
+        </div>
+      )}
 
       {/* Locations - Flat design without shadows */}
-      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+      <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
         <LocationInput
           label="Pickup Location"
           value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
@@ -84,7 +103,7 @@ const CompactSchoolRunForm = ({ formData, onChange, savedPlaces = [] }) => {
         />
       </div>
 
-      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+      <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
         <LocationInput
           label="Drop-off Location"
           value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}

@@ -1,10 +1,13 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Building2, Car, Users, CheckCircle, Clock, AlertCircle, XCircle, ChevronRight, Plus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import useProfileStore from '../../stores/profileStore';
 import useAuthStore from '../../stores/authStore';
 import useProfileSwitch from '../../hooks/useProfileSwitch';
+import useDriverStore from '../../stores/driverStore';
 import ConfirmationModal from '../modals/ConfirmationModal';
+import { getDriverStatus } from '../../utils/driverStatusCheck';
 
 import { isComingSoon } from '../../config/profileAvailability';
 
@@ -20,6 +23,9 @@ const ProfileSwitcher = ({ isOpen, onClose }) => {
   const { user } = useAuthStore();
   const [profiles, setProfiles] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
+  const navigate = useNavigate();
+
+  const { documents, loadDocuments } = useDriverStore();
 
   // Use shared profile switching hook
   const { handleProfileSwitch, switching, confirmationModal } = useProfileSwitch();
@@ -28,7 +34,10 @@ const ProfileSwitcher = ({ isOpen, onClose }) => {
   React.useEffect(() => {
     if (isOpen && user?.id) {
       setLoading(true);
-      refreshProfiles(user.id).then(() => {
+      refreshProfiles(user.id).then(async () => {
+        // Ensure driver documents are loaded for unified status calculation
+        try { await loadDocuments(user.id); } catch (e) { console.warn('ProfileSwitcher loadDocuments', e); }
+
         // Also check each profile directly from database for accurate status
         Promise.all([
           checkProfileExists(user.id, 'individual'),
@@ -47,6 +56,26 @@ const ProfileSwitcher = ({ isOpen, onClose }) => {
             return 'not_created';
           };
 
+          // Driver unified status using single source of truth
+          let driverDisplay = { type: 'driver', status: 'not_created', approval: 'pending', completion: 0 };
+          if (driverProfile) {
+            const driverStatus = getDriverStatus(driverProfile, documents || []);
+            const mapDriverState = () => {
+              if (driverStatus.state === 'approved' || driverStatus.canAccessRides) return 'approved';
+              if (driverStatus.state === 'pending') return 'pending_approval';
+              if (driverStatus.state === 'rejected') return 'rejected';
+              if (driverStatus.state === 'incomplete') return 'in_progress';
+              return 'in_progress';
+            };
+            driverDisplay = {
+              type: 'driver',
+              status: mapDriverState(),
+              approval: driverStatus.approvalStatus || 'pending',
+              completion: driverStatus.completionPercentage ?? 0,
+              canAccessRides: driverStatus.canAccessRides,
+            };
+          }
+
           const updatedProfiles = [
             {
               type: 'individual',
@@ -54,12 +83,7 @@ const ProfileSwitcher = ({ isOpen, onClose }) => {
               approval: individualProfile?.approval_status || 'pending',
               completion: individualProfile?.completion_percentage || 0
             },
-            {
-              type: 'driver',
-              status: mapStatus(driverProfile),
-              approval: driverProfile?.approval_status || 'pending',
-              completion: driverProfile?.completion_percentage || 0
-            }
+            driverDisplay
           ];
           setProfiles(updatedProfiles);
           setLoading(false);
@@ -131,6 +155,14 @@ const ProfileSwitcher = ({ isOpen, onClose }) => {
     // If already on this profile, just close the modal
     if (profileType === activeProfileType) {
       onClose();
+      return;
+    }
+
+    // If driver profile is not created, send user to driver profile creation
+    const targetProfile = profiles.find(p => p.type === 'driver');
+    if (profileType === 'driver' && (!targetProfile || targetProfile.status === 'not_created')) {
+      onClose();
+      navigate('/driver/profile');
       return;
     }
 

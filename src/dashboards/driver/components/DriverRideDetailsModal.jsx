@@ -6,6 +6,8 @@ import { getNavigationUrlForDriver, getNavigationUrlTo } from '../../../utils/na
 import { summarizeErrandTasks } from '../../../utils/errandTasks';
 import { getRideCostDisplay } from '../../../utils/rideCostDisplay';
 import { getRideProgress } from '../../../utils/rideProgressTracking';
+import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
+import { isErrandService } from '../../../utils/serviceTypes';
 
 const Row = ({ label, value }) => (
   <div className="flex items-start gap-2">
@@ -155,13 +157,16 @@ const DriverRideDetailsModal = ({ open, onClose, ride }) => {
 
         <div className="grid grid-cols-1 gap-3">
           <Row label="Service" value={
-            ride.service_type === 'taxi' ? 'Taxi Ride' :
-            ride.service_type === 'courier' ? 'Courier Delivery' :
-            ride.service_type === 'errands' ? 'Errands' :
-            ride.service_type === 'school_run' ? 'School Run' :
-            ride.service_type || 'Ride'
+            (() => {
+              const handler = getRideTypeHandler(ride.service_type);
+              return handler.getServiceTypeDisplayName();
+            })()
           } />
-          {ride.service_type !== 'errands' && (
+          {(() => {
+            const handler = getRideTypeHandler(ride.service_type);
+            const locationDetails = handler.renderLocationDetails(ride);
+            return locationDetails !== null;
+          })() && (
             <>
               <Row label="Pickup" value={ride.pickup_address || ride.pickup_location} />
               <Row label="Dropoff" value={ride.dropoff_address || ride.dropoff_location} />
@@ -188,7 +193,10 @@ const DriverRideDetailsModal = ({ open, onClose, ride }) => {
         </div>
 
         {/* Errand Tasks Breakdown */}
-        {ride.service_type === 'errands' && ride.errand_tasks && (() => {
+        {(() => {
+          const handler = getRideTypeHandler(ride.service_type);
+          return handler.isServiceType(ride, 'errands');
+        })() && ride.errand_tasks && (() => {
           const errandSummary = summarizeErrandTasks(ride.errand_tasks);
           if (!errandSummary || errandSummary.total === 0) return null;
           return (

@@ -90,7 +90,7 @@ const TripConfirmationStep = ({
             <h2 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
               <span>👤</span> Passenger Details
             </h2>
-            <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+            <div className="bg-blue-50 rounded-lg p-4 space-y-2 border border-blue-100">
               {passengerSelection === 'existing' && selectedPassenger && (
                 <div>
                   <span className="text-sm text-slate-600">Passenger:</span>
@@ -130,7 +130,7 @@ const TripConfirmationStep = ({
             <h2 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
               <span>📦</span> Package & Recipient Details
             </h2>
-            <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+            <div className="bg-blue-50 rounded-lg p-4 space-y-2 border border-blue-100">
               {recipientName && (
                 <div>
                   <span className="text-sm text-slate-600">Recipient:</span>
@@ -187,7 +187,7 @@ const TripConfirmationStep = ({
             </div>
 
             {vehicleType && (
-              <div className="bg-slate-50 rounded-lg p-4">
+              <div className="bg-blue-50 rounded-lg p-4 border border-blue-100">
                 <span className="text-sm text-slate-600">Vehicle Type:</span>
                 <span className="ml-2 font-semibold text-slate-700 capitalize">{vehicleType.replace('-', ' ')}</span>
               </div>
@@ -249,7 +249,7 @@ const TripConfirmationStep = ({
             {specialInstructions && (
               <div>
                 <span className="text-sm text-slate-600">Special Instructions:</span>
-                <div className="mt-1 text-slate-700 bg-white rounded p-3 border border-slate-200">
+                <div className="mt-1 text-slate-700 bg-blue-50/50 rounded p-3 border border-blue-100">
                   {specialInstructions}
                 </div>
               </div>

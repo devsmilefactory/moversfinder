@@ -66,14 +66,40 @@ async function getPricing() {
 }
 
 /**
- * Helper function to calculate base fare and distance charge
+ * Convert service pricing config to internal pricing format
  * @private
+ * @param {Object} servicePricingConfig - Service-specific pricing config
+ * @returns {Object} Internal pricing format
+ */
+function convertServicePricingToInternal(servicePricingConfig) {
+  if (!servicePricingConfig) return null;
+  
+  return {
+    MIN_FARE_USD: servicePricingConfig.min_fare || servicePricingConfig.base_fare || DEFAULT_PRICING.MIN_FARE_USD,
+    MIN_DISTANCE_KM: servicePricingConfig.min_distance_km || DEFAULT_PRICING.MIN_DISTANCE_KM,
+    RATE_PER_KM_AFTER_MIN: servicePricingConfig.price_per_km || DEFAULT_PRICING.RATE_PER_KM_AFTER_MIN,
+    VEHICLE_PRICES: servicePricingConfig.multipliers?.vehicle_prices || DEFAULT_PRICING.VEHICLE_PRICES,
+    SIZE_MULTIPLIERS: servicePricingConfig.multipliers?.size_multipliers || DEFAULT_PRICING.SIZE_MULTIPLIERS,
+    PRICING_RULES: servicePricingConfig.pricing_rules || {}
+  };
+}
+
+/**
+ * Helper function to calculate base fare and distance charge
  * @param {number} distanceKm - Distance in kilometers
  * @param {Object} pricing - Pricing configuration (optional)
+ * @param {Object} servicePricingConfig - Service-specific pricing config (optional)
  * @returns {Promise<Object>} Base fare and distance charge
  */
-async function calculateBaseFareAndDistance(distanceKm, pricing = null) {
-  const PRICING = pricing || await getPricing();
+export async function calculateBaseFareAndDistance(distanceKm, pricing = null, servicePricingConfig = null) {
+  // Use service-specific config if provided, otherwise use global pricing
+  let PRICING;
+  if (servicePricingConfig) {
+    PRICING = convertServicePricingToInternal(servicePricingConfig);
+  } else {
+    PRICING = pricing || await getPricing();
+  }
+  
   let baseFare = PRICING.MIN_FARE_USD;
   let distanceCharge = 0;
   
@@ -136,9 +162,10 @@ export const calculateEstimatedFareV2 = async ({ distanceKm }) => {
  * @param {number} params.distanceKm - Distance in kilometers
  * @param {boolean} params.isRoundTrip - Whether this is a round trip
  * @param {number} params.numberOfDates - Number of scheduled dates
+ * @param {Object} params.servicePricingConfig - Service-specific pricing config (optional)
  * @returns {Promise<Object|null>} Fare breakdown or null if invalid
  */
-export const calculateTaxiFare = async ({ distanceKm, isRoundTrip = false, numberOfDates = 1 }) => {
+export const calculateTaxiFare = async ({ distanceKm, isRoundTrip = false, numberOfDates = 1, servicePricingConfig = null }) => {
   if (import.meta.env.DEV) {
     console.log('🚕 Calculating taxi fare:', { distanceKm, isRoundTrip, numberOfDates });
   }
@@ -150,9 +177,13 @@ export const calculateTaxiFare = async ({ distanceKm, isRoundTrip = false, numbe
     return null;
   }
   
-  const { baseFare, distanceCharge, pricing: PRICING } = await calculateBaseFareAndDistance(distanceKm);
+  const { baseFare, distanceCharge, pricing: PRICING } = await calculateBaseFareAndDistance(distanceKm, null, servicePricingConfig);
   const singleTripFare = baseFare + distanceCharge;
-  const roundTripMultiplier = isRoundTrip ? 2 : 1;
+  
+  // Use pricing rules from service config if available
+  const roundTripMultiplier = isRoundTrip 
+    ? (servicePricingConfig?.pricing_rules?.round_trip_multiplier || 2.0)
+    : 1;
   const fareAfterRoundTrip = singleTripFare * roundTripMultiplier;
   const totalFare = fareAfterRoundTrip * numberOfDates;
   
@@ -186,6 +217,7 @@ export const calculateTaxiFare = async ({ distanceKm, isRoundTrip = false, numbe
  * @param {string} params.packageSize - Package size
  * @param {boolean} params.isRecurring - Whether this is recurring
  * @param {number} params.numberOfDates - Number of dates
+ * @param {Object} params.servicePricingConfig - Service-specific pricing config (optional)
  * @returns {Promise<Object|null>} Fare breakdown or null if invalid
  */
 export const calculateCourierFare = async ({ 
@@ -193,18 +225,30 @@ export const calculateCourierFare = async ({
   vehicleType = 'sedan', 
   packageSize = 'medium',
   isRecurring = false, 
-  numberOfDates = 1 
+  numberOfDates = 1,
+  servicePricingConfig = null
 }) => {
   if (!distanceKm || distanceKm <= 0) return null;
   
-  const PRICING = await getPricing();
+  // Use service-specific config if available, otherwise fall back to global
+  let PRICING;
+  if (servicePricingConfig) {
+    PRICING = convertServicePricingToInternal(servicePricingConfig);
+  } else {
+    PRICING = await getPricing();
+  }
+  
   const vehicleBase = PRICING.VEHICLE_PRICES[vehicleType] || PRICING.VEHICLE_PRICES.sedan;
   const sizeMultiplier = PRICING.SIZE_MULTIPLIERS[packageSize] || PRICING.SIZE_MULTIPLIERS.medium;
   
-  const { baseFare, distanceCharge } = await calculateBaseFareAndDistance(distanceKm, PRICING);
+  const { baseFare, distanceCharge } = await calculateBaseFareAndDistance(distanceKm, PRICING, servicePricingConfig);
   const totalDistanceFare = baseFare + distanceCharge;
   const singleDeliveryFare = vehicleBase * sizeMultiplier + totalDistanceFare;
-  const recurringMultiplier = isRecurring ? 2 : 1;
+  
+  // Use pricing rules from service config if available
+  const recurringMultiplier = isRecurring 
+    ? (servicePricingConfig?.pricing_rules?.recurring_multiplier || 2.0)
+    : 1;
   const fareAfterRecurring = singleDeliveryFare * recurringMultiplier;
   const totalFare = fareAfterRecurring * numberOfDates;
   
@@ -232,14 +276,19 @@ export const calculateCourierFare = async ({
  * @param {number} params.distanceKm - Distance in kilometers
  * @param {boolean} params.isRoundTrip - Whether this is a round trip
  * @param {number} params.numberOfDates - Number of scheduled dates
+ * @param {Object} params.servicePricingConfig - Service-specific pricing config (optional)
  * @returns {Promise<Object|null>} Fare breakdown or null if invalid
  */
-export const calculateSchoolRunFare = async ({ distanceKm, isRoundTrip = false, numberOfDates = 1 }) => {
+export const calculateSchoolRunFare = async ({ distanceKm, isRoundTrip = false, numberOfDates = 1, servicePricingConfig = null }) => {
   if (!distanceKm || distanceKm <= 0) return null;
   
-  const { baseFare, distanceCharge, pricing: PRICING } = await calculateBaseFareAndDistance(distanceKm);
+  const { baseFare, distanceCharge, pricing: PRICING } = await calculateBaseFareAndDistance(distanceKm, null, servicePricingConfig);
   const singleTripFare = baseFare + distanceCharge;
-  const roundTripMultiplier = isRoundTrip ? 2 : 1;
+  
+  // Use pricing rules from service config if available
+  const roundTripMultiplier = isRoundTrip 
+    ? (servicePricingConfig?.pricing_rules?.round_trip_multiplier || 2.0)
+    : 1;
   const fareAfterRoundTrip = singleTripFare * roundTripMultiplier;
   const totalFare = fareAfterRoundTrip * numberOfDates;
   
@@ -265,9 +314,10 @@ export const calculateSchoolRunFare = async ({ distanceKm, isRoundTrip = false, 
  * @param {Array} params.errands - Array of errand objects
  * @param {number} params.numberOfDates - Number of scheduled dates
  * @param {Function} params.calculateDistance - Distance calculation function
+ * @param {Object} params.servicePricingConfig - Service-specific pricing config (optional)
  * @returns {Promise<Object|null>} Fare breakdown or null if invalid
  */
-export const calculateErrandsFare = async ({ errands, numberOfDates = 1 }) => {
+export const calculateErrandsFare = async ({ errands, numberOfDates = 1, servicePricingConfig = null }) => {
   if (!errands || errands.length === 0) return null;
   
   const errandCosts = [];
@@ -280,7 +330,8 @@ export const calculateErrandsFare = async ({ errands, numberOfDates = 1 }) => {
     // It handles distance calculation between startPoint and destinationPoint
     const estimate = await estimateErrandTask({
       startPoint: errand.startPoint || errand.pickup_coordinates || errand.pickup_location || errand.pickup,
-      destinationPoint: errand.destinationPoint || errand.dropoff_coordinates || errand.dropoff_location || errand.dropoff
+      destinationPoint: errand.destinationPoint || errand.dropoff_coordinates || errand.dropoff_location || errand.dropoff,
+      servicePricingConfig
     });
     
     const errandFare = estimate.cost;
@@ -315,12 +366,13 @@ export const calculateErrandsFare = async ({ errands, numberOfDates = 1 }) => {
  * @param {Object} params - Parameters object
  * @param {number} params.distanceKm - Distance per trip
  * @param {number} params.numberOfTrips - Number of trips
+ * @param {Object} params.servicePricingConfig - Service-specific pricing config (optional)
  * @returns {Promise<Object|null>} Fare breakdown or null if invalid
  */
-export const calculateBulkTripsFare = async ({ distanceKm, numberOfTrips }) => {
+export const calculateBulkTripsFare = async ({ distanceKm, numberOfTrips, servicePricingConfig = null }) => {
   if (!distanceKm || distanceKm <= 0 || !numberOfTrips || numberOfTrips < 1) return null;
   
-  const { baseFare, distanceCharge, pricing: PRICING } = await calculateBaseFareAndDistance(distanceKm);
+  const { baseFare, distanceCharge, pricing: PRICING } = await calculateBaseFareAndDistance(distanceKm, null, servicePricingConfig);
   const perTripFare = baseFare + distanceCharge;
   const totalFare = perTripFare * numberOfTrips;
   

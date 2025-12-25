@@ -9,7 +9,7 @@ import React from 'react';
 import { CheckCircle, Circle, Clock, DollarSign, MapPin } from 'lucide-react';
 import { summarizeErrandTasks, describeTaskState, ERRAND_TASK_STATES } from '../../utils/errandTasks';
 import { calculateErrandTotalCost, calculateErrandTotalDistance, calculateErrandAverageDistance } from '../../utils/errandCostHelpers';
-import { formatDistance } from '../../utils/formatters';
+import { formatDistance, formatPrice } from '../../utils/formatters';
 
 /**
  * Get task status icon
@@ -70,6 +70,13 @@ const ErrandTaskList = ({
   const totalDistance = calculateErrandTotalDistance(parsedTasks);
   const averageDistance = summary.total > 0 ? calculateErrandAverageDistance(parsedTasks) : 0;
   const hasDistances = totalDistance > 0;
+  
+  // Calculate total duration from tasks
+  const totalDuration = parsedTasks.reduce((sum, task) => {
+    const duration = parseInt(task.durationMinutes || task.duration || 0);
+    return sum + (isNaN(duration) ? 0 : duration);
+  }, 0);
+  const hasDuration = totalDuration > 0;
 
   if (!summary || summary.total === 0) {
     return (
@@ -81,17 +88,24 @@ const ErrandTaskList = ({
 
   return (
     <div className="space-y-2">
-      {/* Task Summary */}
+      {/* Task Summary - Matching booking confirmation format */}
       <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-200">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex-1">
             <p className="text-sm font-bold text-emerald-800">
               {summary.total} Task{summary.total === 1 ? '' : 's'}
             </p>
+            {/* Summary line matching booking confirmation: "X tasks • Y km combined • Z min estimated" */}
             <p className="text-xs text-emerald-700">
-              {summary.completed} completed • {summary.remaining} remaining
+              {summary.total} task{summary.total === 1 ? '' : 's'}
               {hasDistances && (
-                <> • {formatDistance(totalDistance)} total</>
+                <> • {Number(totalDistance).toFixed(1)} km combined</>
+              )}
+              {hasDuration && (
+                <> • {totalDuration} min estimated</>
+              )}
+              {!hasDistances && !hasDuration && summary.total > 0 && (
+                <> • {summary.completed} completed • {summary.remaining} remaining</>
               )}
             </p>
           </div>
@@ -135,47 +149,63 @@ const ErrandTaskList = ({
         )}
       </div>
 
-      {/* Task List (if not compact) */}
+      {/* Task List (if not compact) - Matching booking confirmation format */}
       {!compact && summary.allTasks && summary.allTasks.length > 0 && (
-        <div className="space-y-1.5">
+        <div className="space-y-2 mt-3">
           {summary.allTasks.map((task, index) => {
             const TaskIcon = getTaskIcon(task.state);
             const taskColor = getTaskColor(task.state);
             const isActive = index === summary.activeTaskIndex;
             const taskCost = task.cost && task.cost > 0 ? task.cost : null;
+            const taskDistance = parseFloat(task.distanceKm || task.distance || 0);
+            const taskDuration = parseInt(task.durationMinutes || task.duration || 0);
+            const pickup = task.pickup || task.pickup_location || 'Not specified';
+            const dropoff = task.dropoff || task.dropoff_location || 'Not specified';
 
             return (
               <div
                 key={task.id || index}
-                className={`flex items-start gap-2 p-2 rounded-lg border ${
+                className={`text-sm text-slate-700 pl-4 border-l-2 ${
                   isActive
-                    ? 'border-emerald-300 bg-emerald-50'
-                    : 'border-gray-100 bg-gray-50'
+                    ? 'border-emerald-400 bg-emerald-50 rounded-r-lg p-3'
+                    : 'border-purple-200 bg-white rounded-r-lg p-3'
                 }`}
               >
-                <TaskIcon className={`w-4 h-4 ${taskColor} mt-0.5 flex-shrink-0`} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-medium ${isActive ? 'text-emerald-900' : 'text-gray-800'}`}>
-                        {task.title}
-                      </p>
-                      {showStatus && (
-                        <p className="text-xs text-gray-600 mt-0.5">
-                          {describeTaskState(task.state)}
-                        </p>
-                      )}
-                    </div>
-                    {showCosts && taskCost && (
-                      <div className="flex items-center gap-1 ml-2">
-                        <DollarSign className="w-3 h-3 text-green-600" />
-                        <span className="text-sm font-semibold text-green-600">
-                          ${taskCost.toFixed(2)}
-                        </span>
-                      </div>
-                    )}
+                {/* Task number and name - matching booking confirmation format */}
+                <p className="font-medium mb-1">
+                  {index + 1}. {task.title}
+                </p>
+                
+                {/* Pickup address */}
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Pickup: {pickup}
+                </p>
+                
+                {/* Drop-off address */}
+                <p className="text-xs text-slate-500">
+                  Drop-off: {dropoff}
+                </p>
+                
+                {/* Distance, time, and cost - matching booking confirmation format */}
+                {(taskDistance > 0 || taskDuration > 0 || taskCost) && (
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    {taskDistance > 0 && `≈ ${Number(taskDistance).toFixed(1)} km`}
+                    {taskDistance > 0 && taskDuration > 0 && ' • '}
+                    {taskDuration > 0 && `${taskDuration} min`}
+                    {taskCost && (taskDistance > 0 || taskDuration > 0) && ' • '}
+                    {taskCost && formatPrice(taskCost)}
+                  </p>
+                )}
+                
+                {/* Status indicator */}
+                {showStatus && (
+                  <div className="flex items-center gap-1 mt-1.5">
+                    <TaskIcon className={`w-3 h-3 ${taskColor}`} />
+                    <p className="text-[11px] text-gray-600">
+                      {describeTaskState(task.state)}
+                    </p>
                   </div>
-                </div>
+                )}
               </div>
             );
           })}

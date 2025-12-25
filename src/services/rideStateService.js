@@ -182,13 +182,25 @@ export async function confirmPayment(rideId, passengerId) {
  * Cancel ride (by driver or passenger)
  */
 export async function cancelRide(rideId, actorId, actorType = 'DRIVER') {
-  return transitionRideStatus(
+  const result = await transitionRideStatus(
     rideId,
     RIDE_STATE.CANCELLED,
     null,
     actorType,
     actorId
   );
+
+  // Keep legacy ride_status in sync for UI/feed logic
+  try {
+    await supabase
+      .from('rides')
+      .update({ ride_status: 'cancelled' })
+      .eq('id', rideId);
+  } catch (err) {
+    console.error('Error syncing ride_status on cancel:', err);
+  }
+
+  return result;
 }
 
 /**

@@ -1,3 +1,12 @@
+/**
+ * @deprecated Not used by the current routed driver experience.
+ * Driver routes render `dashboards/driver/pages/RideRequestsPage.jsx` which uses
+ * `dashboards/driver/DriverRidesPage.jsx` (unified feed + `useSmartRealtimeFeed`).
+ *
+ * Kept for reference for the older modular ride-requests container approach.
+ * See: `docs/DEPRECATED_CODE_MAP.md`
+ */
+
 import React, { useState, useEffect } from 'react';
 import { useRideRequests, useRideFiltering, useRideActions, useRealTimeUpdates } from '../../../hooks';
 import { RideRequestErrorBoundary } from '../../../components/shared';

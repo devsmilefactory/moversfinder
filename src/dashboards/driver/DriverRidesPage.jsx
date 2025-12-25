@@ -9,9 +9,11 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../../stores/authStore';
 import useProfileStore from '../../stores/profileStore';
+import useDriverStore from '../../stores/driverStore';
 import { useToast } from '../../components/ui/ToastProvider';
 import { supabase } from '../../lib/supabase';
-import { getCurrentLocation, toGeoJSON, fromGeoJSON } from '../../utils/locationServices';
+import { getCurrentLocation, toGeoJSON, fromGeoJSON, detectCurrentLocationWithCity } from '../../utils/locationServices';
+import useCentralizedLocation from '../../hooks/useCentralizedLocation';
 
 // Hooks
 import { useDriverRidesFeed } from '../../hooks/useDriverRidesFeed';
@@ -19,6 +21,7 @@ import { useActiveRideCheck } from '../../hooks/useActiveRideCheck';
 import { useNewRidesSubscription } from '../../hooks/useNewRidesSubscription';
 import { useCancelRide } from '../../hooks/useCancelRide';
 import { RIDE_STATUSES, getRideStatusCategory } from '../../hooks/useRideStatus';
+import { useSmartRealtimeFeed } from '../../hooks/useSmartRealtimeFeed';
 
 // Components
 import RidesTabs from './components/RidesTabs';
@@ -27,7 +30,9 @@ import RideList from './components/RideList';
 import ActiveRideToast from './components/ActiveRideToast';
 import ScheduledAlertToast from './components/ScheduledAlertToast';
 import NewAvailableRidesToast from './components/NewAvailableRidesToast';
+import RefreshIndicator from '../../components/shared/RefreshIndicator';
 import Button from '../../components/ui/Button';
+import { EmptyState, ErrorState, RideRequestErrorBoundary } from '../../components/shared/loading';
 
 // Preserved components
 import ActiveRideOverlay from './components/ActiveRideOverlay';
@@ -39,20 +44,76 @@ import RatingModal from './components/RatingModal';
 // Icons no longer needed - moved to card components
 import { activateScheduledRide } from '../../services/driverRidesApi';
 import useRatingStore from '../../stores/ratingStore';
+import { getDriverStatus } from '../../utils/driverStatusCheck';
 
 const DriverRidesPage = ({ onUiStateChange }) => {
   const { user } = useAuthStore();
-  const { activeProfile, refreshProfiles, loadProfileData } = useProfileStore();
+  const { activeProfile } = useProfileStore();
+  const { documents, loadDocuments } = useDriverStore();
   const { addToast } = useToast();
   const navigate = useNavigate();
 
   // Driver state
   const [isOnline, setIsOnline] = useState(false);
-  const [driverLocation, setDriverLocation] = useState(null);
   const [locationCity, setLocationCity] = useState('');
   const [locationLoading, setLocationLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshingStatus, setRefreshingStatus] = useState(false);
+  
+  // Ref to throttle error notifications
+  const locationErrorToastRef = useRef({});
+
+  // Use centralized location hook for continuous tracking
+  const {
+    currentLocation: driverLocation,
+    isDetecting: isDetectingLocation,
+    locationError: locationError,
+    locationPermission,
+    detectLocation,
+    startTracking,
+    stopTracking
+  } = useCentralizedLocation({
+    enableTracking: isOnline, // Start tracking when online
+    trackingInterval: 30000, // Update every 30 seconds
+    updateDatabase: isOnline, // Update database when online
+    userId: user?.id,
+    autoDetect: false, // Don't auto-detect, we'll do it manually when going online
+    onLocationUpdate: (location) => {
+      // Location updates are handled silently - no logging needed
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DriverRidesPage.jsx:78',message:'Location updated',data:{hasLocation:!!location},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
+    },
+    onError: (error) => {
+      // Throttle error notifications to prevent spam
+      // Only show toast for non-timeout errors (timeouts are expected and handled silently)
+      const isTimeoutError = error.code === 3 || error.message?.includes('Timeout');
+      
+      if (!isTimeoutError) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'DriverRidesPage.jsx:81',message:'Location tracking error',data:{errorCode:error.code,errorMessage:error.message},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'G'})}).catch(()=>{});
+        // #endregion
+        
+        // Debounce toast notifications - only show once per error type
+        const errorKey = `location-error-${error.code || 'unknown'}`;
+        const lastErrorTime = locationErrorToastRef.current?.[errorKey] || 0;
+        const now = Date.now();
+        
+        if (now - lastErrorTime > 10000) { // Only show once every 10 seconds per error type
+          if (!locationErrorToastRef.current) {
+            locationErrorToastRef.current = {};
+          }
+          locationErrorToastRef.current[errorKey] = now;
+          
+          addToast({ 
+            type: 'error', 
+            title: 'Location Error', 
+            message: error.message || 'Failed to track location' 
+          });
+        }
+      }
+    }
+  });
 
   // Initialize hooks
   const feedHook = useDriverRidesFeed(user?.id);
@@ -64,11 +125,14 @@ const DriverRidesPage = ({ onUiStateChange }) => {
     totalPages,
     rides,
     isLoading: feedIsLoading,
+    error: feedError,
     changeTab,
     changeRideTypeFilter,
     changeScheduleFilter,
     changePage,
     removeRideFromCurrentList,
+    addRideToCurrentList,
+    updateRideInCurrentList,
     refreshCurrentTab
   } = feedHook;
 
@@ -113,8 +177,21 @@ const DriverRidesPage = ({ onUiStateChange }) => {
   useEffect(() => {
     if (user?.id) {
       loadDriverStatus();
+      loadDocuments(user.id);
     }
   }, [user?.id]);
+
+  // Redirect to status page if profile is incomplete or pending/rejected approval
+  // User must complete profile and get approval before accessing rides
+  useEffect(() => {
+    if (user?.id && activeProfile && documents !== undefined) {
+      const driverStatus = getDriverStatus(activeProfile, documents || []);
+      // Block access if not approved - redirect to status page
+      if (!driverStatus.canAccessRides) {
+        navigate('/driver/status', { replace: true });
+      }
+    }
+  }, [user?.id, activeProfile, documents, navigate]);
 
   // Update last fetch timestamp when Available tab loads
   useEffect(() => {
@@ -123,92 +200,26 @@ const DriverRidesPage = ({ onUiStateChange }) => {
     }
   }, [activeTab, feedIsLoading, updateLastFetch]);
 
-  // Real-time subscription for ride status changes - automatically refresh and transition tabs
-  useEffect(() => {
-    if (!user?.id) return;
-
-    const channel = supabase
-      .channel(`driver-ride-status-updates-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'rides',
-          filter: `driver_id=eq.${user.id}`
-        },
-        (payload) => {
-          const updatedRide = payload.new;
-          const oldRide = payload.old;
-          const newStatus = updatedRide.ride_status;
-          const oldStatus = oldRide?.ride_status;
-
-          // Only process if status actually changed
-          if (newStatus !== oldStatus) {
-            console.log('🔄 Driver ride status changed:', {
-              rideId: updatedRide.id,
-              oldStatus,
-              newStatus
-            });
-
-            let targetTab = activeTab;
-            const statusCategory = getRideStatusCategory(newStatus);
-
-            if (statusCategory === 'completed') {
-              targetTab = 'COMPLETED';
-            } else if (statusCategory === 'active') {
-              targetTab = 'ACTIVE';
-            } else if (statusCategory === 'pending') {
-              if (oldStatus === 'pending' && updatedRide.driver_id === user.id) {
-                targetTab = 'ACTIVE';
-              }
-            }
-
-            // Only switch tabs if we're not already on the correct tab
-            // and the ride would actually appear in that tab
-            if (targetTab !== activeTab) {
-              console.log(`🔄 Auto-switching to ${targetTab} tab`);
-              changeTab(targetTab);
-            }
-
-            // Always refresh the current tab to get updated data
-            refreshCurrentTab();
-
-            // Also refresh active ride check
-            runPriorityChecks();
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'ride_offers',
-          filter: `driver_id=eq.${user.id}`
-        },
-        (payload) => {
-          // When an offer is accepted/rejected, refresh feeds
-          console.log('🔄 Ride offer updated:', payload.new);
-          refreshCurrentTab();
-          
-          // If offer was accepted, switch to ACTIVE tab
-          if (payload.new.offer_status === 'accepted') {
-            changeTab('ACTIVE');
-          } else if (payload.new.offer_status === 'rejected') {
-            // If rejected, might need to go back to AVAILABLE
-            if (activeTab === 'BID') {
-              refreshCurrentTab();
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      channel.unsubscribe();
-    };
-  }, [user?.id, activeTab, changeTab, refreshCurrentTab, runPriorityChecks]);
+  // Smart realtime feed with optimistic updates
+  const realtimeFeed = useSmartRealtimeFeed({
+    userId: user?.id,
+    userType: 'driver',
+    activeTab,
+    changeTab: (newTab, meta) => {
+      // IMPORTANT: changeTab already triggers a single fetch via the feed hook useEffect.
+      // Do NOT call refreshCurrentTab() here or you'll double-fetch on realtime-driven tab switches.
+      changeTab(newTab, meta);
+      runPriorityChecks(); // refresh active ride check (separate from feed fetch)
+    },
+    refreshCurrentTab,
+    removeRideFromCurrentList,
+    addRideToCurrentList,
+    updateRideInCurrentList,
+    driverOffers: [], // Will be fetched by hook
+    onNewDataAvailable: (tab, ride) => {
+      console.log(`[Realtime] New data available in ${tab} tab`);
+    }
+  });
 
   const loadDriverStatus = async () => {
     try {
@@ -222,12 +233,8 @@ const DriverRidesPage = ({ onUiStateChange }) => {
 
       if (data) {
         setIsOnline(data.is_online);
-        if (data.coordinates) {
-          const coords = fromGeoJSON(data.coordinates);
-          if (coords) {
-            setDriverLocation(coords);
-          }
-        }
+        // Note: driverLocation is now managed by useCentralizedLocation hook
+        // The hook will sync with the database automatically
       }
     } catch (error) {
       console.error('Error loading driver status:', error);
@@ -242,28 +249,68 @@ const DriverRidesPage = ({ onUiStateChange }) => {
     if (newStatus) {
       setLocationLoading(true);
       try {
-        const coords = await getCurrentLocation();
+        // Use centralized location detection with city
+        const location = await detectLocation();
+        
+        if (!location) {
+          // Check if it's a permission error - handle gracefully
+          const isPermissionError = locationPermission === 'denied' || 
+                                   locationError?.includes('permission') || 
+                                   locationError?.includes('Location permission denied');
+          
+          if (isPermissionError) {
+            setLocationLoading(false);
+            addToast({ 
+              type: 'warning', 
+              title: 'Location Permission Required', 
+              message: 'Please enable location access in your browser settings to go online.' 
+            });
+            return;
+          }
+          // For other location errors, show a message but don't throw
+          setLocationLoading(false);
+          addToast({ 
+            type: 'error', 
+            title: 'Location Error', 
+            message: locationError || 'Failed to detect location. Please try again.' 
+          });
+          return;
+        }
 
-        // Get city name
+        // Get city from the location result if available
+        // Try to get city using Google Maps geocoding
         try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.lat}&lon=${coords.lng}`
-          );
-          const data = await response.json();
-          const city = data.address?.city || data.address?.town || data.address?.village || 'Unknown Location';
-          setLocationCity(city);
+          // Wait for Google Maps if needed
+          let attempts = 0;
+          while (!window.google?.maps && attempts < 20) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            attempts++;
+          }
+
+          if (window.google?.maps) {
+            const locationWithCity = await detectCurrentLocationWithCity({
+              geolocationOptions: {
+                enableHighAccuracy: false, // Use already detected location
+                maximumAge: 60000
+              }
+            });
+            setLocationCity(locationWithCity.city || 'Unknown Location');
+          } else {
+            setLocationCity('Unknown Location');
+          }
         } catch (err) {
-          console.error('Error getting city name:', err);
+          console.warn('Could not get city name:', err);
           setLocationCity('Unknown Location');
         }
 
+        // Update database status
         const { error } = await supabase
           .from('driver_locations')
           .upsert({
             driver_id: user.id,
             is_online: true,
             is_available: true,
-            coordinates: toGeoJSON(coords),
+            coordinates: toGeoJSON(location),
             updated_at: new Date().toISOString()
           }, {
             onConflict: 'driver_id'
@@ -271,17 +318,28 @@ const DriverRidesPage = ({ onUiStateChange }) => {
 
         if (error) throw error;
 
-        setDriverLocation(coords);
         setIsOnline(true);
+        // Start continuous tracking (will be handled by the hook)
+        startTracking();
+        
         addToast({ type: 'success', title: 'You are now online', message: 'You will receive ride requests' });
         refreshCurrentTab();
       } catch (error) {
         console.error('Location error:', error);
-        addToast({ type: 'error', title: 'Location unavailable', message: error.message || 'Please enable location services' });
+        // Don't show error if it's already handled above (permission denied)
+        if (!error.message?.includes('permission') && !error.isPermissionDenied) {
+          addToast({ 
+            type: 'error', 
+            title: 'Location unavailable', 
+            message: error.message || 'Please enable location services' 
+          });
+        }
       } finally {
         setLocationLoading(false);
       }
     } else {
+      // Stop location tracking
+      stopTracking();
       const { error } = await supabase
         .from('driver_locations')
         .update({
@@ -295,6 +353,8 @@ const DriverRidesPage = ({ onUiStateChange }) => {
         console.error('Error going offline:', error);
         addToast({ type: 'error', title: 'Failed to go offline' });
       } else {
+        // Stop location tracking when going offline
+        stopTracking();
         setIsOnline(false);
         setLocationCity('');
         addToast({ type: 'info', title: 'You are now offline' });
@@ -486,56 +546,6 @@ const DriverRidesPage = ({ onUiStateChange }) => {
     }
   };
 
-  // Check if driver is approved
-  const isApproved = activeProfile?.approval_status === 'approved';
-
-  if (!isApproved && activeProfile?.approval_status === 'pending') {
-    return (
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-        <div className="text-center max-w-2xl mx-auto">
-          <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <span className="text-4xl">⏳</span>
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Approval Pending</h2>
-          <p className="text-gray-600 mb-6">
-            Your profile is currently under review. You will be notified once your account has been approved.
-          </p>
-          <div className="flex items-center justify-center gap-3">
-            <Button
-              variant="primary"
-              size="lg"
-              disabled={refreshingStatus}
-              onClick={async () => {
-                if (!user?.id) return;
-                try {
-                  setRefreshingStatus(true);
-                  await refreshProfiles(user.id);
-                  await loadProfileData(user.id, 'driver');
-                  addToast({ type: 'success', message: 'Status refreshed' });
-                } catch (e) {
-                  console.error('Failed to refresh status', e);
-                  addToast({ type: 'error', message: 'Failed to refresh status. Please try again.' });
-                } finally {
-                  setRefreshingStatus(false);
-                }
-              }}
-              className="bg-yellow-400 text-slate-900 hover:bg-yellow-500"
-            >
-              {refreshingStatus ? 'Refreshing...' : 'Refresh Status'}
-            </Button>
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={() => navigate('/driver/profile')}
-            >
-              View Profile
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -548,6 +558,7 @@ const DriverRidesPage = ({ onUiStateChange }) => {
   }
 
   return (
+    <RideRequestErrorBoundary>
     <div className="space-y-2">
       {/* Priority UI - Non-blocking */}
       {hasActiveRideToast && activeInstantRide && (
@@ -580,7 +591,7 @@ const DriverRidesPage = ({ onUiStateChange }) => {
       <div className="bg-white sm:rounded-lg shadow-sm border-y sm:border border-gray-200 overflow-hidden">
         <RidesTabs
           activeTab={activeTab}
-          onTabChange={changeTab}
+          onTabChange={(tab) => changeTab(tab, { source: 'ui_tab_click' })}
           counts={rideCounts}
         />
 
@@ -597,15 +608,35 @@ const DriverRidesPage = ({ onUiStateChange }) => {
           hasNewRides={hasNewRides}
         />
 
+        {/* Refresh Indicator - Shows when new data available in other tabs */}
+        {realtimeFeed.hasNewDataAvailable && (
+          <div className="px-2 sm:px-3 pt-2">
+            <RefreshIndicator
+              hasNewData={realtimeFeed.hasNewDataAvailable}
+              affectedTabs={realtimeFeed.newDataTabs}
+              onRefresh={realtimeFeed.manualRefresh}
+            />
+          </div>
+        )}
+
         <div className="p-2 sm:p-3 overflow-y-auto max-h-[calc(100vh-200px)]">
           {!isOnline ? (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                <span className="text-3xl">📍</span>
-              </div>
-              <h3 className="text-base font-semibold text-gray-900 mb-1">Go Online to See Rides</h3>
-              <p className="text-sm text-gray-600">Toggle the switch above to start receiving ride requests</p>
-            </div>
+            <EmptyState
+              icon="📍"
+              title="You're Offline"
+              message="Go online to start receiving ride requests."
+              actionLabel="Go Online"
+              onAction={() => handleToggleOnline(true)}
+              size="md"
+            />
+          ) : feedError && !feedIsLoading ? (
+            <ErrorState
+              hasError={true}
+              errorMessage={feedError?.message || 'Failed to load rides'}
+              onRetry={handleRefreshNewRides}
+              retryLabel="Retry"
+              size="md"
+            />
           ) : (
             <RideList
               rides={rides}
@@ -705,6 +736,7 @@ const DriverRidesPage = ({ onUiStateChange }) => {
         />
       )}
     </div>
+    </RideRequestErrorBoundary>
   );
 };
 

@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
 import Button from '../shared/Button';
 import { parseErrandTasks, describeTaskState } from '../../utils/errandTasks';
-import { isErrandService, normalizeServiceType } from '../../utils/serviceTypes';
+import { normalizeServiceType } from '../../utils/serviceTypes';
 import { getRideProgress } from '../../utils/rideProgressTracking';
+import { getRideTypeHandler } from '../../utils/rideTypeHandlers';
 
 /**
  * Reusable Ride Details Modal
@@ -82,6 +83,9 @@ const RideDetailsModal = ({
   };
 
   const serviceType = normalizeServiceType(ride?.serviceType || ride?.service_type);
+  
+  // Get ride type handler for modular service-specific handling
+  const rideTypeHandler = getRideTypeHandler(ride?.serviceType || ride?.service_type);
 
   const errandTasks = useMemo(
     () => parseErrandTasks(ride?.errand_tasks || ride?.tasks),
@@ -130,25 +134,16 @@ const RideDetailsModal = ({
             </span>
           </div>
 
-          {/* Location Details - Hidden for Errands */}
-          {!isErrandService(serviceType) && (
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-2">Pickup Location</label>
-                <div className="flex items-start gap-2">
-                  <span className="text-green-500 mt-1">📍</span>
-                  <p className="text-slate-700">{ride.pickupLocation || ride.pickup_location || ride.pickup_address || 'N/A'}</p>
-                </div>
+          {/* Location Details - Uses ride type handler */}
+          {(() => {
+            const locationDetails = rideTypeHandler.renderLocationDetails(ride);
+            if (!locationDetails) return null;
+            return (
+              <div className="grid md:grid-cols-2 gap-4">
+                {locationDetails}
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-2">Drop-off Location</label>
-                <div className="flex items-start gap-2">
-                  <span className="text-red-500 mt-1">📍</span>
-                  <p className="text-slate-700">{ride.dropoffLocation || ride.dropoff_location || ride.dropoff_address || 'N/A'}</p>
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Additional Stops */}
           {ride.additionalStops && ride.additionalStops.length > 0 && (
@@ -179,82 +174,13 @@ const RideDetailsModal = ({
             )}
           </div>
 
-          {/* Service-Specific Details */}
-          {serviceType === 'taxi' && (
+          {/* Service-Specific Details - Uses ride type handler */}
+          {rideTypeHandler.renderServiceDetails(ride) && (
             <div>
-              <label className="block text-sm font-medium text-slate-600 mb-2">Passengers</label>
-              <p className="text-slate-700">{ride.passengers || 1}</p>
-            </div>
-          )}
-
-          {serviceType === 'courier' && (
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-2">Recipient Name</label>
-                <p className="text-slate-700">{ride.recipientName || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-2">Recipient Phone</label>
-                <p className="text-slate-700">{ride.recipientPhone || 'N/A'}</p>
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-slate-600 mb-2">Package Details</label>
-                <p className="text-slate-700">{ride.packageDetails || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-2">Package Size</label>
-                <p className="text-slate-700 capitalize">{ride.packageSize || 'N/A'}</p>
-              </div>
-            </div>
-          )}
-
-          {serviceType === 'school_run' && (
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-2">Passenger Name</label>
-                <p className="text-slate-700">{ride.passengerName || 'N/A'}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-600 mb-2">Contact Number</label>
-                <p className="text-slate-700">{ride.contactNumber || 'N/A'}</p>
-              </div>
-            </div>
-          )}
-
-          {isErrandService(serviceType) && errandTasks && errandTasks.length > 0 && (
-            <div>
-              <label className="block text-sm font-medium text-slate-600 mb-2">Errand Tasks</label>
-              {errandProgress && (
-                <p className="text-xs text-slate-500 mb-2">
-                  Completed {errandProgress.completed}/{errandProgress.total} • {errandProgress.remaining} remaining
-                </p>
-              )}
-              <div className="space-y-3">
-                {errandTasks.map((task, index) => (
-                  <div key={task.id || index} className="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2 text-sm text-slate-600">
-                        <span>📍 {task.pickup || 'N/A'}</span>
-                        <span>→</span>
-                        <span>{task.dropoff || 'N/A'}</span>
-                      </div>
-                      <span className="text-[11px] font-semibold text-slate-500 uppercase">
-                        {describeTaskState(task.state)}
-                      </span>
-                    </div>
-                    {task.description && (
-                      <p className="text-sm text-slate-700">{task.description}</p>
-                    )}
-                    {(task.startTime || task.durationMinutes) && (
-                      <p className="text-xs text-slate-500 mt-1">
-                        {task.startTime && <>Time: {task.startTime}</>}
-                        {task.startTime && task.durationMinutes && <span className="mx-1">•</span>}
-                        {task.durationMinutes && <>~{task.durationMinutes} min</>}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <label className="block text-sm font-medium text-slate-600 mb-2">
+                Service Details
+              </label>
+              {rideTypeHandler.renderServiceDetails(ride)}
             </div>
           )}
 

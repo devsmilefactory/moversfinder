@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../stores';
+import { subscribePostgresChanges, subscribeChannelStatus } from '../lib/realtimeRegistry';
+import { agentLog } from '../utils/agentLog';
 
 /**
  * useRealTimeUpdates Hook
@@ -15,184 +16,170 @@ const useRealTimeUpdates = ({
   const { user } = useAuthStore();
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
-  const subscriptionsRef = useRef([]);
+  const unsubscribersRef = useRef([]);
+  const onRideUpdateRef = useRef(onRideUpdate);
+  const onOfferUpdateRef = useRef(onOfferUpdate);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onRideUpdateRef.current = onRideUpdate;
+  }, [onRideUpdate]);
+
+  useEffect(() => {
+    onOfferUpdateRef.current = onOfferUpdate;
+  }, [onOfferUpdate]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
   
-  // Subscribe to ride updates
-  const subscribeToRides = useCallback(() => {
-    if (!user?.id || !enabled) return null;
-    
-    const subscription = supabase
-      .channel('ride_updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'rides',
-          filter: `driver_id=eq.${user.id}`
-        },
-        (payload) => {
-          console.log('Ride update received:', payload);
-          onRideUpdate({
-            type: 'ride_update',
-            event: payload.eventType,
-            data: payload.new || payload.old,
-            payload
-          });
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'rides',
-          filter: `status=eq.pending` // Listen to new available rides
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            console.log('New ride available:', payload);
-            onRideUpdate({
-              type: 'new_ride_available',
-              event: payload.eventType,
-              data: payload.new,
-              payload
-            });
-          }
-        }
-      )
-      .subscribe((status) => {
-        console.log('Ride subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          setIsConnected(true);
-          setConnectionError(null);
-        } else if (status === 'CHANNEL_ERROR') {
-          setIsConnected(false);
-          setConnectionError('Failed to connect to ride updates');
-          onError('Failed to connect to ride updates');
-        }
-      });
-    
-    return subscription;
-  }, [user?.id, enabled, onRideUpdate, onError]);
-  
-  // Subscribe to offer updates
-  const subscribeToOffers = useCallback(() => {
-    if (!user?.id || !enabled) return null;
-    
-    const subscription = supabase
-      .channel('offer_updates')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'ride_offers',
-          filter: `driver_id=eq.${user.id}`
-        },
-        (payload) => {
-          console.log('Offer update received:', payload);
-          onOfferUpdate({
-            type: 'offer_update',
-            event: payload.eventType,
-            data: payload.new || payload.old,
-            payload
-          });
-        }
-      )
-      .subscribe((status) => {
-        console.log('Offer subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          setIsConnected(true);
-          setConnectionError(null);
-        } else if (status === 'CHANNEL_ERROR') {
-          setIsConnected(false);
-          setConnectionError('Failed to connect to offer updates');
-          onError('Failed to connect to offer updates');
-        }
-      });
-    
-    return subscription;
-  }, [user?.id, enabled, onOfferUpdate, onError]);
-  
-  // Subscribe to driver-specific notifications
-  const subscribeToNotifications = useCallback(() => {
-    if (!user?.id || !enabled) return null;
-    
-    const subscription = supabase
-      .channel('driver_notifications')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${user.id}`
-        },
-        (payload) => {
-          console.log('Notification received:', payload);
-          onRideUpdate({
-            type: 'notification',
-            event: payload.eventType,
-            data: payload.new,
-            payload
-          });
-        }
-      )
-      .subscribe((status) => {
-        console.log('Notification subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          setIsConnected(true);
-          setConnectionError(null);
-        } else if (status === 'CHANNEL_ERROR') {
-          setIsConnected(false);
-          setConnectionError('Failed to connect to notifications');
-          onError('Failed to connect to notifications');
-        }
-      });
-    
-    return subscription;
-  }, [user?.id, enabled, onRideUpdate, onError]);
-  
-  // Start all subscriptions
   const startSubscriptions = useCallback(() => {
     if (!enabled || !user?.id) return;
-    
-    console.log('Starting real-time subscriptions for driver:', user.id);
-    
-    // Clear existing subscriptions
-    subscriptionsRef.current.forEach(sub => {
-      if (sub) {
-        supabase.removeChannel(sub);
+
+    agentLog({
+      location: 'useRealTimeUpdates.js:startSubscriptions',
+      message: 'Starting subscriptions',
+      data: { userId: user.id },
+    });
+
+    // Cleanup existing
+    unsubscribersRef.current.forEach((unsub) => {
+      try {
+        unsub?.();
+      } catch (e) {
+        // ignore
       }
     });
-    subscriptionsRef.current = [];
-    
-    // Create new subscriptions
-    const rideSubscription = subscribeToRides();
-    const offerSubscription = subscribeToOffers();
-    const notificationSubscription = subscribeToNotifications();
-    
-    // Store subscriptions for cleanup
-    subscriptionsRef.current = [
-      rideSubscription,
-      offerSubscription,
-      notificationSubscription
+    unsubscribersRef.current = [];
+
+    const channelName = `driver-realtime-${user.id}`;
+
+    // Connection status listener
+    const unsubStatus = subscribeChannelStatus(channelName, (status) => {
+      agentLog({
+        location: 'useRealTimeUpdates.js:subscribeChannelStatus',
+        message: 'Ride subscription status',
+        data: { status },
+      });
+      if (status === 'SUBSCRIBED') {
+        setIsConnected(true);
+        setConnectionError(null);
+      } else if (status === 'CHANNEL_ERROR') {
+        setIsConnected(false);
+        setConnectionError('Failed to connect to realtime updates');
+        onErrorRef.current?.('Failed to connect to realtime updates');
+      }
+    });
+
+    // Rides assigned to this driver
+    const unsubDriverRides = subscribePostgresChanges({
+      channelName,
+      table: 'rides',
+      event: '*',
+      filter: `driver_id=eq.${user.id}`,
+      listener: (payload) => {
+        agentLog({
+          location: 'useRealTimeUpdates.js:rides',
+          message: 'Ride update received',
+          data: { eventType: payload.eventType, rideId: payload.new?.id },
+        });
+        onRideUpdateRef.current?.({
+          type: 'ride_update',
+          event: payload.eventType,
+          data: payload.new || payload.old,
+          payload,
+        });
+      },
+    });
+
+    // New available rides (FIX: use ride_status field, not status)
+    const unsubPendingRides = subscribePostgresChanges({
+      channelName,
+      table: 'rides',
+      event: 'INSERT',
+      filter: 'ride_status=eq.pending',
+      listener: (payload) => {
+        agentLog({
+          location: 'useRealTimeUpdates.js:pendingRides',
+          message: 'New ride available',
+          data: { rideId: payload.new?.id },
+        });
+        onRideUpdateRef.current?.({
+          type: 'new_ride_available',
+          event: payload.eventType,
+          data: payload.new,
+          payload,
+        });
+      },
+    });
+
+    // Offers for this driver
+    const unsubOffers = subscribePostgresChanges({
+      channelName,
+      table: 'ride_offers',
+      event: '*',
+      filter: `driver_id=eq.${user.id}`,
+      listener: (payload) => {
+        agentLog({
+          location: 'useRealTimeUpdates.js:offers',
+          message: 'Offer update received',
+          data: { eventType: payload.eventType, offerId: payload.new?.id },
+        });
+        onOfferUpdateRef.current?.({
+          type: 'offer_update',
+          event: payload.eventType,
+          data: payload.new || payload.old,
+          payload,
+        });
+      },
+    });
+
+    // Notifications for this driver
+    const unsubNotifications = subscribePostgresChanges({
+      channelName,
+      table: 'notifications',
+      event: 'INSERT',
+      filter: `user_id=eq.${user.id}`,
+      listener: (payload) => {
+        agentLog({
+          location: 'useRealTimeUpdates.js:notifications',
+          message: 'Notification received',
+          data: { notificationId: payload.new?.id },
+        });
+        onRideUpdateRef.current?.({
+          type: 'notification',
+          event: payload.eventType,
+          data: payload.new,
+          payload,
+        });
+      },
+    });
+
+    unsubscribersRef.current = [
+      unsubStatus,
+      unsubDriverRides,
+      unsubPendingRides,
+      unsubOffers,
+      unsubNotifications,
     ].filter(Boolean);
-    
-  }, [enabled, user?.id, subscribeToRides, subscribeToOffers, subscribeToNotifications]);
+  }, [enabled, user?.id]);
   
   // Stop all subscriptions
   const stopSubscriptions = useCallback(() => {
-    console.log('Stopping real-time subscriptions');
-    
-    subscriptionsRef.current.forEach(subscription => {
-      if (subscription) {
-        supabase.removeChannel(subscription);
-      }
+    agentLog({
+      location: 'useRealTimeUpdates.js:stopSubscriptions',
+      message: 'Stopping subscriptions',
+      data: {},
     });
     
-    subscriptionsRef.current = [];
+    unsubscribersRef.current.forEach((unsub) => {
+      try {
+        unsub?.();
+      } catch (e) {
+        // ignore
+      }
+    });
+    unsubscribersRef.current = [];
     setIsConnected(false);
     setConnectionError(null);
   }, []);
@@ -208,21 +195,12 @@ const useRealTimeUpdates = ({
   // Check connection status
   const checkConnection = useCallback(() => {
     // Simple ping to check if Supabase is reachable
-    supabase
-      .from('rides')
-      .select('id')
-      .limit(1)
-      .then(() => {
-        if (!isConnected && enabled) {
-          console.log('Connection restored, restarting subscriptions');
-          restartSubscriptions();
-        }
-      })
-      .catch((error) => {
-        console.error('Connection check failed:', error);
-        setIsConnected(false);
-        setConnectionError('Connection lost');
-      });
+    // NOTE: avoid extra DB pings here; registry+realtime already handles status.
+    // Keep a no-op checkConnection for callers, but don't create additional polling load.
+    if (!enabled) return;
+    if (!isConnected) {
+      restartSubscriptions();
+    }
   }, [isConnected, enabled, restartSubscriptions]);
   
   // Start subscriptions when enabled and user is available

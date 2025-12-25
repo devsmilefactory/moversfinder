@@ -40,6 +40,8 @@ export default defineConfig({
         // Skip waiting and claim clients immediately for faster updates
         skipWaiting: true,
         clientsClaim: true,
+        // Inject Firebase messaging code into the generated service worker
+        importScripts: ['/firebase-messaging-sw-integration.js'],
         
         // PRIORITY: Network connectivity over caching
         // All strategies prioritize network with minimal caching for offline fallback only
@@ -119,6 +121,18 @@ export default defineConfig({
             handler: 'NetworkOnly',
             options: {
               // Never cache - preserve real-time functionality
+            }
+          },
+          // Google Maps API - NetworkOnly (never cache)
+          {
+            urlPattern: ({ url }) => {
+              // Match Google Maps API URLs
+              return url.hostname.includes('maps.googleapis.com') ||
+                     url.hostname.includes('maps.gstatic.com');
+            },
+            handler: 'NetworkOnly',
+            options: {
+              // Never cache - always use fresh Google Maps
             }
           },
           // WebSocket connections - NetworkOnly (documented, though not intercepted by SW)

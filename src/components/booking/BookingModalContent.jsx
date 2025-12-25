@@ -168,7 +168,7 @@ const BookingModalContent = ({
             onChange={(e) => handleFieldUpdate('specialInstructions', e.target.value)}
             placeholder="Any special requests or instructions for the driver..."
             rows={3}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+            className="w-full px-3 py-2 border border-blue-200 bg-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
             maxLength={500}
           />
           

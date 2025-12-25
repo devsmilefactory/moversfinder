@@ -13,6 +13,8 @@ import { summarizeErrandTasks } from '../../../utils/errandTasks';
 import { getRoundTripDisplay } from '../../../utils/roundTripHelpers';
 import { getRideCostDisplay, isRoundTripRide } from '../../../utils/rideCostDisplay';
 import { formatPrice } from '../../../utils/formatters';
+import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
+import { isErrandService } from '../../../utils/serviceTypes';
 import BaseRideCard from '../../../components/cards/BaseRideCard';
 import CardHeader from '../../../components/cards/CardHeader';
 import RouteDisplay from '../../../components/cards/RouteDisplay';
@@ -38,8 +40,11 @@ const DriverRideCard = ({
 
   if (!ride) return null;
 
-  const isErrand = ride.service_type === 'errands';
-  const isCourier = ride.service_type === 'courier';
+  // Get ride type handler for modular service-specific handling
+  const rideTypeHandler = getRideTypeHandler(ride.service_type);
+  
+  const isErrand = rideTypeHandler.isServiceType(ride, 'errands');
+  const isCourier = rideTypeHandler.isServiceType(ride, 'courier');
   const isRecurring = ride.is_series || ride.ride_timing === 'scheduled_recurring';
   
   // Get round trip info

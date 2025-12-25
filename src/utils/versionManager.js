@@ -44,18 +44,19 @@ export const storeCurrentVersion = () => {
 
 /**
  * Check if the app has been updated (version changed)
+ * Returns true if version changed, false otherwise
+ * Does NOT store the version automatically - that's handled by checkAndHandleUpdate
  */
 export const isAppUpdated = () => {
   const storedVersion = getStoredVersion();
   
-  // First time running the app
+  // First time running the app - no update needed
   if (!storedVersion) {
     console.log('ℹ️ First time running app - no stored version');
-    storeCurrentVersion();
     return false;
   }
   
-  // Version changed
+  // Version changed - update available
   if (storedVersion !== APP_VERSION) {
     console.log('🔄 App updated from', storedVersion, 'to', APP_VERSION);
     return true;
@@ -144,11 +145,28 @@ export const handleAppUpdate = async () => {
 
 /**
  * Check for updates and handle them
+ * Stores version on first run, detects updates on subsequent runs
  */
 export const checkAndHandleUpdate = async () => {
+  const storedVersion = getStoredVersion();
+  
+  // First time running the app - store version
+  if (!storedVersion) {
+    console.log('ℹ️ First time running app - storing version');
+    storeCurrentVersion();
+    return false;
+  }
+  
+  // Check if version changed
   if (isAppUpdated()) {
-    console.log('🔄 App update detected - clearing caches...');
-    await handleAppUpdate();
+    console.log('🔄 App update detected - clearing caches and keeping stored version to trigger in-app prompt...');
+
+    // Clear caches but intentionally do NOT update the stored version here.
+    // We keep the previous version in storage so the PWA update banner
+    // detects the mismatch on mount and prompts the user to refresh.
+    // The stored version will be updated after the user accepts the update
+    // via handleAppUpdate().
+    await clearAllCaches();
     return true;
   }
   

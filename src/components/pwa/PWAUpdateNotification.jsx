@@ -8,20 +8,91 @@
  */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, X, AlertCircle, Download, Sparkles } from 'lucide-react';
+import { RefreshCw, X, Download, Sparkles } from 'lucide-react';
 import Button from '../ui/Button';
-import { handleAppUpdate, getCurrentVersion } from '../../utils/versionManager';
+import { handleAppUpdate, getCurrentVersion, getStoredVersion, isAppUpdated } from '../../utils/versionManager';
+import { sendAppUpdateNotification, checkAndNotifyAppUpdate } from '../../services/appUpdateNotificationService';
+import { useAuthStore } from '../../stores';
 
 const PWAUpdateNotification = () => {
+  const { user } = useAuthStore();
   const [showReloadPrompt, setShowReloadPrompt] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
-  const [offlineReady, setOfflineReady] = useState(false);
   const [needRefresh, setNeedRefresh] = useState(false);
   const [newVersion, setNewVersion] = useState(null);
   const [hasPlayedSound, setHasPlayedSound] = useState(false);
+  const [pushNotificationSent, setPushNotificationSent] = useState(false);
   const registrationRef = useRef(null);
   const updateCheckIntervalRef = useRef(null);
   const soundRef = useRef(null);
+
+  // Check for version changes on page load (automatic update detection on refresh)
+  useEffect(() => {
+    // Check if app version changed on page load/refresh
+    const storedVersion = getStoredVersion();
+    const currentVersion = getCurrentVersion();
+    
+    // Only check if we have a stored version (not first run) and versions differ
+    if (storedVersion && storedVersion !== currentVersion && !showReloadPrompt) {
+      console.log('🔄 Version change detected on page load - showing update prompt');
+      console.log(`   Previous: ${storedVersion} → Current: ${currentVersion}`);
+      setNewVersion(currentVersion);
+      setShowReloadPrompt(true);
+      setNeedRefresh(true);
+      
+      // Send push notification if user is authenticated
+      if (user?.id && !pushNotificationSent) {
+        sendAppUpdateNotification(user.id, currentVersion, storedVersion)
+          .then((result) => {
+            if (result.success) {
+              console.log('✅ App update push notification sent');
+              setPushNotificationSent(true);
+            }
+          })
+          .catch((error) => {
+            console.error('Error sending app update push notification:', error);
+          });
+      }
+    }
+  }, []); // Only run once on mount
+
+  // Check for update query parameter and show update prompt
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('update') === 'true' && !showReloadPrompt) {
+      // User clicked on update notification - show update prompt
+      const checkForUpdate = async () => {
+        try {
+          const registration = registrationRef.current || await navigator.serviceWorker.ready;
+          if (registration) {
+            if (registration.waiting) {
+              setShowReloadPrompt(true);
+              setNeedRefresh(true);
+              setNewVersion(getCurrentVersion());
+            } else {
+              // Check for updates
+              await registration.update();
+              // After update check, see if there's a waiting worker
+              setTimeout(() => {
+                if (registration.waiting) {
+                  setShowReloadPrompt(true);
+                  setNeedRefresh(true);
+                  setNewVersion(getCurrentVersion());
+                }
+              }, 1000);
+            }
+          }
+        } catch (error) {
+          console.error('Error checking for updates:', error);
+        }
+      };
+      
+      checkForUpdate();
+      
+      // Clean up URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [showReloadPrompt]);
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) {
@@ -44,24 +115,52 @@ const PWAUpdateNotification = () => {
         registrationRef.current = registration;
         console.log('✅ Service Worker registered (Workbox):', registration.scope);
 
-        // Track offline ready event
-        if (window.gtag) {
-          window.gtag('event', 'pwa_offline_ready', {
-            event_category: 'engagement'
-          });
-        }
-
         // Wait for service worker to be ready
         await navigator.serviceWorker.ready;
-        setOfflineReady(true);
-        // Hide offline ready notification after 5 seconds
-        setTimeout(() => setOfflineReady(false), 5000);
 
-        // Check for updates more frequently (every 5 minutes)
+        // IMMEDIATELY check for updates on page load/refresh
+        // This is critical for detecting updates when user refreshes the page
+        console.log('🔄 Checking for updates on page load...');
+        await registration.update();
+        
+        // Check if there's already a waiting service worker (update available)
+        if (registration.waiting) {
+          console.log('🔄 Update available (waiting service worker found on page load)');
+          const currentVersion = getCurrentVersion();
+          const storedVersion = getStoredVersion();
+          setNewVersion(currentVersion);
+          setShowReloadPrompt(true);
+          setNeedRefresh(true);
+          
+          // Send push notification if user is authenticated
+          if (user?.id && !pushNotificationSent) {
+            sendAppUpdateNotification(user.id, currentVersion, storedVersion || currentVersion)
+              .then((result) => {
+                if (result.success) {
+                  console.log('✅ App update push notification sent');
+                  setPushNotificationSent(true);
+                }
+              })
+              .catch((error) => {
+                console.error('Error sending app update push notification:', error);
+              });
+          }
+        }
+
+        // Check for updates periodically (every 2 minutes for robust detection)
         updateCheckIntervalRef.current = setInterval(() => {
           console.log('🔄 Checking for service worker updates...');
-          registration.update();
-        }, 5 * 60 * 1000); // 5 minutes for faster detection
+          registration.update().catch((error) => {
+            console.warn('Error checking for service worker updates:', error);
+          });
+          
+          // Also check version and send push notification if needed
+          if (user?.id) {
+            checkAndNotifyAppUpdate(user.id).catch((error) => {
+              console.error('Error checking app update:', error);
+            });
+          }
+        }, 2 * 60 * 1000); // 2 minutes for faster, more robust detection
 
         // Listen for service worker updates
         registration.addEventListener('updatefound', () => {
@@ -74,9 +173,26 @@ const PWAUpdateNotification = () => {
                   // New service worker available, but old one is still active
                   console.log('🔄 NEW VERSION AVAILABLE - Priority notification');
                   const currentVersion = getCurrentVersion();
+                  const storedVersion = getStoredVersion();
                   setNewVersion(currentVersion);
                   setShowReloadPrompt(true);
                   setNeedRefresh(true);
+
+                  // Send push notification via FCM (if user is authenticated)
+                  if (user?.id && !pushNotificationSent) {
+                    sendAppUpdateNotification(user.id, currentVersion, storedVersion || currentVersion)
+                      .then((result) => {
+                        if (result.success) {
+                          console.log('✅ App update push notification sent');
+                          setPushNotificationSent(true);
+                        } else {
+                          console.warn('Could not send app update push notification:', result.error);
+                        }
+                      })
+                      .catch((error) => {
+                        console.error('Error sending app update push notification:', error);
+                      });
+                  }
 
                   // Play notification sound (if permission granted)
                   if (!hasPlayedSound && 'Notification' in window && Notification.permission === 'granted') {
@@ -111,7 +227,7 @@ const PWAUpdateNotification = () => {
                     }
                   }
 
-                  // Show browser notification if permission granted
+                  // Show browser notification if permission granted (fallback if push fails)
                   if ('Notification' in window && Notification.permission === 'granted') {
                     try {
                       const notification = new Notification('New Version Available', {
@@ -120,11 +236,16 @@ const PWAUpdateNotification = () => {
                         badge: '/icons/icon-192x192.png',
                         tag: 'app-update',
                         requireInteraction: true,
-                        silent: false
+                        silent: false,
+                        data: {
+                          url: '/?update=true',
+                          type: 'app_update',
+                        },
                       });
 
                       notification.onclick = () => {
                         window.focus();
+                        window.location.href = '/?update=true';
                         notification.close();
                       };
                     } catch (e) {
@@ -161,7 +282,8 @@ const PWAUpdateNotification = () => {
       }
     };
 
-    // Only register in production
+    // Only register in production (service worker is disabled in dev mode by vite-plugin-pwa)
+    // In dev mode, Firebase will handle missing service worker gracefully
     if (import.meta.env.PROD) {
       registerSW();
     }
@@ -258,36 +380,6 @@ const PWAUpdateNotification = () => {
       }, 30000);
     }
   };
-
-  // Offline Ready Toast
-  if (offlineReady && !needRefresh) {
-    return (
-      <div className="fixed top-4 right-4 z-[9999] max-w-sm animate-slide-in-right">
-        <div className="bg-green-600 text-white rounded-lg shadow-2xl p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0">
-              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                <AlertCircle className="w-6 h-6" />
-              </div>
-            </div>
-            <div className="flex-1">
-              <h4 className="font-semibold mb-1">App Ready for Offline Use</h4>
-              <p className="text-sm text-white/90">
-                TaxiCab is now available offline!
-              </p>
-            </div>
-            <button
-              onClick={() => setOfflineReady(false)}
-              className="flex-shrink-0 text-white/80 hover:text-white"
-              aria-label="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   // PRIORITY Update Notification - Full-width banner, high visibility
   if (showReloadPrompt && needRefresh) {

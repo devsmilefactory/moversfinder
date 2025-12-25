@@ -7,6 +7,7 @@ import RatingModal from './RatingModal';
 import { parseErrandTasks, describeTaskState } from '../../../utils/errandTasks';
 import { isErrandService, normalizeServiceType } from '../../../utils/serviceTypes';
 import ErrandTaskList from '../../../components/cards/ErrandTaskList';
+import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
 
 /**
  * Ride Details Modal
@@ -261,6 +262,9 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
   const pendingOffers = offers.filter(o => o.offer_status === 'pending');
   const serviceType = normalizeServiceType(ride.service_type || 'taxi');
   const isErrand = isErrandService(ride.service_type) || serviceType === 'errand';
+  
+  // Get ride type handler for modular service-specific handling
+  const rideTypeHandler = getRideTypeHandler(ride.service_type);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -305,27 +309,12 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
             </div>
             
             <div className="space-y-2 text-sm">
-              {!isErrand ? (
-                <>
-                  <div>
-                    <span className="text-slate-600">📍 Pickup:</span>
-                    <span className="ml-2 text-slate-800">{ride.pickup_address || ride.pickup_location}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-600">🎯 Dropoff:</span>
-                    <span className="ml-2 text-slate-800">{ride.dropoff_address || ride.dropoff_location}</span>
-                  </div>
-                </>
-              ) : (
-                <div className="mt-2">
-                  <ErrandTaskList
-                    tasks={ride.errand_tasks}
-                    compact={false}
-                    showStatus={true}
-                    showCosts={true}
-                  />
-                </div>
-              )}
+              {/* Use ride type handler for location details */}
+              {rideTypeHandler.renderLocationDetails(ride)}
+              
+              {/* Use ride type handler for service-specific details */}
+              {rideTypeHandler.renderServiceDetails(ride)}
+              
               {ride.distance_km && (
                 <div>
                   <span className="text-slate-600">📏 Distance:</span>

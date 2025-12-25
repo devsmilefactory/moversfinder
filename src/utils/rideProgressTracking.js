@@ -12,13 +12,14 @@
 
 import { isRoundTripRide } from './rideCostDisplay';
 import { parseErrandTasks } from './errandTasks';
+import { getRideTypeHandler } from './rideTypeHandlers';
 
 /**
  * Get progress for simple (non-recurring, non-round-trip) rides
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getSimpleProgress(ride) {
+export function getSimpleProgress(ride) {
   const isCompleted = ride.ride_status === 'trip_completed';
   
   return {
@@ -37,7 +38,7 @@ function getSimpleProgress(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getRecurringTripProgress(ride) {
+export function getRecurringTripProgress(ride) {
   const totalTrips = parseInt(ride.number_of_trips) || 1;
   const completed = parseInt(ride.completed_rides_count) || 0;
   const remaining = totalTrips - completed;
@@ -60,7 +61,7 @@ function getRecurringTripProgress(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getRecurringRoundTripProgress(ride) {
+export function getRecurringRoundTripProgress(ride) {
   const totalLegs = parseInt(ride.number_of_trips) || 2;
   const totalOccurrences = Math.ceil(totalLegs / 2);
   const completedLegs = parseInt(ride.completed_rides_count) || 0;
@@ -93,7 +94,7 @@ function getRecurringRoundTripProgress(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getErrandProgress(ride) {
+export function getErrandProgress(ride) {
   const totalTasks = parseInt(ride.tasks_total) || 0;
   const completedTasks = parseInt(ride.tasks_done) || 0;
   const remainingTasks = parseInt(ride.tasks_left) || (totalTasks - completedTasks);
@@ -127,7 +128,7 @@ function getErrandProgress(ride) {
  * @param {Object} ride - Ride object
  * @returns {Object}
  */
-function getRecurringErrandProgress(ride) {
+export function getRecurringErrandProgress(ride) {
   // Occurrence-level progress
   const totalOccurrences = parseInt(ride.number_of_trips) || 1;
   const completedOccurrences = parseInt(ride.completed_rides_count) || 0;
@@ -173,6 +174,7 @@ function getRecurringErrandProgress(ride) {
 /**
  * Calculate progress for any ride type
  * Main entry point for progress tracking logic
+ * Now uses ride type handlers for modular, scalable progress calculation
  * 
  * @param {Object} ride - Ride object
  * @returns {Object} Progress object with completion status, percentages, and labels
@@ -182,9 +184,56 @@ export function getRideProgress(ride) {
     return getSimpleProgress({ ride_status: 'pending' });
   }
   
+  // Use ride type handler for progress info
+  try {
+    const handler = getRideTypeHandler(ride.service_type);
+    const progressInfo = handler.getProgressInfo(ride);
+    
+    // Convert handler format to legacy format for backward compatibility
+    // Handler returns: { percentage, label, description }
+    // Legacy format needs: { type, completed, total, remaining, percentage, status, label }
+    const isErrand = handler.isServiceType(ride, 'errands');
+    const isRecurring = (ride.number_of_trips > 1) || ride.series_id;
+    
+    if (isErrand && isRecurring) {
+      // For recurring errands, use the detailed progress from legacy function
+      const detailedProgress = getRecurringErrandProgress(ride);
+      return {
+        ...detailedProgress,
+        label: progressInfo.label || detailedProgress.label,
+        description: progressInfo.description || detailedProgress.description
+      };
+    }
+    
+    if (isErrand && !isRecurring) {
+      const detailedProgress = getErrandProgress(ride);
+      return {
+        ...detailedProgress,
+        label: progressInfo.label || detailedProgress.label,
+        description: progressInfo.description || detailedProgress.description
+      };
+    }
+    
+    // For non-errand rides, use handler's progress info
+    return {
+      type: isRecurring ? 'recurring' : 'simple',
+      completed: progressInfo.percentage >= 100 ? 1 : 0,
+      total: 1,
+      remaining: progressInfo.percentage >= 100 ? 0 : 1,
+      percentage: progressInfo.percentage,
+      status: ride.ride_status || 'pending',
+      label: progressInfo.label || 'trip',
+      description: progressInfo.description
+    };
+  } catch (error) {
+    console.warn('Error using ride type handler for progress, falling back to legacy:', error);
+  }
+  
+  // Legacy fallback logic (kept for backward compatibility)
   const isRoundTrip = isRoundTripRide(ride);
   const isRecurring = (ride.number_of_trips > 1) || ride.series_id;
-  const isErrand = ride.service_type === 'errands';
+  const handler = getRideTypeHandler(ride.service_type);
+  const isErrand = handler.isServiceType(ride, 'errands');
   
   // Recurring round trip
   if (isRoundTrip && isRecurring) {

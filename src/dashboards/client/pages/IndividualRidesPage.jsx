@@ -18,6 +18,8 @@ import useRatingStore from '../../../stores/ratingStore';
 import { groupRidesForDisplay } from '../../../utils/rideSeries';
 import { getRideStatusCategory } from '../../../hooks/useRideStatus';
 import { usePassengerRidesFeed } from '../../../hooks/usePassengerRidesFeed';
+import { useSmartRealtimeFeed } from '../../../hooks/useSmartRealtimeFeed';
+import RefreshIndicator from '../../../components/shared/RefreshIndicator';
 
 /**
  * Individual My Rides Page - PWA version with tabbed interface
@@ -45,6 +47,9 @@ const IndividualRidesPage = () => {
     activeTab: feedActiveTab,
     changeTab: feedChangeTab,
     refreshCurrentTab,
+    removeRideFromCurrentList,
+    addRideToCurrentList,
+    updateRideInCurrentList,
     totalCount
   } = feedHook;
   
@@ -94,16 +99,35 @@ const IndividualRidesPage = () => {
   // Hook automatically fetches rides when user ID changes
   // No need for manual loadRides call
 
-  // Set up real-time subscription separately to avoid dependency issues
+  // Smart realtime feed with optimistic updates
+  const realtimeFeed = useSmartRealtimeFeed({
+    userId: user?.id,
+    userType: 'passenger',
+    activeTab: feedActiveTab,
+    changeTab: (newTab, meta) => {
+      // IMPORTANT: feedChangeTab already triggers a single fetch via the feed hook useEffect.
+      // Do NOT call refreshCurrentTab() here or you'll double-fetch on realtime-driven tab switches.
+      feedChangeTab(newTab, meta);
+    },
+    refreshCurrentTab,
+    removeRideFromCurrentList,
+    addRideToCurrentList,
+    updateRideInCurrentList,
+    onNewDataAvailable: (tab, ride) => {
+      console.log(`[Realtime] New data available in ${tab} tab`);
+    }
+  });
+
+  // Separate subscription for offer counts (for notifications)
   useEffect(() => {
-    if (!user?.id || rides.length === 0) return;
+    if (!user?.id || feedRides.length === 0) return;
 
     // Load initial offer counts
     loadOfferCounts();
 
-    // Set up real-time subscription for offer updates and ride status changes
+    // Set up real-time subscription for offer updates only
     const channel = supabase
-      .channel(`user-ride-updates-${user.id}`)
+      .channel(`user-offer-updates-${user.id}`)
       .on(
         'postgres_changes',
         {
@@ -115,34 +139,20 @@ const IndividualRidesPage = () => {
           loadOfferCounts();
         }
       )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'rides',
-          filter: `user_id=eq.${user.id}`
-        },
-        (payload) => {
-          console.log('🔄 Ride status updated:', payload.new);
-          // Reload rides to reflect status changes
-          refreshCurrentTab();
-        }
-      )
       .subscribe();
 
     return () => {
       channel.unsubscribe();
     };
 
-  }, [user?.id, rides.length, refreshCurrentTab]);
+  }, [user?.id, feedRides.length]);
 
   const loadOfferCounts = async () => {
     if (!user?.id) return;
 
     try {
       // Get all ride IDs for this user
-      const rideIds = rides.map(r => r.id);
+      const rideIds = feedRides.map(r => r.id);
       if (rideIds.length === 0) return;
 
       // Get offer counts for each ride
@@ -172,7 +182,7 @@ const IndividualRidesPage = () => {
         
         if (currentCount > previousCount) {
           const newOffersCount = currentCount - previousCount;
-          const ride = rides.find(r => r.id === rideId);
+          const ride = feedRides.find(r => r.id === rideId);
           
           // Show toast notification for new offers
           addToast({
@@ -221,12 +231,12 @@ const IndividualRidesPage = () => {
     saved: 0 // Saved trips not supported by feed hook yet
   };
 
-  // Get rides for current tab - already filtered by hook
   // Auto-open rating modal when a ride transitions to completed and hasn't been rated
+  // This is separate from feed updates - just for rating UX
   useEffect(() => {
     if (!user?.id) return;
     const channel = supabase
-      .channel(`user-ride-status-${user.id}`)
+      .channel(`user-rating-check-${user.id}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'rides', filter: `user_id=eq.${user.id}` },
@@ -244,61 +254,6 @@ const IndividualRidesPage = () => {
       .subscribe();
     return () => { channel.unsubscribe(); };
   }, [user?.id, shouldShowRating, markRatingShown]);
-
-  // Realtime: refresh rides list on any change for this user
-  // Automatically transition tabs when ride status changes
-  useEffect(() => {
-    if (!user?.id) return;
-    const channel = supabase
-      .channel(`user-rides-${user.id}`)
-      .on('postgres_changes', { 
-        event: 'UPDATE', 
-        schema: 'public', 
-        table: 'rides', 
-        filter: `user_id=eq.${user.id}` 
-      }, (payload) => {
-        const updatedRide = payload.new;
-        const oldRide = payload.old;
-        const newStatus = updatedRide.ride_status || updatedRide.status;
-        const oldStatus = oldRide?.ride_status || oldRide?.status;
-
-        // Only process if status actually changed
-        if (newStatus !== oldStatus) {
-          console.log('🔄 Ride status changed:', { 
-            rideId: updatedRide.id, 
-            oldStatus, 
-            newStatus 
-          });
-
-          const newCategory = getRideStatusCategory(newStatus);
-          if (newCategory === 'cancelled') {
-            feedChangeTab('CANCELLED');
-          } else if (newCategory === 'completed') {
-            feedChangeTab('COMPLETED');
-          } else if (newCategory === 'active') {
-            feedChangeTab('ACTIVE');
-          } else if (newCategory === 'pending') {
-            feedChangeTab('PENDING');
-          }
-
-          // Refresh rides and offer counts
-          refreshCurrentTab();
-          loadOfferCounts();
-        }
-      })
-      .on('postgres_changes', { 
-        event: 'INSERT', 
-        schema: 'public', 
-        table: 'rides', 
-        filter: `user_id=eq.${user.id}` 
-      }, () => {
-        // New ride created - refresh and go to pending tab
-        feedChangeTab('PENDING');
-        loadOfferCounts();
-      })
-      .subscribe();
-    return () => { channel.unsubscribe(); };
-  }, [user?.id, refreshCurrentTab]);
 
 
   // Use rides directly from hook (already filtered by active tab)
@@ -335,7 +290,7 @@ const IndividualRidesPage = () => {
       {/* Tabs */}
       <RideTabs 
         activeTab={activeTab} 
-        onTabChange={(tab) => feedChangeTab(REVERSE_TAB_MAP[tab])} 
+        onTabChange={(tab) => feedChangeTab(REVERSE_TAB_MAP[tab], { source: 'ui_tab_click' })} 
         counts={tabCounts} 
       />
 
@@ -350,6 +305,17 @@ const IndividualRidesPage = () => {
           feedHook.changeRideTypeFilter(mappedServiceType);
         }} 
       />
+
+      {/* Refresh Indicator - Shows when new data available in other tabs */}
+      {realtimeFeed.hasNewDataAvailable && (
+        <div className="px-4 pt-2">
+          <RefreshIndicator
+            hasNewData={realtimeFeed.hasNewDataAvailable}
+            affectedTabs={realtimeFeed.newDataTabs}
+            onRefresh={realtimeFeed.manualRefresh}
+          />
+        </div>
+      )}
 
       {/* Rides List */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-4">

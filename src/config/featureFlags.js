@@ -25,9 +25,9 @@ export const FEATURE_FLAGS = {
 
   /**
    * Enable/disable round trips
-   * When false, round trip option is hidden
+   * When false, round trip option is hidden and forced off
    */
-  ROUND_TRIPS_ENABLED: true, // Keep enabled for now, can disable if needed
+  ROUND_TRIPS_ENABLED: false,
 };
 
 /**
@@ -77,5 +77,25 @@ export function enforceInstantOnly(rideTiming) {
   }
   return rideTiming;
 }
+
+/**
+ * Check if round trips are allowed
+ * @returns {boolean} True when the round-trip option should be available
+ */
+export function isRoundTripEnabled() {
+  return Boolean(FEATURE_FLAGS.ROUND_TRIPS_ENABLED);
+}
+
+/**
+ * Normalize any round-trip selection based on the feature flag
+ * @param {boolean} isRoundTrip - Raw round-trip toggle value
+ * @returns {boolean} False when round trips are disabled; otherwise the provided value
+ */
+export function normalizeRoundTripSelection(isRoundTrip) {
+  return isRoundTripEnabled() ? Boolean(isRoundTrip) : false;
+}
+
+
+
 
 

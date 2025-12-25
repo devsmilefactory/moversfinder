@@ -169,10 +169,10 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
           </div>
 
           {(!formData.tasks || formData.tasks.length === 0) && (
-            <div className="text-center py-8 bg-slate-50 rounded-lg border-2 border-dashed border-slate-300">
+            <div className="text-center py-8 bg-blue-50 rounded-lg border-2 border-dashed border-blue-200">
               <div className="text-4xl mb-2">📝</div>
-              <p className="text-sm text-slate-600 mb-1">No tasks added yet</p>
-              <p className="text-xs text-slate-500">Click "Add Task" to get started</p>
+              <p className="text-sm text-blue-700 mb-1">No tasks added yet</p>
+              <p className="text-xs text-blue-500">Click "Add Task" to get started</p>
             </div>
           )}
 
@@ -183,7 +183,7 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
                 return (
                   <div
                     key={index}
-                    className="p-3 bg-slate-50 rounded-lg border border-slate-200 hover:border-yellow-400 transition-colors cursor-pointer"
+                    className="p-3 bg-blue-50 rounded-lg border border-blue-200 hover:border-blue-400 transition-colors cursor-pointer"
                     onClick={() => handleOpenTaskModal(index)}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -250,7 +250,7 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
         </div>
 
         {/* Payment */}
-        <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+        <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
           <FormSelect
             label="Payment Method"
             name="paymentMethod"
@@ -304,7 +304,7 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
 
             {/* Modal Content - Scrollable */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+              <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
                 <LocationInput
                   label="Task Start Point"
                   value={resolveLocationDisplay(taskFormData.startPoint)}
@@ -315,7 +315,7 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
                 />
               </div>
 
-              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+              <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
                 <LocationInput
                   label="Task Destination Point"
                   value={resolveLocationDisplay(taskFormData.destinationPoint)}
@@ -360,7 +360,7 @@ const CompactErrandsForm = ({ formData, onChange, savedPlaces = [], taskEstimate
 
             {/* Modal Footer */}
             <div className="p-4 border-t border-slate-200">
-              <div className="bg-slate-50 rounded-lg p-3 border border-slate-200 mb-3">
+              <div className="bg-blue-50 rounded-lg p-3 border border-blue-200 mb-3">
                 <p className="text-xs font-semibold text-slate-500 uppercase">Task Estimate</p>
                 {taskEstimateLoading ? (
                   <p className="text-sm text-slate-600 mt-1">Calculating...</p>

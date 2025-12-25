@@ -82,16 +82,15 @@ const CorporateBookingPage = () => {
   useEffect(() => {
     let isMounted = true;
 
+    // Use centralized Google Maps loader
     const waitForGoogleMaps = async () => {
-      // Wait for Google Maps to load (max 10 seconds)
-      const maxWait = 10000;
-      const startTime = Date.now();
-
-      while (!window.google?.maps?.Geocoder && Date.now() - startTime < maxWait) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+      try {
+        const { waitForGoogleMaps: waitForMaps } = await import('../../../utils/googleMapsLoader');
+        return await waitForMaps(10000);
+      } catch (error) {
+        console.error('❌ Error loading Google Maps:', error);
+        return false;
       }
-
-      return !!window.google?.maps?.Geocoder;
     };
 
     const detectLocation = async () => {

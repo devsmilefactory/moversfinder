@@ -26,6 +26,9 @@ import NotificationBell from '../../../components/notifications/NotificationBell
  * - My Bids: Pending bids waiting for passenger acceptance
  * - Active Rides: Accepted rides in progress
  * - Completed Rides: Historical ride data
+ * 
+ * Note: If you see "Failed to fetch dynamically imported module" error,
+ * try restarting the Vite dev server.
  */
 const RideRequestsPage = () => {
   const navigate = useNavigate();
@@ -127,9 +130,9 @@ const RideRequestsPage = () => {
         </div>
 
         {/* Main Content */}
-        <div className="py-2">
-          <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 mb-4">
-            <div className="bg-white rounded-xl shadow-lg p-4 flex items-center justify-between">
+        <div className="py-1">
+          <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 mb-2">
+            <div className="bg-white rounded-xl shadow-lg py-2 px-4 flex items-center justify-between">
               <div>
                 <p className="text-xs text-slate-500 font-medium">Service Area</p>
                 <p className="text-lg font-bold text-slate-700">{ridesUiState.locationCity || 'Detecting...'}</p>
@@ -138,12 +141,14 @@ const RideRequestsPage = () => {
                 )}
               </div>
               <div className="text-right">
-                <p className="text-xs text-slate-500 font-medium">My Status</p>
                 <div className="flex flex-col items-end">
-                  <p className={`text-lg font-bold ${ridesUiState.isOnline ? 'text-green-600' : 'text-slate-400'}`}>
-                    {ridesUiState.isOnline ? 'Online' : 'Offline'}
-                  </p>
-                  <div className="mt-1 flex items-center gap-2">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <p className="text-xs text-slate-500 font-medium">My Status</p>
+                    <p className={`text-lg font-bold ${ridesUiState.isOnline ? 'text-green-600' : 'text-slate-400'}`}>
+                      {ridesUiState.isOnline ? 'Online' : 'Offline'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <span className="text-[10px] text-slate-400 font-medium">
                       {ridesUiState.isOnline ? 'Go Offline' : 'Go Online'}
                     </span>

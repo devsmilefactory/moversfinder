@@ -38,25 +38,19 @@ const RidesTabs = ({ activeTab, onTabChange, counts = {} }) => {
   const activeIndex = steps.findIndex((step) => step.id === activeTab);
   const currentIndex = activeIndex === -1 ? 0 : activeIndex;
 
-  const connectorColor = (index) => {
-    if (index < currentIndex) return 'bg-emerald-500';
-    if (index === currentIndex) return 'bg-yellow-400';
-    return 'bg-gray-200';
-  };
-
   const getStepClasses = (isActive, isCompleted) => {
     const baseClasses =
-      'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border-2 transition-all min-w-[110px] justify-center shadow-sm font-semibold';
+      'relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all min-w-[110px] justify-center font-semibold';
 
     if (isActive) {
-      return `${baseClasses} bg-yellow-400 border-yellow-500 text-slate-900 ring-2 ring-yellow-200 shadow-lg scale-105`;
+      return `${baseClasses} text-slate-900`;
     }
 
     if (isCompleted) {
-      return `${baseClasses} bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100`;
+      return `${baseClasses} text-gray-600 hover:text-gray-900`;
     }
 
-    return `${baseClasses} bg-white border-gray-300 text-gray-700 hover:border-yellow-400 hover:bg-yellow-50 hover:text-slate-900`;
+    return `${baseClasses} text-gray-600 hover:text-gray-900`;
   };
 
   return (
@@ -72,10 +66,14 @@ const RidesTabs = ({ activeTab, onTabChange, counts = {} }) => {
           <React.Fragment key={step.id}>
             <button
               onClick={() => onTabChange(step.id)}
-              className="flex items-center gap-1.5 flex-shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2"
+              className="relative flex items-center gap-1.5 flex-shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 focus-visible:ring-offset-2 pb-1"
               aria-current={isActive ? 'page' : undefined}
               type="button"
             >
+              {/* Green dot indicator at top right for active tab */}
+              {isActive && (
+                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full z-10"></span>
+              )}
               <div className={getStepClasses(isActive, isCompleted)}>
                 <span className="text-sm" aria-hidden="true">
                   {step.icon}
@@ -89,10 +87,11 @@ const RidesTabs = ({ activeTab, onTabChange, counts = {} }) => {
                   </span>
                 )}
               </div>
+              {/* Bottom line indicator for active tab */}
+              {isActive && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-green-500"></div>
+              )}
             </button>
-            {index < steps.length - 1 && (
-              <div className={`h-0.5 w-6 md:w-10 ${connectorColor(index)}`} />
-            )}
           </React.Fragment>
         );
       })}

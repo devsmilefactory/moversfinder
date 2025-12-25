@@ -86,15 +86,9 @@ export async function fetchDriverRides(
     // Map ride timing
     const rideTiming = scheduleFilter === 'ALL' ? null : SCHEDULE_TO_TIMING[scheduleFilter];
 
-    // Log RPC call parameters
-    console.log('[Driver Feed] Calling get_driver_feed:', {
-      p_driver_id: driverId,
-      p_feed_category: feedCategory,
-      p_service_type: serviceType,
-      p_ride_timing: rideTiming,
-      p_limit: pageSize,
-      p_offset: offset
-    });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'driverRidesApi.js:90',message:'Calling get_driver_feed',data:{feedCategory,serviceType,rideTiming,page,pageSize},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
     const { data, error } = await supabase.rpc('get_driver_feed', {
       p_driver_id: driverId,
@@ -118,23 +112,63 @@ export async function fetchDriverRides(
 
     // Log performance warning if slow
     if (duration > 500) {
-      console.warn('[Driver Feed] Slow query detected:', {
-        feedCategory,
-        duration: `${duration.toFixed(2)}ms`,
-        resultCount: data?.length || 0
-      });
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'driverRidesApi.js:120',message:'Slow query detected',data:{feedCategory,duration:duration.toFixed(2),resultCount:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+    }
+
+    // Defensive client-side deduping to enforce mutual exclusivity:
+    // - Any ride with this driver's offer should be excluded from "available"
+    // - Any ride with this driver's pending offer should appear only in "my_bids"
+    // - Any ride assigned to this driver is treated as in_progress even if status is still pending
+    let cleanedData = data || [];
+    if (cleanedData.length > 0) {
+      const rideIds = cleanedData.map((r) => r.id).filter(Boolean);
+      if (rideIds.length > 0) {
+        const { data: offerRows, error: offerError } = await supabase
+          .from('ride_offers')
+          .select('ride_id, driver_id, offer_status')
+          .in('ride_id', rideIds)
+          .eq('driver_id', driverId);
+
+        if (!offerError) {
+          const offersByRide = new Map();
+          offerRows?.forEach((o) => {
+            offersByRide.set(o.ride_id, o);
+          });
+
+          cleanedData = cleanedData.filter((ride) => {
+            const offer = offersByRide.get(ride.id);
+            const offerStatus = (offer?.offer_status || '').toLowerCase();
+            const isAssignedToDriver = ride.driver_id === driverId;
+            const isPending = ride.ride_status === 'pending';
+
+            switch (feedCategory) {
+              case 'available':
+                // Keep only if no offer from this driver and no assignment
+                return !offer && !isAssignedToDriver;
+              case 'my_bids':
+                // Only pending offers, and ride not yet assigned
+                return offer && offerStatus === 'pending' && !isAssignedToDriver;
+              case 'in_progress':
+                // Include if assigned to this driver (even if status still pending)
+                return isAssignedToDriver || (isPending && isAssignedToDriver);
+              default:
+                return true;
+            }
+          });
+        }
+      }
     }
 
     // Get total count for pagination (approximate based on returned data)
-    const count = data?.length || 0;
+    const count = cleanedData?.length || 0;
 
-    console.log('[Driver Feed] Success:', {
-      feedCategory,
-      resultCount: count,
-      duration: `${duration.toFixed(2)}ms`
-    });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'driverRidesApi.js:131',message:'Fetch success',data:{feedCategory,resultCount:count,duration:duration.toFixed(2)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
 
-    return { data: data || [], error: null, count };
+    return { data: cleanedData || [], error: null, count };
   } catch (error) {
     const duration = performance.now() - startTime;
     console.error('[Driver Feed] Exception in fetchDriverRides:', {
@@ -170,12 +204,42 @@ export async function fetchActiveInstantRide(driverId) {
     }
 
     // Get first active instant ride
-    const ride = data && data.length > 0 ? data[0] : null;
+    let ride = data && data.length > 0 ? data[0] : null;
+
+    // If ride_status already shows a terminal state, treat as no active ride
+    if (ride && ['trip_completed', 'completed', 'cancelled'].includes((ride.ride_status || '').toLowerCase())) {
+      ride = null;
+    }
 
     return { data: ride, error: null };
   } catch (error) {
     console.error('Exception in fetchActiveInstantRide:', error);
     return { data: null, error };
+  }
+}
+
+/**
+ * Ensure driver availability is reset when no active ride is tracked
+ * Safe guard: only updates when active_ride_id IS NULL
+ */
+export async function ensureDriverAvailability(driverId) {
+  if (!driverId) return { success: false, error: 'driverId required' };
+
+  try {
+    const { error } = await supabase
+      .from('driver_locations')
+      .update({ is_available: true })
+      .eq('driver_id', driverId)
+      .is('active_ride_id', null);
+
+    if (error) {
+      console.error('Error ensuring driver availability:', error);
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err) {
+    console.error('Exception ensuring driver availability:', err);
+    return { success: false, error: err.message };
   }
 }
 

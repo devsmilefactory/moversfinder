@@ -91,8 +91,21 @@ export const broadcastRideToDrivers = async (rideId, pickupCoordinates, radiusKm
       };
     }
 
+    // Get ride details for notifications
+    const { data: rideData, error: rideError } = await supabase
+      .from('rides')
+      .select('service_type, pickup_location, estimated_cost')
+      .eq('id', rideId)
+      .single();
+
+    if (rideError) {
+      console.error('Error fetching ride details:', rideError);
+    }
+
+    const driversList = Array.from(uniqueDrivers.values());
+    
     // Create queue entries for each driver
-    const queueEntries = Array.from(uniqueDrivers.values()).map(driver => ({
+    const queueEntries = driversList.map(driver => ({
       ride_id: rideId,
       driver_id: driver.driver_id,
       status: 'viewing',
@@ -109,11 +122,49 @@ export const broadcastRideToDrivers = async (rideId, pickupCoordinates, radiusKm
       return { success: false, error: insertError.message, driversNotified: 0 };
     }
 
-    console.log(`✅ Ride broadcast to ${insertedEntries.length} drivers (radius used: ${searchRadiusUsed}km)`);
+    // Create notifications for each driver (using correct uppercase enum values)
+    const notificationPromises = driversList.map(async (driver) => {
+      const title = 'New Ride Request';
+      const message = rideData?.pickup_location 
+        ? `${rideData.pickup_location.substring(0, 50)}${rideData.pickup_location.length > 50 ? '...' : ''}`
+        : 'New ride request nearby';
+      const actionUrl = `/driver/rides?rideId=${rideId}`;
+
+      const { error: notifError } = await supabase
+        .from('notifications')
+        .insert([{
+          user_id: driver.driver_id,
+          notification_type: 'new_offer',
+          category: 'OFFERS',
+          priority: 'HIGH',
+          title,
+          message,
+          action_url: actionUrl,
+          ride_id: rideId,
+          metadata: {
+            service_type: rideData?.service_type,
+            estimated_fare: rideData?.estimated_cost,
+            pickup_location: rideData?.pickup_location,
+            distance_km: driver.distance_km,
+          },
+        }]);
+
+      if (notifError) {
+        console.error(`Error creating notification for driver ${driver.driver_id}:`, notifError);
+        return false;
+      }
+      return true;
+    });
+
+    const notificationResults = await Promise.all(notificationPromises);
+    const notificationsCreated = notificationResults.filter(Boolean).length;
+
+    console.log(`✅ Ride broadcast to ${insertedEntries.length} drivers, ${notificationsCreated} notifications created (radius used: ${searchRadiusUsed}km)`);
     return { 
       success: true, 
       driversNotified: insertedEntries.length,
-      drivers: Array.from(uniqueDrivers.values()),
+      notificationsCreated,
+      drivers: driversList,
       radiusUsed: searchRadiusUsed,
       message: `Ride broadcast to ${insertedEntries.length} driver(s) within ${searchRadiusUsed}km`
     };

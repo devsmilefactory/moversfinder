@@ -1,3 +1,11 @@
+/**
+ * @deprecated Legacy driver "ride requests" actions hook used by `RideRequestsViewContainer` flow.
+ * Current driver experience uses the unified feed + actions in driver pages/components.
+ *
+ * Kept for reference.
+ * See: `docs/DEPRECATED_CODE_MAP.md`
+ */
+
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../stores';

@@ -62,16 +62,30 @@ const MapView = ({
       try {
         // Check if API key is configured
         const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+        console.log('🗝️ MapView: Checking Google Maps API key...', {
+          hasKey: !!apiKey,
+          keyLength: apiKey?.length || 0,
+          keyPreview: apiKey ? `${apiKey.substring(0, 10)}...` : 'NOT SET'
+        });
+        
         if (!apiKey) {
-          setLoadError(new Error('Google Maps API key is not configured'));
+          console.warn('⚠️ Google Maps API key is not configured - map will not load, but location detection can still work');
+          // Don't set error - allow the component to render without map
+          // Location detection can still work via browser geolocation API
+          setIsLoaded(false); // Keep isLoaded false so map doesn't try to initialize
           return;
         }
+        
+        console.log('✅ Google Maps API key found');
 
         // Check if already loaded
         if (window.google?.maps?.importLibrary) {
+          console.log('✅ Google Maps already loaded');
           setIsLoaded(true);
           return;
         }
+        
+        console.log('📦 Loading Google Maps script...');
 
         // Listen for Google Maps authentication errors
         window.gm_authFailure = () => {
@@ -89,17 +103,23 @@ const MapView = ({
         document.head.appendChild(script);
 
         // Wait for the loader to be available
+        console.log('⏳ Waiting for Google Maps to initialize...');
         let attempts = 0;
         const maxAttempts = 50; // 5 seconds
         while (!window.google?.maps?.importLibrary && attempts < maxAttempts) {
+          if (attempts % 10 === 0) {
+            console.log(`⏳ Still waiting... (${attempts * 100}ms)`);
+          }
           await new Promise(resolve => setTimeout(resolve, 100));
           attempts++;
         }
 
         if (!window.google?.maps?.importLibrary) {
+          console.error('❌ Google Maps failed to load after 5 seconds');
           throw new Error('Google Maps failed to load. Please check your API key configuration.');
         }
 
+        console.log('✅ Google Maps loaded successfully');
         setIsLoaded(true);
       } catch (error) {
         console.error('Error loading Google Maps:', error);
@@ -121,6 +141,10 @@ const MapView = ({
 
     const initMap = async () => {
       try {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:140',message:'Map initialization started',data:{isLoaded,hasMapRef:!!mapRef.current,hasMapInstance:!!mapInstanceRef.current,center,currentLocation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+
         // Import the maps library
         const { Map } = await window.google.maps.importLibrary("maps");
 
@@ -137,7 +161,15 @@ const MapView = ({
         };
         const mapCenterCandidate = center || currentLocation;
         const mapCenter = mapCenterCandidate ? coerceLatLng(mapCenterCandidate) : null;
+        
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:157',message:'Map center calculation',data:{center,currentLocation,mapCenterCandidate,mapCenter},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+
         if (!mapCenter) {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:160',message:'No map center - waiting for location',data:{center,currentLocation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+          // #endregion
           console.log('Waiting for location to initialize map...');
           return;
         }
@@ -464,14 +496,26 @@ const MapView = ({
 
 
   const handleGetCurrentLocation = async () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:484',message:'handleGetCurrentLocation called',data:{hasMapInstance:!!mapInstanceRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     try {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:487',message:'Calling getCurrentLocation',data:{navigatorGeolocation:!!navigator.geolocation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       const coords = await getCurrentLocation();
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:490',message:'getCurrentLocation succeeded',data:{coords},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       setCurrentLocation(coords);
       if (mapInstanceRef.current) {
         mapInstanceRef.current.panTo(coords);
         mapInstanceRef.current.setZoom(15);
       }
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:496',message:'getCurrentLocation failed',data:{error:error.message,errorCode:error.code},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       console.error('Error getting location:', error);
       alert(error.message || 'Unable to get your current location. Please check your browser permissions.');
     }

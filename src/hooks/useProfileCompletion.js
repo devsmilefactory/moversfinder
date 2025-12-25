@@ -16,6 +16,7 @@ import {
 import useProfileStore from '../stores/profileStore';
 import useDriverStore from '../stores/driverStore';
 import { computeDriverCompletion } from '../utils/driverCompletion';
+import { getDriverStatus } from '../utils/driverStatusCheck';
 
 /**
  * Hook to manage profile completion for a user
@@ -30,6 +31,8 @@ export const useProfileCompletion = (user) => {
   const [restrictedFeatures, setRestrictedFeatures] = useState([]);
   const [shouldShowCompletionModal, setShouldShowCompletionModal] = useState(false);
   const [shouldShowBanner, setShouldShowBanner] = useState(false);
+  const [approvalStatus, setApprovalStatus] = useState('pending');
+  const [canAccessRides, setCanAccessRides] = useState(true);
 
   // Get active profile from profileStore for multi-profile users (driver, corporate)
   const activeProfile = useProfileStore((state) => state.activeProfile);
@@ -37,6 +40,11 @@ export const useProfileCompletion = (user) => {
   const { documents, loadDocuments } = useDriverStore();
 
   const activeProfileType = useProfileStore((state) => state.activeProfileType);
+
+  // Use the actively selected profile as the source of truth.
+  // Driver accounts can browse as passengers; in passenger mode we must not
+  // apply driver completion/approval rules.
+  const currentProfileType = activeProfileType || user?.user_type || user?.userType;
 
   /**
    * Calculate and update profile completion state
@@ -50,31 +58,64 @@ export const useProfileCompletion = (user) => {
       setRestrictedFeatures([]);
       setShouldShowCompletionModal(false);
       setShouldShowBanner(false);
+      setApprovalStatus('pending');
+      setCanAccessRides(false);
       return;
     }
-
-    const userType = user.user_type || user.userType;
 
     // For driver and corporate users, use activeProfile data if available
     // This contains the actual profile_status, approval_status, completion_percentage
     let profileData = user;
     let percentage = 0;
     let status = 'incomplete';
+    let approval = 'pending';
+    let access = 'read-only';
+    let ridesAccess = false;
 
-    if ((userType === 'driver' || userType === 'corporate') && activeProfile) {
-      // For driver: compute client-side using unified presence-based utility
-      if (userType === 'driver') {
-        percentage = computeDriverCompletion(activeProfile, documents || []);
+    if (currentProfileType === 'driver' && activeProfile) {
+      // Single source of truth for driver completion/approval
+      const driverStatus = getDriverStatus(activeProfile, documents || []);
+      percentage = driverStatus.completionPercentage ?? 0;
+      approval = driverStatus.approvalStatus || 'pending';
+      const profileComplete = !!driverStatus.isProfileComplete;
+      ridesAccess = !!driverStatus.canAccessRides;
+
+      if (profileComplete && approval === 'approved') {
+        status = 'complete';
+      } else if (profileComplete) {
+        status = 'pending';
       } else {
-        // Corporate: continue using DB-stored percentage
-        percentage = activeProfile.completion_percentage || 0;
+        status = percentage >= 50 ? 'partial' : 'incomplete';
       }
+
+      // Map to legacy access helper expectations
+      const completionForAccess = profileComplete ? 'complete' : 'incomplete';
+      const verificationStatus = approval === 'approved' ? 'verified' : approval;
+      access = determineAccessLevel(currentProfileType, completionForAccess, verificationStatus);
+
+      setCompletionPercentage(percentage);
+      setCompletionStatus(status);
+      setAccessLevel(access);
+      setRequiredFields(getRequiredFields(currentProfileType));
+      setRestrictedFeatures(getRestrictedFeatures(currentProfileType, access));
+      // Show modal/banner only when driver cannot access rides yet
+      const shouldGate = !ridesAccess;
+      setShouldShowCompletionModal(shouldGate);
+      setShouldShowBanner(shouldGate);
+      setApprovalStatus(approval);
+      setCanAccessRides(ridesAccess);
+      return;
+    }
+
+    if (currentProfileType === 'corporate' && activeProfile) {
+      // Corporate: continue using DB-stored percentage
+      percentage = activeProfile.completion_percentage || 0;
 
       // Determine status based on profile_status and approval_status
       const profileStatus = activeProfile.profile_status;
-      const approvalStatus = activeProfile.approval_status;
+      approval = activeProfile.approval_status || 'pending';
 
-      if (approvalStatus === 'approved' && profileStatus === 'approved') {
+      if (approval === 'approved' && profileStatus === 'approved') {
         status = 'complete';
         percentage = 100;
       } else if (profileStatus === 'pending_approval') {
@@ -86,7 +127,7 @@ export const useProfileCompletion = (user) => {
       }
     } else {
       // For individual users or when activeProfile not loaded, use legacy mocks fallback
-      percentage = calculateProfileCompletion(userType, profileData);
+      percentage = calculateProfileCompletion(currentProfileType, profileData);
 
       if (percentage === 100) {
         status = 'complete';
@@ -95,37 +136,41 @@ export const useProfileCompletion = (user) => {
       }
     }
 
-    setCompletionPercentage(percentage);
-    setCompletionStatus(status);
-
     // Determine access level
     // Use type-specific verification/approval status for multi-profile users
     let verificationStatus = 'approved';
-    if ((userType === 'driver' || userType === 'corporate')) {
+    if (currentProfileType === 'corporate') {
       const appr = activeProfile?.approval_status;
       verificationStatus = appr === 'approved' ? 'approved' : (appr === 'rejected' ? 'rejected' : 'pending');
+      approval = verificationStatus;
     }
-    const access = determineAccessLevel(userType, status, verificationStatus);
+    access = determineAccessLevel(currentProfileType, status, verificationStatus);
     setAccessLevel(access);
+    setApprovalStatus(approval);
+    ridesAccess = access === 'full';
+    setCanAccessRides(ridesAccess);
 
     // Get required fields
-    const fields = getRequiredFields(userType);
+    const fields = getRequiredFields(currentProfileType);
     setRequiredFields(fields);
 
     // Get restricted features
-    const restricted = getRestrictedFeatures(userType, access);
+    const restricted = getRestrictedFeatures(currentProfileType, access);
     setRestrictedFeatures(restricted);
 
     // Determine if should show completion modal
     // Don't show modal if profile is already complete (approved), even if login count is high
     const loginCount = user.login_count || 0;
-    const forceCompletion = status !== 'complete' && shouldForceProfileCompletion(loginCount, status, userType);
+    const forceCompletion = status !== 'complete' && shouldForceProfileCompletion(loginCount, status, currentProfileType);
     setShouldShowCompletionModal(forceCompletion);
 
     // Determine if should show banner
-    const showBanner = status !== 'complete' && userType !== 'individual';
+    const showBanner = status !== 'complete' && currentProfileType !== 'individual';
     setShouldShowBanner(showBanner);
-  }, [user, activeProfile, activeProfileType, documents]);
+
+    setCompletionPercentage(percentage);
+    setCompletionStatus(status);
+  }, [user, activeProfile, activeProfileType, currentProfileType, documents]);
 
   /**
    * Update state when user changes
@@ -143,10 +188,9 @@ export const useProfileCompletion = (user) => {
 
   // Ensure driver documents are loaded for accurate client-side completion
   useEffect(() => {
-    const userType = user?.user_type || user?.userType;
-    if (userType !== 'driver' || !user?.id) return;
+    if (currentProfileType !== 'driver' || !user?.id) return;
     loadDocuments(user.id);
-  }, [user?.id, user?.user_type, user?.userType]);
+  }, [user?.id, currentProfileType]);
 
   /**
    * Get restriction message for a feature
@@ -156,13 +200,11 @@ export const useProfileCompletion = (user) => {
       return null;
     }
 
-    const userType = user?.user_type || user?.userType;
-
-    if (userType === 'corporate') {
+    if (currentProfileType === 'corporate') {
       return 'Complete your company profile to access this feature';
     }
 
-    if (userType === 'driver') {
+    if (currentProfileType === 'driver') {
       if (completionStatus !== 'complete') {
         return 'Complete your driver profile to access this feature';
       }
@@ -170,7 +212,7 @@ export const useProfileCompletion = (user) => {
     }
 
     return 'Complete your profile to access this feature';
-  }, [isFeatureRestricted, user, completionStatus]);
+  }, [isFeatureRestricted, user, completionStatus, currentProfileType]);
 
   /**
    * Dismiss completion modal (user can dismiss, but will show again after 3 logins)
@@ -225,6 +267,8 @@ export const useProfileCompletion = (user) => {
     shouldShowBanner,
     hasFullAccess,
     isReadOnly,
+    approvalStatus,
+    canAccessRides,
 
     // Methods
     updateCompletionState,

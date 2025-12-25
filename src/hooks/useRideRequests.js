@@ -1,3 +1,11 @@
+/**
+ * @deprecated Legacy driver "ride requests" hook used by the older `RideRequestsViewContainer` flow.
+ * Current driver experience uses `useDriverRidesFeed` + `useSmartRealtimeFeed` directly.
+ *
+ * Kept for reference.
+ * See: `docs/DEPRECATED_CODE_MAP.md`
+ */
+
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDriverRidesFeed } from './useDriverRidesFeed';
 import { useAuthStore } from '../stores';

@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Button from '../../dashboards/shared/Button';
 import useProfileStore from '../../stores/profileStore';
 import useAuthStore from '../../stores/authStore';
 import useDriverStore from '../../stores/driverStore';
-import { computeDriverCompletion } from '../../utils/driverCompletion';
+import { getDriverStatus } from '../../utils/driverStatusCheck';
+import { useToast } from '../ui/ToastProvider';
 
 
 import ComingSoon from '../common/ComingSoon';
@@ -33,10 +34,13 @@ const ProfileStatusPage = ({ profileType }) => {
   const { documents, loadDocuments } = useDriverStore();
 
   const [docsReady, setDocsReady] = useState(profileType !== 'driver');
+  const [refreshingStatus, setRefreshingStatus] = useState(false);
+  const [justApproved, setJustApproved] = useState(false);
 
   const navigate = useNavigate();
-  const { activeProfile, activeProfileType, refreshProfiles, switchToProfile, checkProfileExists } = useProfileStore();
+  const { activeProfile, activeProfileType, refreshProfiles, switchToProfile, checkProfileExists, loadProfileData } = useProfileStore();
   const { user } = useAuthStore();
+  const { addToast } = useToast();
 
   // Refresh profile data when component mounts or when navigating to this page
   useEffect(() => {
@@ -101,11 +105,6 @@ const ProfileStatusPage = ({ profileType }) => {
 
   const config = profileConfig[profileType] || profileConfig.individual;
 
-  // Get status from activeProfile or user
-  // Prefer driver-specific fields from activeProfile; fall back to safe defaults
-  const profileCompletionStatus = activeProfile?.profile_completion_status || 'incomplete';
-  const profileStatus = activeProfile?.profile_status || 'in_progress'; // legacy/back-compat only
-  const dbCompletion = activeProfile?.completion_percentage ?? 0;
   // Ensure driver documents are loaded before rendering completion to avoid flicker
   useEffect(() => {
     let cancelled = false;
@@ -123,22 +122,44 @@ const ProfileStatusPage = ({ profileType }) => {
     };
     run();
     return () => { cancelled = true; };
-  }, [profileType, user?.id]);
+  }, [profileType, user?.id, loadDocuments]);
 
-  const approvalStatus = activeProfile?.approval_status || 'pending';
+  // Use unified status check for drivers - single source of truth
+  // ALWAYS use unified calculation for drivers to ensure consistency
+  // Wait for documents to load before calculating (docsReady ensures documents are loaded)
+  const driverStatus = profileType === 'driver' && docsReady && activeProfile
+    ? getDriverStatus(activeProfile, documents || [])
+    : null;
 
-  // Unified driver completion: presence-based, via shared util; fallback to DB field
-  const completionPercentage = profileType === 'driver'
-    ? computeDriverCompletion(activeProfile || {}, documents || [])
-    : dbCompletion;
-  const accountStatus = activeProfile?.account_status || user?.account_status || 'active';
-  const rejectionReason = activeProfile?.rejection_reason;
+  // Reset justApproved flag when status changes
+  useEffect(() => {
+    if (driverStatus && !driverStatus.canAccessRides) {
+      setJustApproved(false);
+    }
+  }, [driverStatus]);
+
+  // For drivers, ALWAYS use unified status calculation (hardcoded to use same logic everywhere)
+  // This ensures status page and profile edit page show the same completion percentage
+  // For others, use legacy logic
+  const approvalStatus = driverStatus?.approvalStatus || activeProfile?.approval_status || 'pending';
+  
+  // CRITICAL: Always use unified calculation for drivers - never use DB stored value
+  // This ensures consistency between status page and profile edit page
+  const completionPercentage = profileType === 'driver' && driverStatus
+    ? driverStatus.completionPercentage  // Always from unified computeDriverCompletion calculation
+    : (activeProfile?.completion_percentage ?? 0);
+    
+  const accountStatus = driverStatus?.accountStatus || activeProfile?.account_status || user?.account_status || 'active';
+  const rejectionReason = driverStatus?.rejectionReason || activeProfile?.rejection_reason;
   const suspensionReason = user?.suspension_reason;
-
-  // Derived booleans
-  const isProfileComplete = (
-    String(profileCompletionStatus).toLowerCase() === 'complete' || Number(completionPercentage) >= 100
-  );
+  
+  // CRITICAL: Always use unified calculation for drivers
+  const isProfileComplete = profileType === 'driver' && driverStatus
+    ? driverStatus.isProfileComplete  // Always from unified calculation
+    : (
+      String(activeProfile?.profile_completion_status || 'incomplete').toLowerCase() === 'complete' || 
+      Number(completionPercentage) >= 100
+    );
 
   // Open profile completion modal or navigate to profile page
   const handleOpenProfileForm = () => {
@@ -152,6 +173,143 @@ const ProfileStatusPage = ({ profileType }) => {
       window.dispatchEvent(new CustomEvent('openProfileCompletionModal'));
     }
   };
+
+  // Handle refresh status - check latest status and show current state
+  const handleRefreshStatus = async () => {
+    if (!user?.id) {
+      addToast({ type: 'error', message: 'User not found' });
+      return;
+    }
+    try {
+      setRefreshingStatus(true);
+      setJustApproved(false);
+      
+      // Refresh all profile data
+      await refreshProfiles(user.id);
+      if (profileType === 'driver') {
+        await loadProfileData(user.id, 'driver');
+        await loadDocuments(user.id);
+        
+        // Wait a moment for state to update
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Re-fetch fresh data directly from database to check latest status
+        const { supabase } = await import('../../lib/supabase');
+        const { data: refreshedProfile } = await supabase
+          .from('driver_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .maybeSingle();
+          
+        if (refreshedProfile) {
+          const { data: refreshedDocs } = await supabase
+            .from('driver_documents')
+            .select('*')
+            .eq('driver_id', user.id);
+          
+          const refreshedStatus = getDriverStatus(refreshedProfile, refreshedDocs || []);
+          
+          // If approved after refresh, show CTA to start accepting rides
+          if (refreshedStatus.canAccessRides) {
+            setJustApproved(true);
+            addToast({ type: 'success', message: 'Profile approved! You can now start accepting rides.' });
+            // Force re-render by updating state
+            await refreshProfiles(user.id);
+            await loadProfileData(user.id, 'driver');
+            setRefreshingStatus(false);
+            return;
+          } else {
+            addToast({ type: 'info', message: `Status: ${refreshedStatus.state === 'incomplete' ? 'Profile incomplete' : 'Approval pending'}` });
+          }
+        } else {
+          addToast({ type: 'info', message: 'Profile not found. Please complete your profile.' });
+        }
+      } else {
+        addToast({ type: 'success', message: 'Status refreshed' });
+      }
+      setRefreshingStatus(false);
+    } catch (e) {
+      console.error('Failed to refresh status', e);
+      addToast({ type: 'error', message: 'Failed to refresh status. Please try again.' });
+      setRefreshingStatus(false);
+    }
+  };
+
+  // Handle view profile - navigate to profile page
+  const handleViewProfile = useCallback((e) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:239',message:'handleViewProfile called',data:{profileType,currentPath:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
+    // #endregion
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    console.log('[ProfileStatusPage] View Profile clicked', { profileType, user: user?.id });
+    
+    if (profileType === 'driver') {
+      console.log('[ProfileStatusPage] Navigating to /driver/profile');
+      const targetPath = '/driver/profile';
+      try {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:250',message:'About to call navigate',data:{targetPath,currentPath:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
+        // #endregion
+        navigate(targetPath, { replace: false });
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:251',message:'navigate() called',data:{targetPath},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
+        // #endregion
+      } catch (error) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:252',message:'Navigation error',data:{error:error.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'K'})}).catch(()=>{});
+        // #endregion
+        console.error('[ProfileStatusPage] Navigation error, using window.location:', error);
+        window.location.href = targetPath;
+      }
+    } else if (profileType === 'operator') {
+      navigate('/operator/profile', { replace: false });
+    } else {
+      handleOpenProfileForm();
+    }
+  }, [profileType, user?.id, navigate]);
+
+  // Handle edit profile - navigate to profile page in edit mode
+  const handleEditProfile = useCallback((e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    console.log('[ProfileStatusPage] Edit Profile clicked', { profileType, user: user?.id });
+    
+    if (profileType === 'driver') {
+      console.log('[ProfileStatusPage] Navigating to /driver/profile with edit mode');
+      const targetPath = '/driver/profile';
+      try {
+        navigate(targetPath, { state: { edit: true }, replace: false });
+      } catch (error) {
+        console.error('[ProfileStatusPage] Navigation error, using window.location:', error);
+        window.location.href = `${targetPath}?edit=true`;
+      }
+    } else if (profileType === 'operator') {
+      navigate('/operator/profile', { state: { edit: true }, replace: false });
+    } else {
+      handleOpenProfileForm();
+    }
+  }, [profileType, user?.id, navigate]);
+
+  // Handle start accepting rides - navigate to rides page
+  const handleStartAcceptingRides = useCallback((e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    console.log('[ProfileStatusPage] Start Accepting Rides clicked');
+    const targetPath = '/driver/rides';
+    try {
+      navigate(targetPath, { replace: true });
+    } catch (error) {
+      console.error('[ProfileStatusPage] Navigation error, using window.location:', error);
+      window.location.href = targetPath;
+    }
+  }, [navigate]);
 
   // Navigate to main page
   const handleGoToMain = () => {
@@ -312,21 +470,41 @@ const ProfileStatusPage = ({ profileType }) => {
             </div>
           )}
 
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          {/* Action Buttons - Only Refresh Status, View Profile, Edit Profile */}
+          <div className="flex items-center justify-center gap-3 flex-wrap">
             <Button
               variant="primary"
               size="lg"
-              onClick={handleOpenProfileForm}
+              disabled={refreshingStatus}
+              onClick={handleRefreshStatus}
+              className="bg-yellow-400 text-slate-900 hover:bg-yellow-500"
             >
-              Resubmit Profile
+              {refreshingStatus ? 'Refreshing...' : 'Refresh Status'}
             </Button>
             <Button
               variant="outline"
               size="lg"
-              onClick={handleContactSupport}
+              onClick={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:475',message:'View Profile button clicked',data:{pathname:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
+                // #endregion
+                console.log('View Profile button clicked directly');
+                handleViewProfile(e);
+              }}
+              type="button"
             >
-              Contact Support
+              View Profile
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={(e) => {
+                console.log('Edit Profile button clicked directly');
+                handleEditProfile(e);
+              }}
+              type="button"
+            >
+              Edit Profile
             </Button>
           </div>
 
@@ -389,15 +567,43 @@ const ProfileStatusPage = ({ profileType }) => {
             </div>
           )}
 
-          {/* CTA Button */}
-          <Button
-            variant="primary"
-            size="lg"
-            onClick={handleOpenProfileForm}
-            className="w-full sm:w-auto px-8"
-          >
-            Complete Profile Now
-          </Button>
+          {/* CTA Buttons - Only Refresh Status, View Profile, Edit Profile */}
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <Button
+              variant="primary"
+              size="lg"
+              disabled={refreshingStatus}
+              onClick={handleRefreshStatus}
+              className="bg-yellow-400 text-slate-900 hover:bg-yellow-500"
+            >
+              {refreshingStatus ? 'Refreshing...' : 'Refresh Status'}
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:475',message:'View Profile button clicked',data:{pathname:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
+                // #endregion
+                console.log('View Profile button clicked directly');
+                handleViewProfile(e);
+              }}
+              type="button"
+            >
+              View Profile
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={(e) => {
+                console.log('Edit Profile button clicked directly');
+                handleEditProfile(e);
+              }}
+              type="button"
+            >
+              Edit Profile
+            </Button>
+          </div>
 
           {/* Info */}
           <div className="mt-8 p-4 bg-blue-50 rounded-lg">
@@ -410,80 +616,121 @@ const ProfileStatusPage = ({ profileType }) => {
     );
   }
 
-  // STATE 2: Awaiting Approval (only after profile is complete)
+  // STATE 2: Approval Pending (only after profile is complete)
+  // Check if just approved after refresh - show CTA to start accepting rides
   if (isProfileComplete && (approvalStatus === 'pending' || approvalStatus === 'under_review')) {
+    // If just approved after refresh, show approved state with CTA
+    if (justApproved && driverStatus?.canAccessRides) {
+      return (
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="max-w-2xl w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+            {/* Icon */}
+            <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <span className="text-5xl">✅</span>
+            </div>
+
+            {/* Title */}
+            <h1 className="text-3xl font-bold text-slate-800 mb-4">
+              Profile Approved!
+            </h1>
+
+            {/* Message */}
+            <p className="text-lg text-slate-600 mb-6">
+              Your Driver profile is complete and approved. You're all set to start accepting rides!
+            </p>
+
+            {/* CTA Button - Start Accepting Rides */}
+            <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
+              <Button
+                variant="primary"
+                size="lg"
+                onClick={(e) => {
+                  console.log('Start Accepting Rides button clicked directly');
+                  handleStartAcceptingRides(e);
+                }}
+                type="button"
+                className="bg-green-500 text-white hover:bg-green-600 px-8"
+              >
+                Start Accepting Rides
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                onClick={(e) => {
+                  console.log('View Profile button clicked directly (approved state)');
+                  handleViewProfile(e);
+                }}
+                type="button"
+              >
+                View Profile
+              </Button>
+            </div>
+
+            {/* Info */}
+            <div className="mt-8 p-4 bg-green-50 rounded-lg">
+              <p className="text-sm text-green-800">
+                <strong>Ready to go!</strong> Click the button above to start accepting ride requests and earning money.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Still pending - show pending message
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="max-w-2xl w-full bg-white rounded-2xl shadow-xl p-8 text-center">
           {/* Icon */}
-          <div className="w-24 h-24 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <span className="text-5xl">⏳</span>
+          <div className="w-20 h-20 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <span className="text-4xl">⏳</span>
           </div>
 
           {/* Title */}
-          <h1 className="text-3xl font-bold text-slate-800 mb-4">
-            Profile Awaiting Approval
-          </h1>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">
+            Approval Pending
+          </h2>
 
           {/* Message */}
-          <p className="text-lg text-slate-600 mb-6">
-            Your {config.name} profile has been submitted and is pending admin review.
-            You'll be notified once your account has been approved.
+          <p className="text-gray-600 mb-6">
+            Your profile is currently under review. You will be notified once your account has been approved.
           </p>
 
-          {/* Status Timeline */}
-          <div className="mb-8 text-left">
-            <div className="space-y-4">
-              {/* Step 1 - Complete */}
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                  <span className="text-white text-sm">✓</span>
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-slate-800">Profile Submitted</h3>
-                  <p className="text-sm text-slate-600">Your profile has been submitted for review</p>
-                </div>
-              </div>
-
-              {/* Step 2 - In Progress */}
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
-                  <span className="text-white text-sm">⋯</span>
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-slate-800">Under Review</h3>
-                  <p className="text-sm text-slate-600">Admin is reviewing your profile</p>
-                </div>
-              </div>
-
-              {/* Step 3 - Pending */}
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-8 h-8 bg-slate-300 rounded-full flex items-center justify-center">
-                  <span className="text-white text-sm">3</span>
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-slate-400">Approval</h3>
-                  <p className="text-sm text-slate-500">You'll receive a notification when approved</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          {/* Action Buttons - Only Refresh Status, View Profile, Edit Profile */}
+          <div className="flex items-center justify-center gap-3 flex-wrap">
             <Button
-              variant="outline"
+              variant="primary"
               size="lg"
-              onClick={handleOpenProfileForm}
+              disabled={refreshingStatus}
+              onClick={handleRefreshStatus}
+              className="bg-yellow-400 text-slate-900 hover:bg-yellow-500"
             >
-              View Profile Details
+              {refreshingStatus ? 'Refreshing...' : 'Refresh Status'}
             </Button>
             <Button
               variant="outline"
               size="lg"
-              onClick={handleContactSupport}
+              onClick={(e) => {
+                // #region agent log
+                fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:475',message:'View Profile button clicked',data:{pathname:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
+                // #endregion
+                console.log('View Profile button clicked directly');
+                handleViewProfile(e);
+              }}
+              type="button"
             >
-              Contact Support
+              View Profile
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={(e) => {
+                console.log('Edit Profile button clicked directly');
+                handleEditProfile(e);
+              }}
+              type="button"
+            >
+              Edit Profile
             </Button>
           </div>
 
@@ -500,7 +747,7 @@ const ProfileStatusPage = ({ profileType }) => {
   }
 
   // STATE 3: Profile Approved
-  if (approvalStatus === 'approved') {
+  if (approvalStatus === 'approved' || (driverStatus && driverStatus.canAccessRides)) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="max-w-2xl w-full bg-white rounded-2xl shadow-xl p-8 text-center">
@@ -516,32 +763,51 @@ const ProfileStatusPage = ({ profileType }) => {
 
           {/* Message */}
           <p className="text-lg text-slate-600 mb-6">
-            Your {config.name} profile is complete and approved. You're all set to start using our services!
+            Your Driver profile is complete and approved. You're all set to start accepting rides!
           </p>
 
-          {/* Action Buttons */}
+          {/* CTA Button - Start Accepting Rides */}
           <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
             <Button
               variant="primary"
               size="lg"
-              onClick={handleGoToMain}
-              className="px-8"
+              onClick={(e) => {
+                console.log('Start Accepting Rides button clicked directly (approved state final)');
+                handleStartAcceptingRides(e);
+              }}
+              type="button"
+              className="bg-green-500 text-white hover:bg-green-600 px-8"
             >
-              {config.mainAction}
+              Start Accepting Rides
             </Button>
             <Button
               variant="outline"
               size="lg"
-              onClick={handleOpenProfileForm}
+              onClick={(e) => {
+                console.log('View Profile button clicked directly (approved state final)');
+                handleViewProfile(e);
+              }}
+              type="button"
             >
-              Update Profile
+              View Profile
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={(e) => {
+                console.log('Edit Profile button clicked directly (approved state final)');
+                handleEditProfile(e);
+              }}
+              type="button"
+            >
+              Edit Profile
             </Button>
           </div>
 
           {/* Info */}
           <div className="mt-8 p-4 bg-green-50 rounded-lg">
             <p className="text-sm text-green-800">
-              <strong>Ready to go?</strong> Click the button above to start using our services.
+              <strong>Ready to go!</strong> Click the button above to start accepting ride requests and earning money.
             </p>
           </div>
         </div>

@@ -3,6 +3,7 @@ import LocationInput from '../../shared/LocationInput';
 import FormInput, { FormSelect, FormTextarea } from '../../shared/FormInput';
 import { useCorporateInvoiceApproval } from '../../../hooks/useCorporateInvoiceApproval';
 import { useAuthStore } from '../../../stores';
+import { FEATURE_FLAGS, normalizeRoundTripSelection } from '../../../config/featureFlags';
 
 /**
  * Compact Taxi Booking Form
@@ -14,6 +15,14 @@ import { useAuthStore } from '../../../stores';
 const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
   const user = useAuthStore((state) => state.user);
   const { isApproved, isLoading } = useCorporateInvoiceApproval();
+  const roundTripEnabled = FEATURE_FLAGS.ROUND_TRIPS_ENABLED;
+  const normalizedRoundTrip = normalizeRoundTripSelection(formData.isRoundTrip || false);
+
+  useEffect(() => {
+    if (!roundTripEnabled && formData.isRoundTrip && onChange) {
+      onChange((prev) => ({ ...prev, isRoundTrip: false }));
+    }
+  }, [roundTripEnabled, formData.isRoundTrip, onChange]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -43,7 +52,7 @@ const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
   return (
     <div className="space-y-4">
       {/* Locations - Flat design without shadows */}
-      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+      <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
         <LocationInput
           label="Passenger Pick-up"
           value={typeof formData.pickupLocation === 'string' ? formData.pickupLocation : (formData.pickupLocation?.data?.address || '')}
@@ -54,7 +63,7 @@ const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
         />
       </div>
 
-      <div className="bg-slate-50 rounded-lg border border-slate-200 p-4">
+      <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
         <LocationInput
           label="Drop-off Location"
           value={typeof formData.dropoffLocation === 'string' ? formData.dropoffLocation : (formData.dropoffLocation?.data?.address || '')}
@@ -66,20 +75,22 @@ const CompactTaxiForm = ({ formData, onChange, savedPlaces = [] }) => {
       </div>
 
       {/* Round Trip Option */}
-      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-        <label className="flex items-center gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={formData.isRoundTrip || false}
-            onChange={(e) => onChange({ ...formData, isRoundTrip: e.target.checked })}
-            className="w-4 h-4 text-yellow-600 border-slate-300 rounded focus:ring-yellow-500"
-          />
-          <div className="flex-1">
-            <div className="font-medium text-slate-700 text-sm">Round Trip</div>
-            <div className="text-xs text-slate-600">Return to pickup location (doubles the fare)</div>
-          </div>
-        </label>
-      </div>
+      {roundTripEnabled && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={normalizedRoundTrip}
+              onChange={(e) => onChange((prev) => ({ ...prev, isRoundTrip: e.target.checked }))}
+              className="w-4 h-4 text-blue-600 border-blue-300 rounded focus:ring-blue-500"
+            />
+            <div className="flex-1">
+              <div className="font-medium text-slate-700 text-sm">Round Trip</div>
+              <div className="text-xs text-slate-600">Return to pickup location (doubles the fare)</div>
+            </div>
+          </label>
+        </div>
+      )}
 
       {/* Vehicle Type & Passenger Count */}
       <div className="grid grid-cols-2 gap-4">

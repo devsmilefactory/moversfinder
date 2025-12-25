@@ -242,7 +242,7 @@ export const getTaskCoordinatesValue = (value) => {
   return null;
 };
 
-export const estimateErrandTask = async ({ startPoint, destinationPoint }) => {
+export const estimateErrandTask = async ({ startPoint, destinationPoint, servicePricingConfig = null }) => {
   const originAddress = getTaskAddressValue(startPoint);
   const destinationAddress = getTaskAddressValue(destinationPoint);
 
@@ -277,7 +277,19 @@ export const estimateErrandTask = async ({ startPoint, destinationPoint }) => {
     durationMinutes = Math.round((distanceKm / 35) * 60);
   }
 
-  const cost = distanceKm ? ((await calculateEstimatedFareV2({ distanceKm })) ?? 0) : 0;
+  // Use service-specific pricing if available
+  let cost = 0;
+  if (distanceKm) {
+    if (servicePricingConfig) {
+      // Use service-specific pricing config
+      const { calculateBaseFareAndDistance } = await import('./pricingCalculator');
+      const { baseFare, distanceCharge } = await calculateBaseFareAndDistance(distanceKm, null, servicePricingConfig);
+      cost = baseFare + distanceCharge;
+    } else {
+      // Fall back to global pricing
+      cost = (await calculateEstimatedFareV2({ distanceKm })) ?? 0;
+    }
+  }
 
   return {
     distanceKm: Math.round((distanceKm || 0) * 10) / 10,

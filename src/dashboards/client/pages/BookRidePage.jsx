@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import MapView from '../../../components/maps/MapView';
 import LocationPicker from '../../../components/maps/LocationPicker';
@@ -6,13 +6,23 @@ import LocationPicker from '../../../components/maps/LocationPicker';
 import UnifiedBookingModal from '../components/UnifiedBookingModal';
 import PWALeftDrawer from '../../../components/layouts/PWALeftDrawer';
 import RideStatusIndicator from '../../../components/passenger/RideStatusIndicator';
+import LocationPermissionModal from '../../../components/location/LocationPermissionModal';
 import useAuthStore from '../../../stores/authStore';
 import useProfileStore from '../../../stores/profileStore';
 import useRidesStore from '../../../stores/ridesStore';
 import { supabase } from '../../../lib/supabase';
+import useCentralizedLocation from '../../../hooks/useCentralizedLocation';
 
 import { calculateEstimatedFareV2 } from '../../../utils/pricingCalculator';
-import { detectCurrentLocationWithCity } from '../../../utils/locationServices';
+
+// Debug: Log environment variables on module load
+console.log('🔍 BookRidePage module loaded');
+console.log('🗝️ Environment check:', {
+  hasGoogleMapsKey: !!import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
+  googleMapsKeyLength: import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.length || 0,
+  isDev: import.meta.env.DEV,
+  isProd: import.meta.env.PROD
+});
 
 
 /**
@@ -27,9 +37,15 @@ import { detectCurrentLocationWithCity } from '../../../utils/locationServices';
  */
 
 const BookRidePage = () => {
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:38',message:'BookRidePage component rendering',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+  // #endregion
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
   const { activeProfileType } = useProfileStore();
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:42',message:'BookRidePage hooks initialized',data:{hasUser:!!user,activeProfileType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+  // #endregion
   const { getAvailableDriversCount } = useRidesStore();
 
   // Profile type display configuration
@@ -39,10 +55,21 @@ const BookRidePage = () => {
   // This ensures seamless profile switching - when user switches to driver,
   // this page will detect it and navigate to the driver page
   useEffect(() => {
-    if (!activeProfileType) return;
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:50',message:'Profile type check useEffect',data:{activeProfileType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+    // #endregion
+    if (!activeProfileType) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:52',message:'No activeProfileType - returning early',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
 
     // This page is for individual profile only
     if (activeProfileType !== 'individual') {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:55',message:'Redirecting due to profile type mismatch',data:{activeProfileType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
+      // #endregion
       console.log(`BookRidePage: activeProfileType is ${activeProfileType}, redirecting...`);
 
       // Navigate to the appropriate page for the active profile
@@ -60,9 +87,26 @@ const BookRidePage = () => {
   }, [activeProfileType, navigate]);
 
 
-  const [currentLocation, setCurrentLocation] = useState(null);
-  const [detectedCity, setDetectedCity] = useState(null);
-  const [isDetectingLocation, setIsDetectingLocation] = useState(true);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
+  
+  // Use centralized location hook instead of custom implementation
+  const {
+    currentLocation,
+    city: detectedCity,
+    isDetecting: isDetectingLocation,
+    locationError,
+    detectLocation: detectLocationFromHook,
+    locationPermission
+  } = useCentralizedLocation({
+    autoDetect: true,
+    onLocationUpdate: (coords, metadata) => {
+      // Location updated successfully
+    },
+    onError: (error) => {
+      // Error handled in useEffect below
+    }
+  });
+  
   const [locationDetectionFailed, setLocationDetectionFailed] = useState(false);
   const [selectedService, setSelectedService] = useState('taxi');
   const [showBookingModal, setShowBookingModal] = useState(false);
@@ -91,103 +135,37 @@ const BookRidePage = () => {
 
 
 
-  // Automatic location detection on mount using universal utility
+  // Handle permission denied - show modal instead of alert (only once)
+  const hasShownPermissionModalRef = useRef(false);
   useEffect(() => {
-    let timeoutId;
-    let isMounted = true;
-
-    const waitForGoogleMaps = async () => {
-      const maxWait = 10000;
-      const startTime = Date.now();
-
-      while (!window.google?.maps?.importLibrary && Date.now() - startTime < maxWait) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+    if (locationError && !hasShownPermissionModalRef.current) {
+      const PERMISSION_DENIED = 1;
+      const isPermissionDenied = 
+        locationError.code === PERMISSION_DENIED || 
+        locationError.message?.includes('permission denied') ||
+        locationPermission === 'denied';
+      
+      if (isPermissionDenied) {
+        hasShownPermissionModalRef.current = true;
+        setShowPermissionModal(true);
+        setLocationDetectionFailed(true);
       }
+    }
+    
+    // Reset flag if location is successfully detected
+    if (currentLocation && hasShownPermissionModalRef.current) {
+      hasShownPermissionModalRef.current = false;
+    }
+  }, [locationError, locationPermission, currentLocation]);
 
-      if (!window.google?.maps?.importLibrary) {
-        return false;
-      }
-
-      try {
-        if (!window.google?.maps?.Geocoder) {
-          await window.google.maps.importLibrary('geocoding');
-        }
-        return true;
-      } catch (error) {
-        console.error('Failed to load Google geocoding library:', error);
-        return false;
-      }
-    };
-
-    const detectLocation = async () => {
-      if (!isMounted) return;
-
-      setIsDetectingLocation(true);
+  // Update locationDetectionFailed based on hook state
+  useEffect(() => {
+    if (locationError && !isDetectingLocation) {
+      setLocationDetectionFailed(true);
+    } else if (currentLocation) {
       setLocationDetectionFailed(false);
-
-      // Set 20-second timeout for overall operation (including Google Maps loading)
-      timeoutId = setTimeout(() => {
-        if (!isMounted) return;
-        console.log('⏱️ Location detection timed out');
-        setIsDetectingLocation(false);
-        setLocationDetectionFailed(true);
-      }, 20000);
-
-      try {
-        // Wait for Google Maps to load
-        const mapsLoaded = await waitForGoogleMaps();
-
-        if (!mapsLoaded) {
-          throw new Error('Google Maps failed to load');
-        }
-
-        if (!isMounted) return;
-
-        // Use universal location detection utility with retry logic for production
-        const location = await detectCurrentLocationWithCity({
-          timeout: 20000, // Longer timeout for production
-          geolocationOptions: {
-            maxRetries: 2,
-            retryDelay: 2000,
-            enableHighAccuracy: true
-          }
-        });
-
-        if (!isMounted) return;
-
-        clearTimeout(timeoutId);
-
-        console.log('📍 Location detected:', {
-          city: location.city,
-          country: location.country,
-          address: location.address,
-          coords: location.coords
-        });
-
-        // Set detected location data
-        setCurrentLocation(location.coords);
-        setDetectedCity(location.city);
-        // Removed: no auto-setting pickupLocation
-
-        setIsDetectingLocation(false);
-        setLocationDetectionFailed(false);
-      } catch (error) {
-        if (!isMounted) return;
-        console.error('❌ Location detection error:', error.message || error);
-        console.error('❌ Full error:', error);
-        clearTimeout(timeoutId);
-        setIsDetectingLocation(false);
-        setLocationDetectionFailed(true);
-      }
-    };
-
-    detectLocation();
-
-    return () => {
-      isMounted = false;
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, []);
+    }
+  }, [locationError, isDetectingLocation, currentLocation]);
 
   // Compute route, distance/ETA and cost when both pickup and dropoff are set
   useEffect(() => {
@@ -544,6 +522,27 @@ const BookRidePage = () => {
 
       {/* Unified Left Drawer */}
       <PWALeftDrawer open={showMenu} onClose={() => setShowMenu(false)} profileType={activeProfileType} />
+
+      {/* Location Permission Modal */}
+      <LocationPermissionModal
+        isOpen={showPermissionModal}
+        onClose={() => {
+          setShowPermissionModal(false);
+          // Reset the flag so modal can show again if needed
+          hasShownPermissionModalRef.current = false;
+        }}
+        onPermissionGranted={async (coords) => {
+          setShowPermissionModal(false);
+          hasShownPermissionModalRef.current = false;
+          // Retry location detection with full geocoding
+          try {
+            await detectLocationFromHook();
+          } catch (error) {
+            // If it still fails, the error will be caught by the useEffect
+            // and modal will show again if permission is still denied
+          }
+        }}
+      />
     </>
   );
 };

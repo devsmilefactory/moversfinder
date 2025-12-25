@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FEATURE_FLAGS, isInstantOnlyMode } from '../../config/featureFlags';
+import { FEATURE_FLAGS, isInstantOnlyMode, normalizeRoundTripSelection } from '../../config/featureFlags';
 
 /**
  * SchedulingSection Component
@@ -27,6 +27,7 @@ const SchedulingSection = ({
   const scheduleMonth = schedulingState?.scheduleMonth || formData?.scheduleMonth || '';
   const tripTime = schedulingState?.tripTime || formData?.tripTime || '';
   const isRoundTrip = formData?.isRoundTrip || false;
+  const normalizedRoundTrip = normalizeRoundTripSelection(isRoundTrip);
 
   // Calculate minimum date (today)
   const today = new Date();
@@ -34,6 +35,13 @@ const SchedulingSection = ({
   
   // Calculate maximum date (30 days from now)
   const maxDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  // Force round trip off when disabled by feature flag
+  useEffect(() => {
+    if (!FEATURE_FLAGS.ROUND_TRIPS_ENABLED && isRoundTrip && onFormDataUpdate) {
+      onFormDataUpdate({ isRoundTrip: false });
+    }
+  }, [isRoundTrip, onFormDataUpdate]);
 
   // Handle schedule type change
   const handleScheduleTypeChange = (newType) => {
@@ -281,7 +289,7 @@ const SchedulingSection = ({
                 min={minDate}
                 max={maxDate}
                 onChange={(e) => handleDateChange(e.target.value)}
-                className="w-full p-2 border border-slate-200 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-2 border border-blue-200 bg-white rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
               
               {selectedDates.length > 0 && (
@@ -316,7 +324,7 @@ const SchedulingSection = ({
                 max={maxDate}
                 value={selectedDates[0] || ''}
                 onChange={(e) => handleDateChange(e.target.value)}
-                className="w-full p-2 border border-slate-200 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-2 border border-blue-200 bg-white rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
           )}
@@ -328,7 +336,7 @@ const SchedulingSection = ({
               <select
                 value={scheduleMonth}
                 onChange={(e) => handleMonthChange(e.target.value)}
-                className="w-full p-2 border border-slate-200 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-2 border border-blue-200 bg-white rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Choose month...</option>
                 {generateMonthOptions().map(option => (
@@ -347,7 +355,7 @@ const SchedulingSection = ({
               <select
                 value={tripTime}
                 onChange={(e) => handleTimeChange(e.target.value)}
-                className="w-full p-2 border border-slate-200 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-2 border border-blue-200 bg-white rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="">Choose time...</option>
                 {generateTimeOptions().map(time => (
@@ -360,12 +368,12 @@ const SchedulingSection = ({
           )}
 
           {/* Round Trip Option */}
-          {scheduleType === 'specific_time' && (
+          {FEATURE_FLAGS.ROUND_TRIPS_ENABLED && scheduleType === 'specific_time' && (
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
                 id="roundTrip"
-                checked={isRoundTrip}
+                checked={normalizedRoundTrip}
                 onChange={(e) => onFormDataUpdate && onFormDataUpdate({ isRoundTrip: e.target.checked })}
                 className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
               />
@@ -393,7 +401,7 @@ const SchedulingSection = ({
             </p>
             {summary.type !== 'instant' && summary.type !== 'incomplete' && (
               <p className="text-xs text-slate-500 mt-1">
-                {isRoundTrip ? 'Including return journey' : 'One-way trip'}
+                {normalizedRoundTrip ? 'Including return journey' : 'One-way trip'}
               </p>
             )}
           </div>

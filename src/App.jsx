@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter } from 'react-router-dom';
 import useAuthStore from './stores/authStore';
 import useNetworkStatus from './hooks/useNetworkStatus';
@@ -8,14 +8,16 @@ import ProfileCompletionModal from './components/auth/ProfileCompletionModal';
 import OfflinePage from './components/OfflinePage';
 import AppRoutes from './Routes';
 import ErrorBoundary from './components/ErrorBoundary';
-import { ToastProvider } from './components/ui/ToastProvider';
+import { ToastProvider, useToast } from './components/ui/ToastProvider';
 import { PWAInstallPrompt, PWAUpdateNotification, IOSInstallInstructions } from './components/pwa';
 import PermissionsManager from './components/pwa/PermissionsManager';
 // GoogleMapsProvider removed - using vanilla Google Maps API instead
 import RideStatusToasts from './components/notifications/RideStatusToasts';
 import useActiveRideLoginNotifier from './hooks/useActiveRideLoginNotifier';
+import PushNotificationsProvider from './components/notifications/PushNotificationsProvider';
 
 import { checkAndHandleUpdate, getCurrentVersion } from './utils/versionManager';
+import { checkAndNotifyAppUpdate } from './services/appUpdateNotificationService';
 
 /**
  * Main App Component for TaxiCab PWA
@@ -32,15 +34,18 @@ import { checkAndHandleUpdate, getCurrentVersion } from './utils/versionManager'
 function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [showOfflinePage, setShowOfflinePage] = useState(false);
+  const appUpdateToastShownRef = useRef(false);
 
   const { user, isAuthenticated, authLoading, authError, initialize } = useAuthStore();
   const { isOnline, isConnected, checkConnectivity } = useNetworkStatus();
   useActiveRideLoginNotifier(user);
+  const { addToast } = useToast();
 
   // Check for app updates and clear caches if needed
+  // This runs on every page load/refresh to detect version changes
   useEffect(() => {
     const checkForUpdates = async () => {
-      console.log('🔍 Checking for app updates...');
+      console.log('🔍 Checking for app updates on page load...');
       console.log('📦 Current app version:', getCurrentVersion());
 
       try {
@@ -48,15 +53,25 @@ function App() {
 
         if (wasUpdated) {
           console.log('✅ App was updated - caches cleared');
+          // Version changed - the PWAUpdateNotification component will show the update banner
           // Don't re-initialize auth here - it will be done by the main initialization below
-          // Re-initializing here can interfere with the login flow
         }
       } catch (error) {
         console.error('❌ Error checking for updates:', error);
       }
     };
 
+    // Check immediately on page load/refresh
     checkForUpdates();
+    
+    // Set up periodic version checking (every 10 minutes) for when app is open
+    const versionCheckInterval = setInterval(() => {
+      checkForUpdates();
+    }, 10 * 60 * 1000); // 10 minutes
+
+    return () => {
+      clearInterval(versionCheckInterval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
@@ -72,6 +87,46 @@ function App() {
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
+
+  // Check for app updates and send push notifications when user is authenticated
+  useEffect(() => {
+    if (!user?.id || !isAuthenticated) {
+      return;
+    }
+
+    const checkForAppUpdate = async () => {
+      try {
+        const result = await checkAndNotifyAppUpdate(user.id);
+        if (result.updated) {
+          console.log('✅ App update detected and notification sent:', result);
+          if (!appUpdateToastShownRef.current) {
+            appUpdateToastShownRef.current = true;
+            addToast?.({
+              type: 'info',
+              title: 'New version available',
+              message: 'A new version is ready. Click to refresh now.',
+              duration: 12000,
+              onClick: () => window.location.reload(),
+            });
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error checking for app update:', error);
+      }
+    };
+
+    // Check immediately when user logs in
+    checkForAppUpdate();
+
+    // Set up periodic checking (every 15 minutes)
+    const updateCheckInterval = setInterval(() => {
+      checkForAppUpdate();
+    }, 15 * 60 * 1000); // 15 minutes
+
+    return () => {
+      clearInterval(updateCheckInterval);
+    };
+  }, [user?.id, isAuthenticated]);
 
   // Handle splash screen - hide after 1.5 seconds
   useEffect(() => {
@@ -115,7 +170,12 @@ function App() {
   return (
       <ErrorBoundary>
         <ToastProvider>
-          <BrowserRouter>
+          <BrowserRouter
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true
+          }}
+        >
           <div className="app-container min-h-screen bg-background">
           {/* Offline Indicator - Show when browser is offline but we haven't shown full offline page */}
           {!isOnline && !showOfflinePage && (
@@ -144,6 +204,7 @@ function App() {
           {/* Main Content */}
           {/* Always render routes so public pages like /login are reachable even while auth initializes */}
           <>
+            <PushNotificationsProvider />
             <RideStatusToasts />
             <AppRoutes />
 

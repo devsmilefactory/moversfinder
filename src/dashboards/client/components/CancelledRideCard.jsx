@@ -1,9 +1,8 @@
 import React, { useMemo } from 'react';
-import { MapPin, XCircle, Calendar, RotateCcw, Car, Package, ShoppingBag, GraduationCap, Briefcase, Zap, Repeat } from 'lucide-react';
+import { MapPin, XCircle, Calendar, RotateCcw, Zap, Repeat } from 'lucide-react';
 import Button from '../../shared/Button';
 import { getRideProgressDetails } from '../../../utils/rideProgress';
-import { summarizeErrandTasks } from '../../../utils/errandTasks';
-import { isErrandService, normalizeServiceType } from '../../../utils/serviceTypes';
+import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
 
 /**
  * Card component for cancelled rides
@@ -15,18 +14,12 @@ const CancelledRideCard = ({ ride, onClick, tabContext = 'cancelled' }) => {
     alert('Rebook feature coming soon!');
   };
 
-  // Get service type icon and label
-  const getServiceTypeInfo = () => {
-    const serviceType = normalizeServiceType(ride.service_type || 'taxi');
-    const serviceMap = {
-      taxi: { icon: Car, label: 'Taxi', color: 'text-blue-600', bgColor: 'bg-blue-50' },
-      courier: { icon: Package, label: 'Courier', color: 'text-purple-600', bgColor: 'bg-purple-50' },
-      errand: { icon: ShoppingBag, label: 'Errand', color: 'text-green-600', bgColor: 'bg-green-50' },
-      school_run: { icon: GraduationCap, label: 'School Run', color: 'text-indigo-600', bgColor: 'bg-indigo-50' },
-      work_run: { icon: Briefcase, label: 'Work Run', color: 'text-slate-600', bgColor: 'bg-slate-50' }
-    };
-    return serviceMap[serviceType] || serviceMap.taxi;
-  };
+  // Get ride type handler for modular service-specific handling
+  const rideTypeHandler = getRideTypeHandler(ride.service_type);
+  
+  // Get service type display info from handler
+  const serviceInfo = rideTypeHandler.getServiceTypeInfo();
+  const ServiceIcon = serviceInfo.icon;
 
   // Get ride timing info
   const getRideTimingInfo = () => {
@@ -40,9 +33,7 @@ const CancelledRideCard = ({ ride, onClick, tabContext = 'cancelled' }) => {
     }
   };
 
-  const serviceInfo = getServiceTypeInfo();
   const timingInfo = getRideTimingInfo();
-  const ServiceIcon = serviceInfo.icon;
   const TimingIcon = timingInfo.icon;
   const progress = getRideProgressDetails(ride);
 
@@ -58,11 +49,6 @@ const CancelledRideCard = ({ ride, onClick, tabContext = 'cancelled' }) => {
   };
 
   const tripSummary = summary();
-  const errandSummary = useMemo(() => {
-    if (!isErrandService(ride.service_type)) return null;
-    const info = summarizeErrandTasks(ride.errand_tasks || ride.tasks);
-    return info.total ? info : null;
-  }, [ride.service_type, ride.errand_tasks, ride.tasks]);
 
   return (
     <div
@@ -131,40 +117,8 @@ const CancelledRideCard = ({ ride, onClick, tabContext = 'cancelled' }) => {
         </div>
       )}
 
-      {/* Errand summary */}
-      {errandSummary && (
-        <div className="mb-3 bg-green-50 rounded-lg px-3 py-2 border border-green-200 opacity-75">
-          <p className="text-sm font-semibold text-green-800">Errand Tasks Planned</p>
-          <p className="text-xs text-green-700">
-            {errandSummary.completed}/{errandSummary.total} tasks completed before cancellation
-          </p>
-        </div>
-      )}
-
-      {/* Courier Package Details - Prominent */}
-      {ride.service_type === 'courier' && (ride.courier_package_details || ride.package_size) && (
-        <div className="mb-3 bg-purple-50 rounded-lg px-3 py-2.5 border border-purple-200 opacity-75">
-          <div className="flex items-start gap-2">
-            <Package className="w-5 h-5 text-purple-600 mt-0.5 flex-shrink-0" />
-            <div className="flex-1">
-              <div className="text-sm font-bold text-purple-700 mb-1">Package Details</div>
-              {ride.package_size && (
-                <div className="text-xs text-purple-600 mb-1">
-                  Size: <span className="font-semibold capitalize">{ride.package_size}</span>
-                </div>
-              )}
-              {ride.courier_package_details && (
-                <div className="text-sm text-purple-700">{ride.courier_package_details}</div>
-              )}
-              {ride.recipient_name && (
-                <div className="text-xs text-purple-600 mt-1">
-                  To: {ride.recipient_name} {ride.recipient_phone && `• ${ride.recipient_phone}`}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Service-specific card details using handler */}
+      {rideTypeHandler.renderCardDetails(ride, 'cancelled', { onClick })}
 
       {/* Locations */}
       <div className="space-y-2 mb-3">

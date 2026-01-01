@@ -141,9 +141,7 @@ const MapView = ({
 
     const initMap = async () => {
       try {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:140',message:'Map initialization started',data:{isLoaded,hasMapRef:!!mapRef.current,hasMapInstance:!!mapInstanceRef.current,center,currentLocation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
+        // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
 
         // Import the maps library
         const { Map } = await window.google.maps.importLibrary("maps");
@@ -162,14 +160,10 @@ const MapView = ({
         const mapCenterCandidate = center || currentLocation;
         const mapCenter = mapCenterCandidate ? coerceLatLng(mapCenterCandidate) : null;
         
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:157',message:'Map center calculation',data:{center,currentLocation,mapCenterCandidate,mapCenter},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
+        // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
 
         if (!mapCenter) {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:160',message:'No map center - waiting for location',data:{center,currentLocation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
+          // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
           console.log('Waiting for location to initialize map...');
           return;
         }
@@ -496,26 +490,15 @@ const MapView = ({
 
 
   const handleGetCurrentLocation = async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:484',message:'handleGetCurrentLocation called',data:{hasMapInstance:!!mapInstanceRef.current},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
+    // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:487',message:'Calling getCurrentLocation',data:{navigatorGeolocation:!!navigator.geolocation},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       const coords = await getCurrentLocation();
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:490',message:'getCurrentLocation succeeded',data:{coords},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       setCurrentLocation(coords);
       if (mapInstanceRef.current) {
         mapInstanceRef.current.panTo(coords);
         mapInstanceRef.current.setZoom(15);
       }
     } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MapView.jsx:496',message:'getCurrentLocation failed',data:{error:error.message,errorCode:error.code},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       console.error('Error getting location:', error);
       alert(error.message || 'Unable to get your current location. Please check your browser permissions.');
     }

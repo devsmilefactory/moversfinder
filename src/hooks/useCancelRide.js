@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../components/ui/ToastProvider';
 import { notifyRideCancelled } from '../services/notificationService';
+import { transitionRideStatusRpc, RIDE_STATE } from '../services/rideStateService';
 
 /**
  * useCancelRide
@@ -39,7 +40,7 @@ export function useCancelRide() {
         // First, get the ride to check if it has a driver assigned
         const { data: rideData, error: rideFetchError } = await supabase
           .from('rides')
-          .select('driver_id')
+          .select('driver_id, user_id')
           .eq('id', rideId)
           .single();
 
@@ -48,25 +49,37 @@ export function useCancelRide() {
           // Continue anyway - we'll still try to cancel the ride
         }
 
-        const rideUpdate = {
-          ride_status: 'cancelled',
-          status: 'cancelled',
-          cancelled_at: now,
-          cancelled_by: role,
-          cancellation_reason: reason || null,
-          status_updated_at: now,
-          ...extraRideUpdates,
-        };
-
-        const { error: rideError } = await supabase
+        // Persist cancellation metadata (state/ride_status are managed via state machine + sync triggers)
+        const { error: metaError } = await supabase
           .from('rides')
-          .update(rideUpdate)
+          .update({
+            cancelled_by: role,
+            cancellation_reason: reason || null,
+            status_updated_at: now,
+            ...extraRideUpdates,
+          })
           .eq('id', rideId);
 
-        if (rideError) {
-          console.error('Error cancelling ride:', rideError);
-          throw rideError;
+        if (metaError) {
+          console.error('Error updating cancellation metadata:', metaError);
+          // Continue; we still attempt to transition state below
         }
+
+        // State machine transition (single source of truth)
+        const actorType = role === 'driver' ? 'DRIVER' : 'PASSENGER';
+        let actorId = null;
+        try {
+          const { data: authData } = await supabase.auth.getUser();
+          actorId = authData?.user?.id || null;
+        } catch (_) {}
+
+        await transitionRideStatusRpc({
+          rideId,
+          newState: RIDE_STATE.CANCELLED,
+          newSubState: null,
+          actorType,
+          actorId,
+        });
 
         // Mark driver as available again if ride had a driver assigned
         const driverId = rideData?.driver_id;

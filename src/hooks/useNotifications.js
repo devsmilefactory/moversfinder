@@ -1,106 +1,132 @@
 /**
- * Production-Ready Unified Notification Hook
- * 
- * Features:
- * - Single source of truth for notifications
- * - Real-time Supabase subscriptions
- * - Automatic retry logic
- * - Notification queue management
- * - Browser notification support
- * - Toast notifications
- * - Sound notifications
- * - Read/unread tracking
- * - Performance optimized (deduplication, batching)
+ * Unified Notifications Hook
+ *
+ * Responsibilities:
+ * - Fetch latest notifications for a user from `notifications`
+ * - Subscribe to realtime inserts for that user
+ * - Optionally surface UX signals (toasts / browser notifications / sounds)
+ * - Provide helpers to mark notifications read
  */
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { subscribeToNotifications } from '../lib/database';
 import { useToast } from '../components/ui/ToastProvider';
-import { subscribePostgresChanges, subscribeChannelStatus } from '../lib/realtimeRegistry';
 
-const NOTIFICATION_SOUND = '/notification.mp3';
-const MAX_NOTIFICATIONS = 100;
-const RETRY_DELAY = 3000;
-const MAX_RETRIES = 3;
+const DEFAULT_LIMIT = 50;
 
-const isNotificationRead = (notification) => {
-  if (!notification) return false;
-  return (
-    notification.read === true ||
-    notification.is_read === true ||
-    Boolean(notification.read_at)
-  );
-};
+function isRead(notification) {
+  return Boolean(notification?.read || notification?.read_at);
+}
 
-const normalizeNotification = (notification) => {
-  if (!notification) return notification;
+function safeGetTitle(notification) {
+  return notification?.title || notification?.notification_type || 'Notification';
+}
 
-  const readFlag = isNotificationRead(notification);
+function safeGetMessage(notification) {
+  return notification?.message || notification?.body || '';
+}
 
-  return {
-    ...notification,
-    read: readFlag,
-    is_read: readFlag,
-    read_at: notification.read_at ?? null,
-  };
-};
+function safeGetActionUrl(notification) {
+  return notification?.action_url || null;
+}
 
-export function useNotifications(userId, options = {}) {
+function playSoftBeep() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.03;
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.08);
+    oscillator.onended = () => {
+      try {
+        ctx.close();
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * @param {string|null|undefined} userId
+ * @param {object} options
+ * @param {number} options.limit
+ * @param {boolean} options.enableRealtime
+ * @param {boolean} options.enableToasts
+ * @param {boolean} options.enableSounds
+ * @param {boolean} options.enableBrowserNotifications
+ */
+export const useNotifications = (userId, options = {}) => {
   const {
+    limit = DEFAULT_LIMIT,
+    enableRealtime = true,
     enableToasts = true,
-    enableSounds = true,
-    enableBrowserNotifications = true,
-    maxNotifications = MAX_NOTIFICATIONS,
-    onNotificationReceived = null,
-    autoMarkRead = false,
+    enableSounds = false,
+    enableBrowserNotifications = false,
   } = options;
 
   const { addToast } = useToast();
   const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [subscriptionStatus, setSubscriptionStatus] = useState('disconnected');
 
-  // Refs for deduplication and queue management
-  const seenNotificationIds = useRef(new Set());
-  const notificationQueue = useRef([]);
-  const retryAttempts = useRef(new Map());
-  const channelRef = useRef(null);
-  const audioRef = useRef(null);
-  const lastNotificationTime = useRef(new Map()); // Throttle duplicate notifications
-  const handleNewNotificationRef = useRef(null);
-  const handleNotificationUpdateRef = useRef(null);
+  const subscriptionRef = useRef(null);
+  const loadedForUserRef = useRef(null);
 
-  // Initialize audio for sound notifications
-  useEffect(() => {
-    if (enableSounds && typeof window !== 'undefined') {
-      try {
-        audioRef.current = new Audio(NOTIFICATION_SOUND);
-        audioRef.current.preload = 'auto';
-      } catch (e) {
-        console.warn('Could not initialize notification sound:', e);
+  const unreadCount = useMemo(() => {
+    return (notifications || []).reduce((count, n) => count + (isRead(n) ? 0 : 1), 0);
+  }, [notifications]);
+
+  const showUxNotification = useCallback(
+    (notification) => {
+      const title = safeGetTitle(notification);
+      const message = safeGetMessage(notification);
+      const actionUrl = safeGetActionUrl(notification);
+
+      if (enableSounds) playSoftBeep();
+
+      if (enableToasts && addToast) {
+        addToast({
+          type: 'info',
+          title,
+          message,
+          duration: 7000,
+          onClick: actionUrl ? () => (window.location.href = actionUrl) : undefined,
+        });
       }
-    }
-  }, [enableSounds]);
 
-  // Request browser notification permission
-  useEffect(() => {
-    if (!enableBrowserNotifications || typeof window === 'undefined' || !('Notification' in window)) {
-      return;
-    }
+      if (enableBrowserNotifications && typeof window !== 'undefined' && 'Notification' in window) {
+        try {
+          if (Notification.permission === 'granted') {
+            // Prefer native browser notifications when permitted
+            const n = new Notification(title, { body: message });
+            if (actionUrl) {
+              n.onclick = () => {
+                window.focus?.();
+                window.location.href = actionUrl;
+              };
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    },
+    [addToast, enableBrowserNotifications, enableSounds, enableToasts]
+  );
 
-    if (Notification.permission === 'default') {
-      Notification.requestPermission().catch((err) => {
-        console.warn('Failed to request notification permission:', err);
-      });
-    }
-  }, [enableBrowserNotifications]);
-
-  // Load initial notifications
-  const loadNotifications = useCallback(async () => {
+  const fetchLatest = useCallback(async () => {
     if (!userId) return;
-
     setIsLoading(true);
     setError(null);
 
@@ -110,373 +136,139 @@ export function useNotifications(userId, options = {}) {
         .select('*')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
-        .limit(maxNotifications);
+        .limit(limit);
 
       if (fetchError) throw fetchError;
-
-      const notificationList = (data || []).map(normalizeNotification);
-      setNotifications(notificationList);
-      
-      // Calculate unread count
-      const unread = notificationList.filter(n => !isNotificationRead(n)).length;
-      setUnreadCount(unread);
-
-      // Track seen notifications
-      notificationList.forEach(n => seenNotificationIds.current.add(n.id));
-
-      return { success: true, data: notificationList };
-    } catch (err) {
-      console.error('Error loading notifications:', err);
-      setError(err.message);
-      return { success: false, error: err };
+      setNotifications(data || []);
+      loadedForUserRef.current = userId;
+    } catch (e) {
+      console.error('useNotifications: failed to fetch notifications', e);
+      setError(e);
     } finally {
       setIsLoading(false);
     }
-  }, [userId, maxNotifications]);
+  }, [limit, userId]);
 
-  // Process notification queue with retry logic
-  const processNotificationQueue = useCallback(async () => {
-    if (notificationQueue.current.length === 0) return;
-
-    const notification = notificationQueue.current.shift();
-    const notificationId = notification.id;
-    const attempts = retryAttempts.current.get(notificationId) || 0;
-
-    if (attempts >= MAX_RETRIES) {
-      console.error(`Max retries reached for notification ${notificationId}`);
-      retryAttempts.current.delete(notificationId);
-      return;
-    }
-
-    try {
-      // Show notification
-      await showNotification(notification);
-      retryAttempts.current.delete(notificationId);
-    } catch (err) {
-      console.error(`Error processing notification ${notificationId}:`, err);
-      retryAttempts.current.set(notificationId, attempts + 1);
-      
-      // Re-queue for retry
-      setTimeout(() => {
-        notificationQueue.current.push(notification);
-        processNotificationQueue();
-      }, RETRY_DELAY);
-    }
-  }, []);
-
-  // Show notification (toast, sound, browser notification)
-  const showNotification = useCallback(async (notification) => {
-    // Show toast notification
-    if (enableToasts && addToast) {
-      addToast({
-        type: 'info',
-        title: notification.title,
-        message: notification.message,
-        duration: 8000,
-        onClick: () => {
-          if (notification.action_url) {
-            window.location.href = notification.action_url;
-          }
-        },
-      });
-    }
-
-    // Play sound
-    if (enableSounds && audioRef.current) {
-      try {
-        await audioRef.current.play().catch(() => {
-          // Ignore play errors (user might have blocked autoplay)
-        });
-      } catch (e) {
-        // Ignore audio errors
-      }
-    }
-
-    // Show browser notification
-    if (enableBrowserNotifications && 'Notification' in window && Notification.permission === 'granted') {
-      try {
-        const browserNotification = new Notification(notification.title, {
-          body: notification.message,
-          icon: '/icons/icon-192x192.png',
-          badge: '/icons/icon-192x192.png',
-          tag: notification.id,
-          requireInteraction: false,
-          silent: false,
-        });
-
-        browserNotification.onclick = () => {
-          window.focus();
-          if (notification.action_url) {
-            window.location.href = notification.action_url;
-          }
-          browserNotification.close();
-        };
-
-        // Auto-close after 5 seconds
-        setTimeout(() => browserNotification.close(), 5000);
-      } catch (e) {
-        console.warn('Failed to show browser notification:', e);
-      }
-    }
-
-    // Call custom handler
-    if (onNotificationReceived) {
-      onNotificationReceived(notification);
-    }
-  }, [enableToasts, enableSounds, enableBrowserNotifications, addToast, onNotificationReceived]);
-
-  // Handle new notification from real-time subscription
-  const handleNewNotification = useCallback((payload) => {
-    const notification = normalizeNotification(payload.new);
-    
-    // Deduplication check - prevent processing same notification twice
-    if (seenNotificationIds.current.has(notification.id)) {
-      return;
-    }
-
-    // Throttle duplicate notifications by content (prevent same notification shown multiple times within 2 seconds)
-    const notificationKey = `${notification.title}-${notification.message}`;
-    const lastTime = lastNotificationTime.current.get(notificationKey) || 0;
-    const now = Date.now();
-    if (now - lastTime < 2000) {
-      // Same notification content within 2 seconds - skip
-      return;
-    }
-    lastNotificationTime.current.set(notificationKey, now);
-
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useNotifications.js:233',message:'New notification received',data:{notificationId:notification?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
-
-    // Mark as seen
-    seenNotificationIds.current.add(notification.id);
-
-    // Add to notifications list
-    setNotifications(prev => {
-      const updated = [notification, ...prev].slice(0, maxNotifications);
-      return updated;
-    });
-
-    // Update unread count
-    if (!isNotificationRead(notification)) {
-      setUnreadCount(prev => prev + 1);
-    }
-
-    // Auto-mark as read if option enabled
-    if (autoMarkRead) {
-      markAsRead(notification.id);
-    }
-
-    // Show notification
-    showNotification(notification).catch(err => {
-      console.error('Error showing notification:', err);
-      // Add to queue for retry
-      notificationQueue.current.push(notification);
-      processNotificationQueue();
-    });
-  }, [maxNotifications, autoMarkRead, showNotification, processNotificationQueue]);
-
-  useEffect(() => {
-    handleNewNotificationRef.current = handleNewNotification;
-  }, [handleNewNotification]);
-
-  // Handle notification update (e.g., marked as read)
-  const handleNotificationUpdate = useCallback((payload) => {
-    const updatedNotification = normalizeNotification(payload.new);
-    
-    setNotifications(prev =>
-      prev.map(n =>
-        n.id === updatedNotification.id ? updatedNotification : n
-      )
-    );
-
-    // Update unread count
-    if (isNotificationRead(updatedNotification)) {
-      setUnreadCount(prev => Math.max(0, prev - 1));
-    }
-  }, []);
-
-  useEffect(() => {
-    handleNotificationUpdateRef.current = handleNotificationUpdate;
-  }, [handleNotificationUpdate]);
-
-  // Set up real-time subscription
+  // Initial load (and when user changes)
   useEffect(() => {
     if (!userId) {
-      setSubscriptionStatus('disconnected');
+      setNotifications([]);
+      setIsLoading(false);
+      setError(null);
+      loadedForUserRef.current = null;
       return;
     }
 
-    // Load initial notifications
-    loadNotifications();
+    // Avoid refetch loops if parent re-renders frequently
+    if (loadedForUserRef.current !== userId) {
+      fetchLatest();
+    }
+  }, [fetchLatest, userId]);
 
-    const channelName = `notifications-${userId}`;
+  // Realtime subscription
+  useEffect(() => {
+    if (!userId || !enableRealtime) return undefined;
 
-    const unsubStatus = subscribeChannelStatus(channelName, (status) => {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useNotifications.js:313',message:'Notification subscription status',data:{status},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
-      setSubscriptionStatus(status);
-      if (status === 'SUBSCRIBED') {
-        processNotificationQueue();
-      }
+    // Ensure we only have one subscription
+    try {
+      subscriptionRef.current?.unsubscribe?.();
+    } catch {
+      // ignore
+    }
+
+    const sub = subscribeToNotifications(userId, (payload) => {
+      const next = payload?.new;
+      if (!next) return;
+
+      setNotifications((prev) => {
+        const existing = prev || [];
+        if (existing.some((n) => n.id === next.id)) return existing;
+        return [next, ...existing].slice(0, limit);
+      });
+
+      showUxNotification(next);
     });
 
-    const unsubInsert = subscribePostgresChanges({
-      channelName,
-      table: 'notifications',
-      event: 'INSERT',
-      filter: `user_id=eq.${userId}`,
-      listener: (payload) => handleNewNotificationRef.current?.(payload),
-    });
-
-    const unsubUpdate = subscribePostgresChanges({
-      channelName,
-      table: 'notifications',
-      event: 'UPDATE',
-      filter: `user_id=eq.${userId}`,
-      listener: (payload) => handleNotificationUpdateRef.current?.(payload),
-    });
-
-    channelRef.current = { unsubStatus, unsubInsert, unsubUpdate };
-
-    // Cleanup
+    subscriptionRef.current = sub;
     return () => {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useNotifications.js:326',message:'Cleaning up notification subscription',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
-      if (channelRef.current) {
-        try { channelRef.current.unsubInsert?.(); } catch (e) {}
-        try { channelRef.current.unsubUpdate?.(); } catch (e) {}
-        try { channelRef.current.unsubStatus?.(); } catch (e) {}
-        channelRef.current = null;
+      try {
+        sub?.unsubscribe?.();
+      } catch {
+        // ignore
+      }
+      if (subscriptionRef.current === sub) {
+        subscriptionRef.current = null;
       }
     };
-  }, [userId, loadNotifications, processNotificationQueue]);
+  }, [enableRealtime, limit, showUxNotification, userId]);
 
-  // Mark notification as read
-  const markAsRead = useCallback(async (notificationId) => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({
-          is_read: true,
-          read_at: new Date().toISOString()
-        })
-        .eq('id', notificationId)
-        .eq('user_id', userId);
+  const markAsRead = useCallback(
+    async (notificationId) => {
+      if (!userId || !notificationId) return;
 
-      if (error) throw error;
-
-      // Optimistically update local state
-      const timestamp = new Date().toISOString();
-      setNotifications(prev =>
-        prev.map(n => {
-          if (n.id !== notificationId) return n;
-          return normalizeNotification({
-            ...n,
-            is_read: true,
-            read: true,
-            read_at: timestamp,
-          });
-        })
+      const now = new Date().toISOString();
+      setNotifications((prev) =>
+        (prev || []).map((n) => (n.id === notificationId ? { ...n, read: true, read_at: now } : n))
       );
-      setUnreadCount(prev => Math.max(0, prev - 1));
 
-      return { success: true };
-    } catch (err) {
-      console.error('Error marking notification as read:', err);
-      return { success: false, error: err };
-    }
-  }, [userId]);
+      // Schema can vary; try the "full" update first, then fall back.
+      const tryUpdate = async (fields) => {
+        const { error: updateError } = await supabase
+          .from('notifications')
+          .update(fields)
+          .eq('id', notificationId)
+          .eq('user_id', userId);
+        return updateError;
+      };
 
-  // Mark all notifications as read
-  const markAllAsRead = useCallback(async () => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({
-          is_read: true,
-          read_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .is('read_at', null);
+      let updateError = await tryUpdate({ read: true, read_at: now });
+      if (updateError) updateError = await tryUpdate({ read_at: now });
+      if (updateError) updateError = await tryUpdate({ read: true });
 
-      if (error) throw error;
-
-      // Optimistically update local state
-      setNotifications(prev =>
-        prev.map(n =>
-          normalizeNotification({
-            ...n,
-            is_read: true,
-            read: true,
-            read_at: n.read_at || new Date().toISOString(),
-          })
-        )
-      );
-      setUnreadCount(0);
-
-      return { success: true };
-    } catch (err) {
-      console.error('Error marking all notifications as read:', err);
-      return { success: false, error: err };
-    }
-  }, [userId]);
-
-  // Delete notification
-  const deleteNotification = useCallback(async (notificationId) => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .eq('id', notificationId)
-        .eq('user_id', userId);
-
-      if (error) throw error;
-
-      // Optimistically update local state
-      setNotifications(prev => prev.filter(n => n.id !== notificationId));
-      
-      // Update unread count if needed
-      const notification = notifications.find(n => n.id === notificationId);
-      if (notification && !isNotificationRead(notification)) {
-        setUnreadCount(prev => Math.max(0, prev - 1));
+      if (updateError) {
+        console.warn('useNotifications: markAsRead failed', updateError);
       }
+    },
+    [userId]
+  );
 
-      return { success: true };
-    } catch (err) {
-      console.error('Error deleting notification:', err);
-      return { success: false, error: err };
+  const markAllAsRead = useCallback(async () => {
+    if (!userId) return;
+    const now = new Date().toISOString();
+    const unreadIds = (notifications || []).filter((n) => !isRead(n)).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+
+    setNotifications((prev) => (prev || []).map((n) => ({ ...n, read: true, read_at: now })));
+
+    const tryUpdate = async (fields) => {
+      const { error: updateError } = await supabase
+        .from('notifications')
+        .update(fields)
+        .in('id', unreadIds)
+        .eq('user_id', userId);
+      return updateError;
+    };
+
+    let updateError = await tryUpdate({ read: true, read_at: now });
+    if (updateError) updateError = await tryUpdate({ read_at: now });
+    if (updateError) updateError = await tryUpdate({ read: true });
+
+    if (updateError) {
+      console.warn('useNotifications: markAllAsRead failed', updateError);
     }
-  }, [userId, notifications]);
-
-  // Refresh notifications
-  const refresh = useCallback(() => {
-    return loadNotifications();
-  }, [loadNotifications]);
+  }, [notifications, userId]);
 
   return {
-    // State
     notifications,
     unreadCount,
     isLoading,
     error,
-    subscriptionStatus,
-
-    // Actions
+    refetch: fetchLatest,
     markAsRead,
     markAllAsRead,
-    deleteNotification,
-    refresh,
-
-    // Utilities
-    hasUnread: unreadCount > 0,
-    isConnected: subscriptionStatus === 'SUBSCRIBED',
   };
-}
+};
 
 export default useNotifications;
-
 
 

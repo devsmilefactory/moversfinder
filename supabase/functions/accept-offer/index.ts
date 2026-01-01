@@ -1,10 +1,18 @@
 // Supabase Edge Function: accept-offer
-// Atomic acceptance of a driver offer with rejection of competing offers
-// Input: { offer_id: string }
+// Canonical acceptance entrypoint:
+// - Verifies passenger JWT
+// - Calls the atomic DB RPC: public.accept_offer_atomic(p_offer_id, p_passenger_id)
+// - Notifies passenger + rejected drivers (driver accepted notification is handled by ride_status triggers)
 
-import { Client } from "https://deno.land/x/postgres@v0.17.1/mod.ts";
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-Deno.serve(async (req: Request) => {
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+serve(async (req: Request) => {
   // CORS headers for browser access (dynamic to support custom headers)
   const origin = req.headers.get('Origin') ?? '*';
   const requestACHeaders = req.headers.get('Access-Control-Request-Headers');
@@ -22,215 +30,137 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (req.method !== 'POST') {
-      return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ success: false, error: 'Method not allowed' }), {
+        status: 405,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const authHeader = req.headers.get('Authorization') || '';
+    const jwt = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
+    if (!jwt) {
+      return new Response(JSON.stringify({ success: false, error: 'Missing Authorization Bearer token' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(jwt);
+    if (authError || !authData?.user?.id) {
+      return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const body = await req.json().catch(() => ({}));
-    const { offer_id, passenger_id } = body;
+    const offer_id = body?.offer_id || body?.offerId;
     if (!offer_id || typeof offer_id !== 'string') {
-      return new Response(JSON.stringify({ success: false, error: 'Missing or invalid offer_id' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
-    const databaseUrl = Deno.env.get('SUPABASE_DB_URL') || Deno.env.get('DATABASE_URL');
-    if (!databaseUrl) {
-      return new Response(JSON.stringify({ success: false, error: 'Database URL not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
-    const client = new Client(databaseUrl);
-    await client.connect();
-
-    try {
-      // Start transaction
-      await client.queryArray('BEGIN');
-      
-      console.log('Processing offer acceptance:', { offer_id, passenger_id });
-
-      // Lock the offer and associated ride row for update to prevent race conditions
-      const offerRes = await client.queryObject<{ id: string; ride_id: string; driver_id: string; offer_status: string; quoted_price: number }>(
-        `SELECT id, ride_id, driver_id, offer_status, quoted_price FROM public.ride_offers WHERE id = $1 FOR UPDATE`,
-        [offer_id]
-      );
-      if (offerRes.rows.length === 0) {
-        await client.queryArray('ROLLBACK');
-        return new Response(JSON.stringify({ success: false, error: 'Offer not found' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-      const offer = offerRes.rows[0];
-      if (offer.offer_status !== 'pending') {
-        await client.queryArray('ROLLBACK');
-        return new Response(JSON.stringify({ success: false, error: 'Offer is not pending' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-
-      const rideRes = await client.queryObject<{ id: string; ride_status: string; user_id: string; driver_id: string | null }>(
-        `SELECT id, ride_status, user_id, driver_id FROM public.rides WHERE id = $1 FOR UPDATE`,
-        [offer.ride_id]
-      );
-      if (rideRes.rows.length === 0) {
-        await client.queryArray('ROLLBACK');
-        return new Response(JSON.stringify({ success: false, error: 'Ride not found' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-      const rideRow = rideRes.rows[0];
-      
-      // Validate passenger owns the ride (security check)
-      if (passenger_id && rideRow.user_id !== passenger_id) {
-        await client.queryArray('ROLLBACK');
-        return new Response(JSON.stringify({ success: false, error: 'Unauthorized: You do not own this ride' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-      
-      // Check if ride already has a driver assigned
-      if (rideRow.driver_id !== null && rideRow.driver_id !== undefined) {
-        await client.queryArray('ROLLBACK');
-        return new Response(JSON.stringify({ success: false, error: 'Ride has already been assigned to another driver' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-      
-      if (rideRow.ride_status !== 'pending') {
-        await client.queryArray('ROLLBACK');
-        return new Response(JSON.stringify({ success: false, error: 'Ride is no longer pending' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-
-      // Check for driver concurrency: cannot have more than one active instant ride
-      const activeRideCountRes = await client.queryObject<{ count: string }>(
-        `SELECT COUNT(*) as count FROM public.rides 
-         WHERE driver_id = $1 
-         AND ride_timing = 'instant' 
-         AND ride_status IN ('accepted', 'driver_on_way', 'driver_arrived', 'trip_started')`,
-        [offer.driver_id]
-      );
-      const activeCount = parseInt(activeRideCountRes.rows[0].count, 10);
-      if (activeCount > 0) {
-        await client.queryArray('ROLLBACK');
-        return new Response(JSON.stringify({ success: false, error: 'Driver already has an active instant ride' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-
-      // Accept chosen offer
-      const acceptedOfferRes = await client.queryObject(
-        `UPDATE public.ride_offers SET offer_status = 'accepted', responded_at = NOW() WHERE id = $1 RETURNING *`,
-        [offer.id]
-      );
-      const acceptedOffer = (acceptedOfferRes.rows as any[])[0];
-
-      // Update ride with state + legacy columns to avoid trigger overrides
-      const updatedRideRes = await client.queryObject(
-        `UPDATE public.rides 
-         SET 
-           ride_status = 'accepted',
-           status = 'accepted',
-           state = 'ACTIVE_PRE_TRIP',
-           execution_sub_state = 'DRIVER_ON_THE_WAY',
-           driver_id = $1, 
-           fare = $2, 
-           status_updated_at = NOW(), 
-           acceptance_status = 'accepted'
-         WHERE id = $3 
-         RETURNING *`,
-        [offer.driver_id, offer.quoted_price, offer.ride_id]
-      );
-      const updatedRide = (updatedRideRes.rows as any[])[0];
-
-      // Mark driver as engaged (set active_ride_id and is_available = false)
-      // Use UPSERT to handle case where driver_locations row doesn't exist
-      await client.queryArray(
-        `INSERT INTO public.driver_locations (driver_id, active_ride_id, is_available, updated_at, coordinates)
-         VALUES ($2, $1, false, NOW(), '{"lat": 0, "lng": 0}'::jsonb)
-         ON CONFLICT (driver_id) 
-         DO UPDATE SET 
-           active_ride_id = $1, 
-           is_available = false, 
-           updated_at = NOW()`,
-        [offer.ride_id, offer.driver_id]
-      );
-
-      // Reject competing pending offers
-      await client.queryArray(
-        `UPDATE public.ride_offers SET offer_status = 'rejected', responded_at = NOW() WHERE ride_id = $1 AND id <> $2 AND offer_status = 'pending'`,
-        [offer.ride_id, offer.id]
-      );
-
-      // Prepare realtime notifications
-      const pickupText = (updatedRide?.pickup_address as string) || (updatedRide?.pickup_location as string) || 'pickup location';
-      const dropoffText = (updatedRide?.dropoff_address as string) || (updatedRide?.dropoff_location as string) || 'destination';
-
-      // Collect rejected drivers to notify
-      const rejectedDriversRes = await client.queryObject<{ driver_id: string }>(
-        `SELECT driver_id FROM public.ride_offers WHERE ride_id = $1 AND id <> $2 AND offer_status = 'rejected'`,
-        [offer.ride_id, offer.id]
-      );
-
-      const notifications: Array<{ user_id: string; title: string; message: string; type: string; notification_type: string; category: string; priority: string; action_url: string }> = [];
-
-      // Notify the accepted driver
-      notifications.push({
-        user_id: offer.driver_id,
-        title: '✅ Bid Accepted',
-        message: 'Your bid has been accepted! Start heading to the pickup location.',
-        type: 'ride',
-        notification_type: 'offer_accepted',
-        category: 'OFFERS',
-        priority: 'HIGH',
-        action_url: `/driver/rides?tab=active`
+      return new Response(JSON.stringify({ success: false, error: 'Missing or invalid offer_id' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
-
-      // Notify the passenger
-      if (rideRow.user_id) {
-        notifications.push({
-          user_id: rideRow.user_id,
-          title: '🚗 Driver Assigned',
-          message: 'A driver has been assigned to your ride!',
-          type: 'ride',
-          notification_type: 'ride_activated',
-          category: 'RIDE_PROGRESS',
-          priority: 'HIGH',
-          action_url: `/rides?tab=active`
-        });
-      }
-
-      // Notify other drivers who were not accepted
-      for (const row of rejectedDriversRes.rows) {
-        const driverId = (row as any).driver_id as string;
-        if (driverId && driverId !== offer.driver_id) {
-          notifications.push({
-            user_id: driverId,
-            title: 'Ride accepted by another driver',
-            message: `The ride to ${dropoffText} has been accepted by another driver.`,
-            type: 'ride',
-            notification_type: 'offer_rejected',
-            category: 'OFFERS',
-            priority: 'NORMAL',
-            action_url: `/driver/rides?tab=available`
-          });
-        }
-      }
-
-      if (notifications.length > 0) {
-        await client.queryArray(
-          `INSERT INTO public.notifications (user_id, title, message, type, notification_type, category, priority, action_url, created_at)
-           SELECT 
-             (j->>'user_id')::uuid, 
-             j->>'title', 
-             j->>'message', 
-             j->>'type', 
-             (j->>'notification_type')::notification_type,
-             (j->>'category')::notification_category,
-             (j->>'priority')::notification_priority,
-             j->>'action_url',
-             NOW()
-           FROM json_array_elements($1::json) AS j`,
-          [JSON.stringify(notifications)]
-        );
-      }
-
-      await client.queryArray('COMMIT');
-
-      console.log('Offer accepted successfully:', { offer_id, ride_id: offer.ride_id });
-      return new Response(JSON.stringify({ success: true, ride: updatedRide, acceptedOffer }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    } catch (err) {
-      try { await client.queryArray('ROLLBACK'); } catch (_) {}
-      console.error('Error accepting offer:', { offer_id, error: err?.message || String(err), stack: err?.stack });
-      return new Response(JSON.stringify({ success: false, error: err?.message || String(err) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    } finally {
-      await client.end();
     }
+
+    const passengerId = authData.user.id;
+
+    // Call canonical atomic RPC
+    const { data: acceptData, error: acceptError } = await supabaseAdmin.rpc('accept_offer_atomic', {
+      p_offer_id: offer_id,
+      p_passenger_id: passengerId,
+    });
+
+    if (acceptError) {
+      console.error('accept_offer_atomic error:', acceptError);
+      return new Response(JSON.stringify({ success: false, error: acceptError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (!acceptData?.success) {
+      return new Response(JSON.stringify({ success: false, error: acceptData?.error || 'Offer acceptance failed', data: acceptData }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const rideId: string = acceptData.ride_id;
+    const driverId: string = acceptData.driver_id;
+    const rejectedDriverIds: string[] = Array.isArray(acceptData.rejected_driver_ids) ? acceptData.rejected_driver_ids : [];
+
+    // Fetch ride snapshot to return to caller and for notification content
+    const { data: ride, error: rideError } = await supabaseAdmin
+      .from('rides')
+      .select('id, user_id, driver_id, service_type, pickup_address, pickup_location, dropoff_address, dropoff_location')
+      .eq('id', rideId)
+      .single();
+
+    if (rideError) {
+      console.warn('Could not fetch ride snapshot:', rideError);
+    }
+
+    const dropoffText = (ride?.dropoff_address as string) || (ride?.dropoff_location as string) || 'destination';
+
+    // Notify passenger (explicit assignment notification)
+    // NOTE: we do NOT notify the accepted driver here because ride_status triggers already do that on 'accepted'.
+    try {
+      await supabaseAdmin.rpc('create_notification', {
+        p_user_id: passengerId,
+        p_notification_type: 'ride_activated',
+        p_category: 'RIDE_PROGRESS',
+        p_priority: 'HIGH',
+        p_title: 'Driver Assigned',
+        p_message: 'A driver has been assigned to your ride!',
+        p_action_url: '/rides?tab=active',
+        p_ride_id: rideId,
+        p_series_id: null,
+        p_task_id: null,
+        p_offer_id: offer_id,
+        p_context_data: { driver_id: driverId },
+      });
+    } catch (e) {
+      console.warn('Passenger notification failed:', e?.message || e);
+    }
+
+    // Notify rejected drivers (only those who actually had offers)
+    if (rejectedDriverIds.length > 0) {
+      await Promise.all(
+        rejectedDriverIds
+          .filter((id) => id && id !== driverId)
+          .map(async (rejectedDriverId) => {
+            try {
+              await supabaseAdmin.rpc('create_notification', {
+                p_user_id: rejectedDriverId,
+                p_notification_type: 'offer_rejected',
+                p_category: 'OFFERS',
+                p_priority: 'NORMAL',
+                p_title: 'Ride accepted by another driver',
+                p_message: `The ride to ${dropoffText} has been accepted by another driver.`,
+                p_action_url: '/driver/rides?tab=available',
+                p_ride_id: rideId,
+                p_series_id: null,
+                p_task_id: null,
+                p_offer_id: offer_id,
+                p_context_data: { ride_id: rideId },
+              });
+            } catch (e) {
+              console.warn('Rejected-driver notification failed:', { rejectedDriverId, error: e?.message || e });
+            }
+          })
+      );
+    }
+
+    return new Response(JSON.stringify({ success: true, data: acceptData, ride }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   } catch (err) {
-    return new Response(JSON.stringify({ success: false, error: err?.message || String(err) }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    console.error('accept-offer error:', err);
+    return new Response(JSON.stringify({ success: false, error: err?.message || String(err) }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 });
 

@@ -1,10 +1,11 @@
 /**
- * @deprecated Not used by the current (instant-only) ride feed UI.
- * The app uses `useSmartRealtimeFeed` + server-side feed categorization and the
- * shared `src/lib/realtimeRegistry.js` for realtime updates without duplicate subscriptions.
- *
- * Kept for reference for a future "state machine transitions" approach.
- * See: `docs/DEPRECATED_CODE_MAP.md`
+ * useRideStateListener Hook
+ * 
+ * Listens to state changes for a specific ride and triggers feed transitions.
+ * Integrates with useFeedTransitions to handle automatic feed updates and navigation.
+ * 
+ * @see Design Doc: Feed Transitions section
+ * @see Requirements: 16.1-16.5
  */
 
 import { useEffect, useRef, useCallback } from 'react';

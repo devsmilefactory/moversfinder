@@ -81,9 +81,10 @@ const RideStatusIndicator = ({ userId }) => {
   const handleClick = () => {
     // Navigate to rides page with appropriate tab
     if (activeCount > 0) {
-      navigate('/user/rides?tab=active');
+      // Ask rides page to auto-open the active ride modal (same UX as tapping a ride card)
+      navigate('/user/rides?tab=active&openActive=1');
     } else if (pendingCount > 0) {
-      navigate('/user/rides?tab=pending');
+      navigate('/user/rides?tab=pending&openPending=1');
     } else {
       navigate('/user/rides');
     }

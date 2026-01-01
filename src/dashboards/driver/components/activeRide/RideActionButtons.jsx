@@ -9,6 +9,7 @@ import { RIDE_STATUSES } from '../../../../hooks/useRideStatus';
  */
 const RideActionButtons = ({
   ride,
+  canonicalStatus,
   isScheduled,
   needsToBeStarted,
   updatingStatus,
@@ -17,14 +18,15 @@ const RideActionButtons = ({
   onCompleteRide,
   onCancel
 }) => {
+  const status = (canonicalStatus || ride?.ride_status || '').toLowerCase();
   const isRideCompleted = 
-    ride.ride_status === RIDE_STATUSES.TRIP_COMPLETED ||
-    ride.ride_status === RIDE_STATUSES.COMPLETED;
+    status === RIDE_STATUSES.TRIP_COMPLETED ||
+    status === RIDE_STATUSES.COMPLETED;
 
   const getNextAction = () => {
     if (isRideCompleted) return null;
 
-    switch (ride.ride_status) {
+    switch (status) {
       case 'accepted':
         return {
           label: isScheduled ? 'Begin Trip' : 'On My Way',
@@ -95,8 +97,8 @@ const RideActionButtons = ({
         </Button>
       )}
 
-      {/* Cancel Button - Only show for non-started rides */}
-      {!isRideCompleted && ride.ride_status !== 'trip_started' && (
+      {/* Cancel Button - Allowed in any non-terminal state */}
+      {!['completed', 'cancelled'].includes(status) && (
         <Button
           variant="outline"
           size="md"

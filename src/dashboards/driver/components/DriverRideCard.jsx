@@ -34,7 +34,8 @@ const DriverRideCard = ({
   feedCategory = 'available', 
   onPlaceBid, 
   onStartTrip, 
-  onCallPassenger 
+  onCallPassenger,
+  onMoreDetails
 }) => {
   const [showAllPackages, setShowAllPackages] = useState(false);
 
@@ -92,6 +93,9 @@ const DriverRideCard = ({
       case 'call_passenger':
         onCallPassenger?.(ride.passenger_phone);
         break;
+      case 'more_details':
+        onMoreDetails?.(ride);
+        break;
       default:
         console.warn('Unknown action type:', actionType);
     }
@@ -102,6 +106,7 @@ const DriverRideCard = ({
       ride={ride}
       role="driver"
       context={normalizedCategory}
+      onClick={onMoreDetails ? () => onMoreDetails(ride) : undefined}
       onAction={handleAction}
       className="hover:shadow-md transition-shadow"
     >

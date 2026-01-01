@@ -6,10 +6,5 @@ export { default as RideActionButtons } from './RideActionButtons';
 export { default as ErrandTaskManager } from './ErrandTaskManager';
 export { default as RideProgressStepper } from './RideProgressStepper';
 
-// Re-export for convenience
-export * from './RefactoredActiveRideOverlay';
-export * from './RideStatusDisplay';
-export * from './RideLocationInfo';
-export * from './RideActionButtons';
-export * from './ErrandTaskManager';
-export * from './RideProgressStepper';
+// Note: Avoid wildcard re-exports here to keep the public surface area small and prevent
+// accidental usage of internal helpers. Prefer explicit exports above.

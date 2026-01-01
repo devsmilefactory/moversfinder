@@ -4,6 +4,7 @@ import { useToast } from '../components/ui/ToastProvider';
 import useAuthStore from '../stores/authStore';
 import { RIDE_STATUSES } from './useRideStatus';
 import { notifyTripCompleted } from '../services/notificationService';
+import { transitionRideStatusRpc, RIDE_STATE, EXECUTION_SUB_STATE } from '../services/rideStateService';
 
 /**
  * useRideCompletion
@@ -53,7 +54,6 @@ export function useRideCompletion() {
           trip_completed_at: now,
           actual_dropoff_time: now,
           payment_status: 'paid', // Or pending based on business logic, keeping 'paid' as per existing
-          ride_status: RIDE_STATUSES.TRIP_COMPLETED,
           ...extraRideUpdates,
         };
 
@@ -64,24 +64,15 @@ export function useRideCompletion() {
           metadataUpdates.fare = tripCost;
         }
 
-        // 3. EXECUTE STATE TRANSITION VIA RPC (Single Source of Truth)
-        // Move state to COMPLETED_INSTANCE
-        const { data: transitionData, error: transitionError } = await supabase.rpc('transition_ride_status', {
-          p_ride_id: rideId,
-          p_new_state: 'COMPLETED_INSTANCE', 
-          p_new_sub_state: 'TRIP_COMPLETED',
-          p_actor_type: 'DRIVER',
-          p_actor_id: user?.id
+        // 3. EXECUTE STATE TRANSITION VIA CANONICAL WRAPPER
+        // Move state to COMPLETED_INSTANCE (and keep ride_status/status in sync).
+        await transitionRideStatusRpc({
+          rideId,
+          newState: RIDE_STATE.COMPLETED_INSTANCE,
+          newSubState: EXECUTION_SUB_STATE.TRIP_COMPLETED,
+          actorType: 'DRIVER',
+          actorId: user?.id,
         });
-
-        if (transitionError) {
-          console.error('RPC Transition Error:', transitionError);
-          throw transitionError;
-        }
-
-        if (!transitionData?.success) {
-          throw new Error(transitionData?.error || 'State transition failed');
-        }
 
         // 4. Update additional metadata
         const { error: metadataError } = await supabase
@@ -175,7 +166,21 @@ export function useRideCompletion() {
           title: 'Trip completed successfully',
         });
 
-        return { success: true };
+        // Fetch updated ride for UI consumers (overlay/rating flows)
+        let updatedRide = null;
+        try {
+          const { data: refreshedRide } = await supabase
+            .from('rides')
+            .select('*')
+            .eq('id', rideId)
+            .single();
+          updatedRide = refreshedRide || null;
+        } catch (e) {
+          // Non-fatal; callers can fall back to local ride status update.
+          updatedRide = null;
+        }
+
+        return { success: true, ride: updatedRide };
       } catch (error) {
         console.error('useRideCompletion error:', error);
         addToast?.({

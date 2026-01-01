@@ -58,7 +58,13 @@ const RefactoredActiveRidesView = () => {
 
     setCancellingRideId(cancelTargetRideId);
     try {
-      const result = await cancelRide(cancelTargetRideId);
+      const ride = (activeRides || []).find(r => r.id === cancelTargetRideId);
+      const result = await cancelRide({
+        rideId: cancelTargetRideId,
+        role: 'passenger',
+        reason: 'Cancelled by passenger',
+        otherPartyUserId: ride?.driver_id || null
+      });
       
       if (result.success) {
         addToast({

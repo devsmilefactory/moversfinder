@@ -8,16 +8,20 @@ import { getNavigationUrlTo } from '../../../../utils/navigation';
  */
 const RideLocationInfo = ({ ride, passengerPhone }) => {
   const handleNavigateToPickup = () => {
-    const url = getNavigationUrlTo(ride.pickup_latitude, ride.pickup_longitude);
+    const url =
+      getNavigationUrlTo(ride, 'pickup') ||
+      getNavigationUrlTo(ride.pickup_latitude, ride.pickup_longitude);
     if (url) {
-      window.open(url, '_blank');
+      window.open(url, '_blank', 'noopener,noreferrer');
     }
   };
 
   const handleNavigateToDropoff = () => {
-    const url = getNavigationUrlTo(ride.dropoff_latitude, ride.dropoff_longitude);
+    const url =
+      getNavigationUrlTo(ride, 'dropoff') ||
+      getNavigationUrlTo(ride.dropoff_latitude, ride.dropoff_longitude);
     if (url) {
-      window.open(url, '_blank');
+      window.open(url, '_blank', 'noopener,noreferrer');
     }
   };
 

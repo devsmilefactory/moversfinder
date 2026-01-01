@@ -8,7 +8,6 @@ import BookingConfirmationModal from './booking/BookingConfirmationModal';
 import { useBookingValidation } from '../../../hooks/useBookingValidation';
 import { useAuthStore, useSavedPlacesStore } from '../../../stores';
 import { supabase } from '../../../lib/supabase';
-import { broadcastRideToDrivers } from '../../../utils/driverMatching';
 import { createRecurringSeries } from '../../../services/recurringTripService';
 import {
   calculateRecurrenceDays,
@@ -776,8 +775,9 @@ const UnifiedBookingModal = ({
         distance_km: finalDistanceKm ?? null,
         estimated_duration_minutes: finalDurationMin ?? null,
 
-        // Scheduling - combine date and time properly
+        // Scheduling - Instant-only: scheduled_datetime must be NULL
         scheduled_datetime: (() => {
+          if (rideTiming === 'instant') return null;
           if (!hasSpecificSchedule) return null;
 
           let dateStr;
@@ -801,7 +801,7 @@ const UnifiedBookingModal = ({
           return dateObj.toISOString();
         })(),
 
-        // Recurrence pattern for recurring rides
+        // Recurrence pattern for recurring rides (instant-only => null)
         recurrence_pattern: rideTiming === 'scheduled_recurring'
           ? (
               scheduleType === 'specific_dates' ? {
@@ -1009,13 +1009,7 @@ if (selectedService === 'bulk') {
     }
 
     if (bookingData.ride_timing === 'instant') {
-      for (const ride of createdRides || []) {
-        if (ride.pickup_coordinates) {
-          const pickupLatLng = fromGeoJSON(ride.pickup_coordinates);
-          await broadcastRideToDrivers(ride.id, pickupLatLng, 5);
-        }
-      }
-      alert(`🎉 Success! ${createdRides.length} trip(s) created and sent to nearby drivers.`);
+      alert(`🎉 Success! ${createdRides.length} trip(s) created. Nearby drivers will be notified automatically.`);
     } else {
       alert(`🎉 Success! ${createdRides.length} trip(s) have been scheduled.`);
     }
@@ -1153,23 +1147,10 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
 
           console.log('✅ Round trip created successfully:', rides);
 
-          // For instant rides, broadcast outbound leg to nearby drivers
+          // For instant rides, broadcast is handled by DB trigger
           const outboundRide = rides[0];
-          if (outboundRide.ride_timing === 'instant' && outboundRide.pickup_coordinates) {
-            const pickupLatLng = fromGeoJSON(outboundRide.pickup_coordinates) || null;
-            const broadcastResult = await broadcastRideToDrivers(
-              outboundRide.id,
-              pickupLatLng,
-              5 // 5km radius
-            );
-
-            if (broadcastResult.success && broadcastResult.driversNotified > 0) {
-              console.log(`✅ Round trip broadcast to ${broadcastResult.driversNotified} drivers`);
-              alert(`🎉 Round trip booked successfully! ${broadcastResult.driversNotified} nearby driver(s) have been notified.`);
-            } else {
-              console.log('⚠️ No nearby drivers found');
-              alert('🎉 Round trip booked successfully! We\'ll notify you when a driver becomes available.');
-            }
+          if (outboundRide.ride_timing === 'instant') {
+            alert('🎉 Round trip booked successfully! Nearby drivers will be notified automatically.');
           } else {
             alert('🎉 Round trip booked successfully! A driver will be assigned shortly.');
           }
@@ -1199,22 +1180,9 @@ const isRecurring = bookingData.ride_timing === 'scheduled_recurring' && booking
 
           console.log('✅ Ride created successfully:', ride);
 
-          // For instant rides, broadcast to nearby drivers
-          if (ride.ride_timing === 'instant' && ride.pickup_coordinates) {
-            const pickupLatLng = fromGeoJSON(ride.pickup_coordinates) || null;
-            const broadcastResult = await broadcastRideToDrivers(
-              ride.id,
-              pickupLatLng,
-              5 // 5km radius
-            );
-
-            if (broadcastResult.success && broadcastResult.driversNotified > 0) {
-              console.log(`✅ Ride broadcast to ${broadcastResult.driversNotified} drivers`);
-              alert(`🎉 Trip booked successfully! ${broadcastResult.driversNotified} nearby driver(s) have been notified.`);
-            } else {
-              console.log('⚠️ No nearby drivers found');
-              alert('🎉 Trip booked successfully! We\'ll notify you when a driver becomes available.');
-            }
+          // For instant rides, broadcast is handled by DB trigger
+          if (ride.ride_timing === 'instant') {
+            alert('🎉 Trip booked successfully! Nearby drivers will be notified automatically.');
           } else {
             alert('🎉 Trip booked successfully! A driver will be assigned shortly.');
           }

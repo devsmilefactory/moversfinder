@@ -9,6 +9,7 @@
 import React from 'react';
 import { 
   DollarSign, 
+  Info,
   Play, 
   CheckCircle, 
   X, 
@@ -59,7 +60,15 @@ export default function CardActions({
       case 'available':
       case 'AVAILABLE':
         return (
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              onClick={() => handleAction('more_details')}
+              disabled={disabled}
+              className={buttonVariants.secondary}
+            >
+              <Info className="h-4 w-4 mr-2" />
+              More details
+            </button>
             <button
               onClick={() => handleAction('place_bid')}
               disabled={disabled}

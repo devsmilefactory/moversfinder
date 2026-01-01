@@ -8,6 +8,7 @@ import { parseErrandTasks, describeTaskState } from '../../../utils/errandTasks'
 import { isErrandService, normalizeServiceType } from '../../../utils/serviceTypes';
 import ErrandTaskList from '../../../components/cards/ErrandTaskList';
 import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
+import { useCancelRide } from '../../../hooks/useCancelRide';
 
 /**
  * Ride Details Modal
@@ -25,6 +26,7 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
   const [processingOfferId, setProcessingOfferId] = useState(null);
   const [showRatingModal, setShowRatingModal] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const { cancelRide } = useCancelRide();
 
   // Auto-open rating modal when requested and ride is completed without rating
   useEffect(() => {
@@ -202,19 +204,17 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
     
     setIsCancelling(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('User not found');
-
-      const { data, error } = await supabase.rpc('transition_ride_status', {
-        p_ride_id: ride.id,
-        p_new_state: 'CANCELLED',
-        p_actor_type: 'PASSENGER',
-        p_actor_id: user.id
+      const result = await cancelRide({
+        rideId: ride.id,
+        role: 'passenger',
+        reason: 'Cancelled by passenger',
+        otherPartyUserId: ride.driver_id || null
       });
 
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Failed to cancel ride');
-      
+      if (!result?.success) {
+        throw new Error(result?.error || 'Failed to cancel ride');
+      }
+
       alert('Ride cancelled successfully');
       onClose();
     } catch (error) {
@@ -442,8 +442,8 @@ const RideDetailsModal = ({ isOpen, onClose, ride, onAccepted, autoOpenRating = 
             </Button>
           )}
           
-          {/* Passenger Cancel CTA */}
-          {!['trip_completed', 'completed', 'cancelled'].includes(ride?.ride_status || ride?.status) && (
+          {/* Passenger Cancel CTA - Allowed in any non-terminal state (including trip_completed) */}
+          {!['completed', 'cancelled'].includes((ride?.ride_status || ride?.status || '').toLowerCase()) && (
             <Button
               variant="outline"
               onClick={handleCancelRide}

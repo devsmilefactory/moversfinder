@@ -69,3 +69,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON service_types TO authenticated;
 
 
 
+
+
+
+

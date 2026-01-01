@@ -119,6 +119,18 @@ const DriverRideDetailsModal = ({ open, onClose, ride }) => {
   const isActive = !['cancelled', 'completed'].includes(ride?.ride_status);
   const recurringInfo = useMemo(() => buildRecurringInfo(ride), [ride]);
   const costDisplay = useMemo(() => getRideCostDisplay(ride), [ride]);
+  const [showExtraDetails, setShowExtraDetails] = useState(false);
+
+  const courierPackages = useMemo(() => {
+    try {
+      if (!ride?.courier_packages) return [];
+      return typeof ride.courier_packages === 'string'
+        ? JSON.parse(ride.courier_packages)
+        : ride.courier_packages;
+    } catch {
+      return [];
+    }
+  }, [ride?.courier_packages]);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,14 +193,76 @@ const DriverRideDetailsModal = ({ open, onClose, ride }) => {
           {(ride.special_requests || ride.special_instructions) && (
             <Row label="Instructions" value={ride.special_requests || ride.special_instructions} />
           )}
+          {ride.notes && (
+            <Row label="Notes" value={ride.notes} />
+          )}
           {ride.courier_package_details && (
             <Row label="Package" value={ride.courier_package_details} />
           )}
           {ride.package_size && (
             <Row label="Size" value={String(ride.package_size)} />
           )}
+          {ride.number_of_passengers && (
+            <Row label="Passengers" value={String(ride.number_of_passengers)} />
+          )}
+          {(ride.recipient_name || ride.recipient_phone) && (
+            <Row
+              label="Recipient"
+              value={`${ride.recipient_name || '—'}${ride.recipient_phone ? ` • ${ride.recipient_phone}` : ''}`}
+            />
+          )}
+          {(ride.passenger_name || ride.contact_number) && (
+            <Row
+              label="Contact"
+              value={`${ride.passenger_name || '—'}${ride.contact_number ? ` • ${ride.contact_number}` : ''}`}
+            />
+          )}
           {ride.estimated_cost && (
             <Row label="Estimated Fare" value={costDisplay.display} />
+          )}
+        </div>
+
+        {/* Extra details (ride-type specific) */}
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShowExtraDetails((v) => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors"
+          >
+            <span className="text-sm font-semibold text-gray-900">More details</span>
+            <span className="text-xs text-gray-500">{showExtraDetails ? 'Hide' : 'Show'}</span>
+          </button>
+          {showExtraDetails && (
+            <div className="p-3 space-y-2 bg-white">
+              <Row label="Ride ID" value={<span className="font-mono text-xs">{ride.id}</span>} />
+              <Row label="Status" value={ride.ride_status || ride.status || ride.state} />
+              {ride.vehicle_type && <Row label="Vehicle" value={String(ride.vehicle_type)} />}
+              {ride.payment_method && <Row label="Payment" value={String(ride.payment_method)} />}
+              {courierPackages.length > 0 && (
+                <div className="pt-2 border-t border-gray-100">
+                  <p className="text-xs font-semibold text-gray-700 mb-2">Courier packages</p>
+                  <div className="space-y-2">
+                    {courierPackages.map((pkg, idx) => (
+                      <div key={idx} className="rounded-lg border border-amber-200 bg-amber-50 p-2">
+                        <p className="text-xs font-semibold text-amber-900">
+                          Package {idx + 1}: {pkg.packageSize || pkg.size || '—'}
+                        </p>
+                        {(pkg.packageDescription || pkg.description) && (
+                          <p className="text-xs text-amber-800 mt-0.5">
+                            {pkg.packageDescription || pkg.description}
+                          </p>
+                        )}
+                        {(pkg.recipientName || pkg.recipientPhone) && (
+                          <p className="text-[11px] text-amber-800 mt-0.5">
+                            Recipient: {pkg.recipientName || '—'}{pkg.recipientPhone ? ` • ${pkg.recipientPhone}` : ''}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
 

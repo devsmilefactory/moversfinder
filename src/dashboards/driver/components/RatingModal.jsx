@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import SharedRatingModal from '../../../components/shared/SharedRatingModal';
+import { finalizeRideAsDriver } from '../../../services/rideStateService';
+import { useToast } from '../../../components/ui/ToastProvider';
 
 /**
  * Driver RatingModal wrapper around SharedRatingModal.
@@ -8,6 +10,7 @@ import SharedRatingModal from '../../../components/shared/SharedRatingModal';
  */
 const RatingModal = ({ trip, onClose, onRatingSubmitted }) => {
   const [submitting, setSubmitting] = useState(false);
+  const { addToast } = useToast();
 
   const handleSubmitRating = async ({ rating, review, issues }) => {
     if (rating === 0) {
@@ -26,9 +29,7 @@ const RatingModal = ({ trip, onClose, onRatingSubmitted }) => {
           driver_review: review || null,
           driver_reported_issues: issues && issues.length > 0 ? issues : null,
           driver_rated_at: new Date().toISOString(),
-          // Transition from trip_completed (A3) to completed (C1) per spec
-          ride_status: trip.ride_status === 'trip_completed' ? 'completed' : trip.ride_status,
-          status: trip.ride_status === 'trip_completed' ? 'completed' : trip.status,
+          // Do NOT force ride_status here; prefer canonical RPC finalization below.
         })
         .eq('id', trip.id);
 
@@ -57,6 +58,22 @@ const RatingModal = ({ trip, onClose, onRatingSubmitted }) => {
 
       alert('✅ Thank you for your feedback!');
 
+      // Canonical finalization: move state from COMPLETED_INSTANCE -> COMPLETED_FINAL via RPC (if allowed).
+      // If server rejects driver finalization, do NOT write ride_status directly (avoid mixed truth).
+      // Passenger can still finalize via their post-ride flow.
+      if (trip?.ride_status === 'trip_completed') {
+        try {
+          await finalizeRideAsDriver(trip.id, trip.driver_id);
+        } catch (e) {
+          addToast?.({
+            type: 'info',
+            title: 'Waiting for passenger confirmation',
+            message: 'Ride is completed. Passenger will confirm to finalize.',
+            duration: 6000
+          });
+        }
+      }
+
       if (onRatingSubmitted) {
         onRatingSubmitted(trip.id, rating);
       }
@@ -75,15 +92,15 @@ const RatingModal = ({ trip, onClose, onRatingSubmitted }) => {
     // If ride is still in trip_completed state, transition to completed when modal closes
     if (trip?.ride_status === 'trip_completed') {
       try {
-        await supabase
-          .from('rides')
-          .update({
-            ride_status: 'completed',
-            status: 'completed',
-          })
-          .eq('id', trip.id);
+        // Prefer canonical RPC finalization (state -> COMPLETED_FINAL) where allowed.
+        await finalizeRideAsDriver(trip.id, trip.driver_id);
       } catch (error) {
-        console.error('Error transitioning ride to completed state:', error);
+        addToast?.({
+          type: 'info',
+          title: 'Waiting for passenger confirmation',
+          message: 'Ride is completed. Passenger will confirm to finalize.',
+          duration: 6000
+        });
       }
     }
     onClose();

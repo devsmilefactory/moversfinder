@@ -14,6 +14,7 @@ import { supabase } from '../../../lib/supabase';
 import useCentralizedLocation from '../../../hooks/useCentralizedLocation';
 
 import { calculateEstimatedFareV2 } from '../../../utils/pricingCalculator';
+import { agentLog } from '../../../utils/agentLog';
 
 // Debug: Log environment variables on module load
 console.log('🔍 BookRidePage module loaded');
@@ -37,15 +38,11 @@ console.log('🗝️ Environment check:', {
  */
 
 const BookRidePage = () => {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:38',message:'BookRidePage component rendering',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
-  // #endregion
+  agentLog({ location: 'BookRidePage', message: 'render' });
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
   const { activeProfileType } = useProfileStore();
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:42',message:'BookRidePage hooks initialized',data:{hasUser:!!user,activeProfileType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
-  // #endregion
+  agentLog({ location: 'BookRidePage', message: 'hooks', data: { hasUser: !!user, activeProfileType } });
   const { getAvailableDriversCount } = useRidesStore();
 
   // Profile type display configuration
@@ -55,21 +52,15 @@ const BookRidePage = () => {
   // This ensures seamless profile switching - when user switches to driver,
   // this page will detect it and navigate to the driver page
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:50',message:'Profile type check useEffect',data:{activeProfileType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
-    // #endregion
+    agentLog({ location: 'BookRidePage', message: 'profile type check', data: { activeProfileType } });
     if (!activeProfileType) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:52',message:'No activeProfileType - returning early',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
-      // #endregion
+      agentLog({ location: 'BookRidePage', message: 'no activeProfileType' });
       return;
     }
 
     // This page is for individual profile only
     if (activeProfileType !== 'individual') {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BookRidePage.jsx:55',message:'Redirecting due to profile type mismatch',data:{activeProfileType},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})}).catch(()=>{});
-      // #endregion
+      agentLog({ location: 'BookRidePage', message: 'redirect profile mismatch', data: { activeProfileType } });
       console.log(`BookRidePage: activeProfileType is ${activeProfileType}, redirecting...`);
 
       // Navigate to the appropriate page for the active profile

@@ -34,9 +34,7 @@ export function useDriverRidesFeed(driverId) {
     const fetchMeta = nextFetchMetaRef.current;
     nextFetchMetaRef.current = null;
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useDriverRidesFeed.js:31',message:'fetchRidesForTab called',data:{driverId,activeTab,rideTypeFilter,scheduleFilter,page},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
+    // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
     
     // Optional: inspect refresh origins without affecting production UX.
     // Enable via localStorage.setItem('FEED_REFRESH_DEBUG','1')

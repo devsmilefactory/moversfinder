@@ -1,12 +1,3 @@
-/**
- * @deprecated Not used by app routing.
- * The driver `/driver/rides` route uses `dashboards/driver/pages/RideRequestsPage.jsx`
- * which renders `dashboards/driver/DriverRidesPage.jsx`.
- *
- * Kept for reference.
- * See: `docs/DEPRECATED_CODE_MAP.md`
- */
-
 import React from 'react';
 import RideRequestsView from './RideRequestsView';
 import { useAuthStore } from '../../../stores';

@@ -1,11 +1,3 @@
-/**
- * @deprecated Legacy driver "ride requests" filtering hook used by `RideRequestsViewContainer` flow.
- * Current driver experience uses `useDriverRidesFeed` with server-backed feed categories and UI filters.
- *
- * Kept for reference.
- * See: `docs/DEPRECATED_CODE_MAP.md`
- */
-
 import { useState, useCallback, useMemo } from 'react';
 import { isWithinInterval, parseISO, addHours, subHours } from 'date-fns';
 

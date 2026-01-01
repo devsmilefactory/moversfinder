@@ -11,6 +11,17 @@ export function getNavigationUrlForDriver(trip) {
   return getNavigationUrlTo(trip, target);
 }
 
+function buildGoogleMapsDirectionsUrl({ destination }) {
+  if (!destination) return null;
+  const params = new URLSearchParams({ api: '1', destination, travelmode: 'driving' });
+  // Note: we intentionally omit `origin` so Google Maps uses current location by default.
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
+function isTripObjectLike(value) {
+  return value && typeof value === 'object' && !Array.isArray(value);
+}
+
 function coerceLatLngAny(c) {
   if (!c) return null;
 
@@ -53,7 +64,10 @@ function resolveDestination(trip, target = 'pickup') {
     isPickup ? trip.pickup_point : trip.dropoff_point,
     isPickup ? trip.pickup_geojson : trip.dropoff_geojson,
     isPickup ? trip.pickupPosition : trip.dropoffPosition,
+    // Common numeric fields
     isPickup ? [trip.pickup_lat, trip.pickup_lng] : [trip.dropoff_lat, trip.dropoff_lng],
+    // Canonical fields used by booking flow
+    isPickup ? [trip.pickup_latitude, trip.pickup_longitude] : [trip.dropoff_latitude, trip.dropoff_longitude],
   ];
 
   for (const cand of candidates) {
@@ -69,17 +83,27 @@ function resolveDestination(trip, target = 'pickup') {
  * target: 'pickup' | 'dropoff'
  */
 export function getNavigationUrlTo(trip, target = 'pickup') {
+  // Overload support:
+  // - getNavigationUrlTo(trip, 'pickup' | 'dropoff')
+  // - getNavigationUrlTo(lat, lng)  (legacy callers)
   if (!trip) return null;
-  const resolved = resolveDestination(trip, target);
 
-  const params = new URLSearchParams({ api: '1', origin: 'My+Location', travelmode: 'driving' });
-
-  if (resolved?.coords) {
-    params.set('destination', `${resolved.coords.lat},${resolved.coords.lng}`);
-  } else if (resolved?.address) {
-    params.set('destination', resolved.address);
-  } else {
+  // Legacy signature: (lat, lng)
+  if (!isTripObjectLike(trip)) {
+    const lat = typeof trip === 'string' ? parseFloat(trip) : trip;
+    const lng = typeof target === 'string' ? parseFloat(target) : target;
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return buildGoogleMapsDirectionsUrl({ destination: `${lat},${lng}` });
+    }
     return null;
   }
-  return `https://www.google.com/maps/dir/?${params.toString()}`;
+
+  const resolved = resolveDestination(trip, target);
+  if (resolved?.coords) {
+    return buildGoogleMapsDirectionsUrl({ destination: `${resolved.coords.lat},${resolved.coords.lng}` });
+  }
+  if (resolved?.address) {
+    return buildGoogleMapsDirectionsUrl({ destination: resolved.address });
+  }
+  return null;
 }

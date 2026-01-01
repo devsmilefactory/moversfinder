@@ -370,23 +370,14 @@ const ProfilePage = () => {
   const isProfileSubmitted = (completionPercentage === 100) || (approvalStatus === 'pending' || approvalStatus === 'under_review');
 
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfilePage.jsx:372',message:'ProfilePage useEffect running',data:{approvalStatus,completionPercentage,isEditing,currentPath:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run3',hypothesisId:'M'})}).catch(()=>{});
-    // #endregion
     // Only auto-redirect if profile is fully approved - let users view/edit their profile at any time
     if (approvalStatus === 'approved' && completionPercentage === 100) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfilePage.jsx:375',message:'Redirecting to rides (approved)',data:{to:'/driver/rides'},timestamp:Date.now(),sessionId:'debug-session',runId:'run3',hypothesisId:'M'})}).catch(()=>{});
-      // #endregion
       navigate('/driver/rides', { replace: true });
       return;
     }
     // REMOVED: Auto-redirect to status page when pending
     // Users should be able to view/edit their profile regardless of approval status
     // The status page buttons allow navigation to profile, so we shouldn't block it
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfilePage.jsx:382',message:'No redirect - allowing profile view',data:{approvalStatus,completionPercentage},timestamp:Date.now(),sessionId:'debug-session',runId:'run3',hypothesisId:'M'})}).catch(()=>{});
-    // #endregion
   }, [approvalStatus, completionPercentage, navigate]);
 
   const missingItems = React.useMemo(() => {

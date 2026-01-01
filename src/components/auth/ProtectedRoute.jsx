@@ -24,9 +24,12 @@ const ProtectedRoute = ({
   requiredProfile = null
 }) => {
   const location = useLocation();
-  const { user, isAuthenticated, authLoading } = useAuthStore();
+  const { user, isAuthenticated, authLoading, _isInitializing } = useAuthStore();
   const { getProfileStatus, canAccessProfile, activeProfileType, activeProfile } = useProfileStore();
-  const [isChecking, setIsChecking] = useState(true);
+  const [sessionCheckState, setSessionCheckState] = useState({
+    checked: false,
+    hasSession: false
+  });
   const [driverDocuments, setDriverDocuments] = useState([]);
   const [driverDocsLoaded, setDriverDocsLoaded] = useState(false);
 
@@ -65,17 +68,44 @@ const ProtectedRoute = ({
     }
   }, [requiredProfile, user?.id, activeProfile, driverDocsLoaded]);
 
+  // Fix "refresh loses URL" on deep links:
+  // - Do NOT redirect to /login until we confirm there is no Supabase session.
+  // - This prevents a brief unauthenticated render from overwriting the URL/state.
   useEffect(() => {
-    // Give a moment for auth to initialize
-    const timer = setTimeout(() => {
-      setIsChecking(false);
-    }, 500);
+    let cancelled = false;
 
-    return () => clearTimeout(timer);
-  }, []);
+    const run = async () => {
+      // If already authenticated, no need to check session
+      if (isAuthenticated && user) {
+        setSessionCheckState({ checked: true, hasSession: true });
+        return;
+      }
+
+      // If auth is still loading/initializing, wait
+      if (authLoading || _isInitializing) {
+        setSessionCheckState((prev) => ({ ...prev, checked: false }));
+        return;
+      }
+
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (cancelled) return;
+        const hasSession = Boolean(data?.session?.user);
+        setSessionCheckState({ checked: true, hasSession });
+      } catch (e) {
+        if (cancelled) return;
+        setSessionCheckState({ checked: true, hasSession: false });
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, _isInitializing, isAuthenticated, user]);
 
   // Show loading state while checking auth
-  if (authLoading || isChecking) {
+  if (authLoading || _isInitializing || !sessionCheckState.checked || (sessionCheckState.hasSession && (!isAuthenticated || !user))) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">

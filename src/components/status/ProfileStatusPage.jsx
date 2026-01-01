@@ -237,9 +237,6 @@ const ProfileStatusPage = ({ profileType }) => {
 
   // Handle view profile - navigate to profile page
   const handleViewProfile = useCallback((e) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:239',message:'handleViewProfile called',data:{profileType,currentPath:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
-    // #endregion
     if (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -250,17 +247,8 @@ const ProfileStatusPage = ({ profileType }) => {
       console.log('[ProfileStatusPage] Navigating to /driver/profile');
       const targetPath = '/driver/profile';
       try {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:250',message:'About to call navigate',data:{targetPath,currentPath:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
-        // #endregion
         navigate(targetPath, { replace: false });
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:251',message:'navigate() called',data:{targetPath},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
-        // #endregion
       } catch (error) {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:252',message:'Navigation error',data:{error:error.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'K'})}).catch(()=>{});
-        // #endregion
         console.error('[ProfileStatusPage] Navigation error, using window.location:', error);
         window.location.href = targetPath;
       }
@@ -485,9 +473,6 @@ const ProfileStatusPage = ({ profileType }) => {
               variant="outline"
               size="lg"
               onClick={(e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:475',message:'View Profile button clicked',data:{pathname:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
-                // #endregion
                 console.log('View Profile button clicked directly');
                 handleViewProfile(e);
               }}
@@ -582,9 +567,6 @@ const ProfileStatusPage = ({ profileType }) => {
               variant="outline"
               size="lg"
               onClick={(e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:475',message:'View Profile button clicked',data:{pathname:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
-                // #endregion
                 console.log('View Profile button clicked directly');
                 handleViewProfile(e);
               }}
@@ -711,9 +693,6 @@ const ProfileStatusPage = ({ profileType }) => {
               variant="outline"
               size="lg"
               onClick={(e) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'ProfileStatusPage.jsx:475',message:'View Profile button clicked',data:{pathname:window.location.pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'J'})}).catch(()=>{});
-                // #endregion
                 console.log('View Profile button clicked directly');
                 handleViewProfile(e);
               }}

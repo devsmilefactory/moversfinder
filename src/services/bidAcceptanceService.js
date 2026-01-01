@@ -25,13 +25,10 @@ export const acceptDriverBid = async (rideId, offerId, driverId, passengerId) =>
       passengerId,
       timestamp: new Date().toISOString()
     });
-    
-    // Call RPC function for atomic bid acceptance with availability check
-    const { data, error } = await supabase.rpc('accept_driver_bid', {
-      p_ride_id: rideId,
-      p_offer_id: offerId,
-      p_driver_id: driverId,
-      p_passenger_id: passengerId
+
+    // Canonical flow: Edge Function -> atomic DB RPC (passenger determined by JWT)
+    const { data, error } = await supabase.functions.invoke('accept-offer', {
+      body: { offer_id: offerId }
     });
     
     if (error) {
@@ -54,26 +51,26 @@ export const acceptDriverBid = async (rideId, offerId, driverId, passengerId) =>
     // Check if the operation was successful
     if (!data || !data.success) {
       // Handle specific error cases
-      if (data?.error === 'driver_unavailable') {
+      if (data?.error === 'driver_unavailable' || data?.data?.error === 'driver_unavailable') {
         console.warn('⚠️ Driver is unavailable');
         return {
           success: false,
           error: 'driver_unavailable',
-          message: data.message || 'This driver is currently engaged in another trip'
+          message: data?.message || data?.data?.message || 'This driver is currently engaged in another trip'
         };
       }
       
-      if (data?.error === 'ride_not_available') {
+      if (data?.error === 'ride_not_available' || data?.data?.error === 'ride_not_available') {
         console.warn('⚠️ Ride is no longer available');
         return {
           success: false,
           error: 'ride_not_available',
-          message: data.message || 'This ride is no longer available'
+          message: data?.message || data?.data?.message || 'This ride is no longer available'
         };
       }
       
-      if (data?.error === 'transaction_failed') {
-        console.error('❌ Transaction failed:', data.message);
+      if (data?.error === 'transaction_failed' || data?.data?.error === 'transaction_failed') {
+        console.error('❌ Transaction failed:', data?.message || data?.data?.message);
         return {
           success: false,
           error: 'transaction_failed',
@@ -84,8 +81,8 @@ export const acceptDriverBid = async (rideId, offerId, driverId, passengerId) =>
       // Generic error
       return {
         success: false,
-        error: data?.error || 'unknown_error',
-        message: data?.message || 'Failed to accept bid'
+        error: data?.error || data?.data?.error || 'unknown_error',
+        message: data?.message || data?.data?.message || 'Failed to accept bid'
       };
     }
     
@@ -93,8 +90,8 @@ export const acceptDriverBid = async (rideId, offerId, driverId, passengerId) =>
     
     return {
       success: true,
-      message: data.message || 'Bid accepted successfully',
-      rideId: data.ride_id
+      message: data?.message || data?.data?.message || 'Bid accepted successfully',
+      rideId: data?.ride_id || data?.data?.ride_id || rideId
     };
     
   } catch (error) {

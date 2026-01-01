@@ -53,6 +53,9 @@ export const findNearbyDrivers = async (pickupCoordinates, radiusKm = 5) => {
  */
 export const broadcastRideToDrivers = async (rideId, pickupCoordinates, radiusKm = 5) => {
   try {
+    console.warn('[broadcastRideToDrivers] Deprecated: ride broadcast is handled by DB trigger. Skipping client broadcast.', { rideId });
+    return { success: true, driversNotified: 0, message: 'Broadcast handled by server' };
+
     // Gradually expand search radius if no drivers found in the initial radius.
     const searchRadii = [...new Set([
       radiusKm,

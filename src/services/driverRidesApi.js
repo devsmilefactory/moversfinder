@@ -6,6 +6,7 @@
  */
 
 import { supabase } from '../lib/supabase';
+import { transitionRideStatusRpc } from './rideStateService';
 
 /**
  * Map old status groups to new feed categories
@@ -86,9 +87,7 @@ export async function fetchDriverRides(
     // Map ride timing
     const rideTiming = scheduleFilter === 'ALL' ? null : SCHEDULE_TO_TIMING[scheduleFilter];
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'driverRidesApi.js:90',message:'Calling get_driver_feed',data:{feedCategory,serviceType,rideTiming,page,pageSize},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
+    // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
 
     const { data, error } = await supabase.rpc('get_driver_feed', {
       p_driver_id: driverId,
@@ -112,9 +111,7 @@ export async function fetchDriverRides(
 
     // Log performance warning if slow
     if (duration > 500) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'driverRidesApi.js:120',message:'Slow query detected',data:{feedCategory,duration:duration.toFixed(2),resultCount:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
+      // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
     }
 
     // Defensive client-side deduping to enforce mutual exclusivity:
@@ -164,9 +161,7 @@ export async function fetchDriverRides(
     // Get total count for pagination (approximate based on returned data)
     const count = cleanedData?.length || 0;
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'driverRidesApi.js:131',message:'Fetch success',data:{feedCategory,resultCount:count,duration:duration.toFixed(2)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
+    // Debug logging intentionally disabled unless explicitly enabled via utils/agentLog
 
     return { data: cleanedData || [], error: null, count };
   } catch (error) {
@@ -363,31 +358,19 @@ export async function fetchRideCounts(driverId) {
  * @returns {Promise<{success: boolean, error: string|null, data: Object|null}>}
  */
 export async function transitionRideStatus(rideId, newState, newSubState = null, actorType = 'DRIVER', actorId) {
+  // Deprecated compatibility wrapper.
+  // Use rideStateService as the single source of truth so ride_status stays in sync across deployments.
   try {
-    const { data, error } = await supabase.rpc('transition_ride_status', {
-      p_ride_id: rideId,
-      p_new_state: newState,
-      p_new_sub_state: newSubState,
-      p_actor_type: actorType,
-      p_actor_id: actorId
+    const data = await transitionRideStatusRpc({
+      rideId,
+      newState,
+      newSubState,
+      actorType,
+      actorId,
     });
-
-    if (error) {
-      console.error('Error transitioning ride status:', error);
-      return { success: false, error: error.message, data: null };
-    }
-
-    if (data && typeof data === 'object') {
-      return {
-        success: data.success || false,
-        error: data.error || null,
-        data: data
-      };
-    }
-
-    return { success: false, error: 'Invalid response from server', data: null };
+    return { success: true, error: null, data };
   } catch (error) {
-    console.error('Exception in transitionRideStatus:', error);
+    console.error('Exception in driverRidesApi.transitionRideStatus:', error);
     return { success: false, error: error.message, data: null };
   }
 }

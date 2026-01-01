@@ -55,11 +55,31 @@ async function transitionRideStatus(rideId, newState, newSubState = null, actorT
 
   if (fetchError) throw fetchError;
 
-  // If already in target state and it's ACTIVE_EXECUTION, just update sub-state
+  // If already in target state and it's ACTIVE_EXECUTION, update sub-state AND ride_status
+  // so passenger UIs (and other consumers) that rely on ride_status remain in sync.
   if (ride.state === newState && newState === RIDE_STATE.ACTIVE_EXECUTION && newSubState) {
+    const sub = String(newSubState || '').toUpperCase();
+    const rideStatusForSubState = (() => {
+      if (sub === EXECUTION_SUB_STATE.DRIVER_ON_THE_WAY) return 'driver_on_way';
+      if (sub === EXECUTION_SUB_STATE.DRIVER_ARRIVED) return 'driver_arrived';
+      if (sub === EXECUTION_SUB_STATE.TRIP_STARTED) return 'trip_started';
+      // TRIP_COMPLETED is handled by COMPLETED_INSTANCE transitions; keep ride_status unchanged here.
+      return null;
+    })();
+
     const { data, error } = await supabase
       .from('rides')
-      .update({ execution_sub_state: newSubState })
+      .update({
+        execution_sub_state: newSubState,
+        ...(rideStatusForSubState
+          ? {
+              ride_status: rideStatusForSubState,
+              // Compatibility with legacy code paths still reading `status`
+              status: rideStatusForSubState,
+            }
+          : {}),
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', rideId)
       .select();
     
@@ -82,55 +102,116 @@ async function transitionRideStatus(rideId, newState, newSubState = null, actorT
 }
 
 /**
+ * Public transition wrapper: always use this when transitioning platform state from client code.
+ *
+ * It calls the canonical RPC and then performs a **best-effort compatibility sync**
+ * for `ride_status` (and legacy `status`) so UIs/feeds that rely on `ride_status`
+ * never drift from `state`/`execution_sub_state` across deployments.
+ */
+export async function transitionRideStatusRpc({
+  rideId,
+  newState,
+  newSubState = null,
+  actorType,
+  actorId
+}) {
+  if (!rideId) throw new Error('rideId is required');
+  if (!newState) throw new Error('newState is required');
+  if (!actorType) throw new Error('actorType is required');
+  if (!actorId) throw new Error('actorId is required');
+
+  const result = await transitionRideStatus(rideId, newState, newSubState, actorType, actorId);
+
+  // Best-effort ride_status mapping. This is intentionally conservative:
+  // - It does not attempt to encode every possible legacy alias.
+  // - It only ensures the canonical statuses used by current UI/feeds are set.
+  const stateUpper = String(newState || '').toUpperCase();
+  const subUpper = String(newSubState || '').toUpperCase();
+
+  const mappedRideStatus = (() => {
+    if (stateUpper === RIDE_STATE.PENDING) return 'pending';
+    if (stateUpper === RIDE_STATE.ACTIVE_PRE_TRIP) return 'accepted';
+    if (stateUpper === RIDE_STATE.ACTIVE_EXECUTION) {
+      if (subUpper === EXECUTION_SUB_STATE.DRIVER_ON_THE_WAY) return 'driver_on_way';
+      if (subUpper === EXECUTION_SUB_STATE.DRIVER_ARRIVED) return 'driver_arrived';
+      if (subUpper === EXECUTION_SUB_STATE.TRIP_STARTED) return 'trip_started';
+      // If sub-state isn't known, keep ride_status as-is.
+      return null;
+    }
+    if (stateUpper === RIDE_STATE.COMPLETED_INSTANCE) return 'trip_completed';
+    if (stateUpper === RIDE_STATE.COMPLETED_FINAL) return 'completed';
+    if (stateUpper === RIDE_STATE.CANCELLED) return 'cancelled';
+    return null;
+  })();
+
+  if (mappedRideStatus) {
+    try {
+      await supabase
+        .from('rides')
+        .update({
+          ride_status: mappedRideStatus,
+          status: mappedRideStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', rideId);
+    } catch {
+      // Non-fatal: RPC is the source of truth; this is compatibility only.
+    }
+  }
+
+  return result;
+}
+
+/**
  * Driver marks as on the way
  */
 export async function driverOnTheWay(rideId, driverId) {
-  return transitionRideStatus(
+  return transitionRideStatusRpc({
     rideId,
-    RIDE_STATE.ACTIVE_EXECUTION,
-    EXECUTION_SUB_STATE.DRIVER_ON_THE_WAY,
-    'DRIVER',
-    driverId
-  );
+    newState: RIDE_STATE.ACTIVE_EXECUTION,
+    newSubState: EXECUTION_SUB_STATE.DRIVER_ON_THE_WAY,
+    actorType: 'DRIVER',
+    actorId: driverId,
+  });
 }
 
 /**
  * Driver marks as arrived
  */
 export async function driverArrived(rideId, driverId) {
-  return transitionRideStatus(
+  return transitionRideStatusRpc({
     rideId,
-    RIDE_STATE.ACTIVE_EXECUTION,
-    EXECUTION_SUB_STATE.DRIVER_ARRIVED,
-    'DRIVER',
-    driverId
-  );
+    newState: RIDE_STATE.ACTIVE_EXECUTION,
+    newSubState: EXECUTION_SUB_STATE.DRIVER_ARRIVED,
+    actorType: 'DRIVER',
+    actorId: driverId,
+  });
 }
 
 /**
  * Driver starts the trip
  */
 export async function startTrip(rideId, driverId) {
-  return transitionRideStatus(
+  return transitionRideStatusRpc({
     rideId,
-    RIDE_STATE.ACTIVE_EXECUTION,
-    EXECUTION_SUB_STATE.TRIP_STARTED,
-    'DRIVER',
-    driverId
-  );
+    newState: RIDE_STATE.ACTIVE_EXECUTION,
+    newSubState: EXECUTION_SUB_STATE.TRIP_STARTED,
+    actorType: 'DRIVER',
+    actorId: driverId,
+  });
 }
 
 /**
  * Driver completes the trip
  */
 export async function completeTrip(rideId, driverId) {
-  return transitionRideStatus(
+  return transitionRideStatusRpc({
     rideId,
-    RIDE_STATE.COMPLETED_INSTANCE,
-    EXECUTION_SUB_STATE.TRIP_COMPLETED,
-    'DRIVER',
-    driverId
-  );
+    newState: RIDE_STATE.COMPLETED_INSTANCE,
+    newSubState: EXECUTION_SUB_STATE.TRIP_COMPLETED,
+    actorType: 'DRIVER',
+    actorId: driverId,
+  });
 }
 
 /**
@@ -169,36 +250,42 @@ export async function completeReturnLeg(rideId, driverId) {
  * Passenger confirms payment
  */
 export async function confirmPayment(rideId, passengerId) {
-  return transitionRideStatus(
+  return transitionRideStatusRpc({
     rideId,
-    RIDE_STATE.COMPLETED_FINAL,
-    null,
-    'PASSENGER',
-    passengerId
-  );
+    newState: RIDE_STATE.COMPLETED_FINAL,
+    newSubState: null,
+    actorType: 'PASSENGER',
+    actorId: passengerId,
+  });
+}
+
+/**
+ * Driver finalizes a completed-instance ride after driver-side rating flow.
+ *
+ * Note: Some deployments may restrict COMPLETED_FINAL transitions to PASSENGER only.
+ * This helper attempts a canonical transition as DRIVER for consistency where allowed.
+ */
+export async function finalizeRideAsDriver(rideId, driverId) {
+  return transitionRideStatusRpc({
+    rideId,
+    newState: RIDE_STATE.COMPLETED_FINAL,
+    newSubState: null,
+    actorType: 'DRIVER',
+    actorId: driverId,
+  });
 }
 
 /**
  * Cancel ride (by driver or passenger)
  */
 export async function cancelRide(rideId, actorId, actorType = 'DRIVER') {
-  const result = await transitionRideStatus(
+  const result = await transitionRideStatusRpc({
     rideId,
-    RIDE_STATE.CANCELLED,
-    null,
+    newState: RIDE_STATE.CANCELLED,
+    newSubState: null,
     actorType,
-    actorId
-  );
-
-  // Keep legacy ride_status in sync for UI/feed logic
-  try {
-    await supabase
-      .from('rides')
-      .update({ ride_status: 'cancelled' })
-      .eq('id', rideId);
-  } catch (err) {
-    console.error('Error syncing ride_status on cancel:', err);
-  }
+    actorId,
+  });
 
   return result;
 }
@@ -239,15 +326,16 @@ export async function transitionErrandTask(rideId, taskIndex, newTaskStatus, dri
  * Accept driver offer
  */
 export async function acceptOffer(offerId, passengerId) {
-  const { data, error } = await supabase.rpc('accept_driver_offer', {
-    p_offer_id: offerId,
-    p_passenger_id: passengerId
+  // Canonical flow: call Edge Function which calls the atomic DB RPC.
+  // passengerId is ignored (kept for backwards-compatible signature); JWT determines passenger.
+  const { data, error } = await supabase.functions.invoke('accept-offer', {
+    body: { offer_id: offerId }
   });
 
   if (error) throw error;
   if (!data?.success) throw new Error(data?.error || 'Offer acceptance failed');
-  
-  return data;
+
+  return data?.data || data;
 }
 
 /**

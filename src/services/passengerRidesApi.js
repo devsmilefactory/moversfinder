@@ -7,6 +7,7 @@
 
 import { supabase } from '../lib/supabase';
 import { getSortTimestampForFeed, sortRidesByFeed } from './feedHelpers';
+import { transitionRideStatusRpc } from './rideStateService';
 
 /**
  * Map old status groups to new feed categories
@@ -56,9 +57,7 @@ export async function fetchPassengerRides(
     // Map service type
     const serviceType = rideTypeFilter === 'ALL' ? null : RIDE_TYPE_TO_SERVICE_TYPE[rideTypeFilter];
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'passengerRidesApi.js:60',message:'Calling get_passenger_feed',data:{feedCategory,serviceType,page,pageSize},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
+    // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
 
     const { data, error } = await supabase.rpc('get_passenger_feed', {
       p_user_id: userId,
@@ -81,17 +80,13 @@ export async function fetchPassengerRides(
 
     // Log performance warning if slow
     if (duration > 500) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'passengerRidesApi.js:88',message:'Slow query detected',data:{feedCategory,duration:duration.toFixed(2),resultCount:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
+      // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
     }
 
     // Get total count for pagination
     const count = data?.length || 0;
 
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/f9cc1608-1488-4be4-8f82-84524eec9f81',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'passengerRidesApi.js:99',message:'Fetch success',data:{feedCategory,resultCount:count,duration:duration.toFixed(2)},timestamp:Date.now(),sessionId:'debug-session',runId:'pre-fix',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
+    // Local ingest debug logging removed (was causing ERR_CONNECTION_REFUSED in dev)
 
     return { data: data || [], error: null, count };
   } catch (error) {
@@ -137,7 +132,7 @@ export async function fetchRideCounts(userId) {
 }
 
 /**
- * Accept a driver offer using new accept_driver_offer RPC
+ * Accept a driver offer using the canonical Edge Function (accept-offer)
  * 
  * @param {string} offerId - UUID of the offer
  * @param {string} passengerId - UUID of the passenger
@@ -145,9 +140,10 @@ export async function fetchRideCounts(userId) {
  */
 export async function acceptDriverOffer(offerId, passengerId) {
   try {
-    const { data, error } = await supabase.rpc('accept_driver_offer', {
-      p_offer_id: offerId,
-      p_passenger_id: passengerId
+    // Canonical flow: call Edge Function which calls the atomic DB RPC.
+    // passengerId is ignored (kept for backwards-compatible signature); JWT determines passenger.
+    const { data, error } = await supabase.functions.invoke('accept-offer', {
+      body: { offer_id: offerId }
     });
 
     if (error) {
@@ -159,7 +155,7 @@ export async function acceptDriverOffer(offerId, passengerId) {
       return {
         success: data.success || false,
         error: data.error || null,
-        data: data
+        data: data?.data || data
       };
     }
 
@@ -181,31 +177,19 @@ export async function acceptDriverOffer(offerId, passengerId) {
  * @returns {Promise<{success: boolean, error: string|null, data: Object|null}>}
  */
 export async function transitionRideStatus(rideId, newState, newSubState = null, actorType = 'PASSENGER', actorId) {
+  // Deprecated compatibility wrapper.
+  // Use rideStateService as the single source of truth so ride_status stays in sync across deployments.
   try {
-    const { data, error } = await supabase.rpc('transition_ride_status', {
-      p_ride_id: rideId,
-      p_new_state: newState,
-      p_new_sub_state: newSubState,
-      p_actor_type: actorType,
-      p_actor_id: actorId
+    const data = await transitionRideStatusRpc({
+      rideId,
+      newState,
+      newSubState,
+      actorType,
+      actorId,
     });
-
-    if (error) {
-      console.error('Error transitioning ride status:', error);
-      return { success: false, error: error.message, data: null };
-    }
-
-    if (data && typeof data === 'object') {
-      return {
-        success: data.success || false,
-        error: data.error || null,
-        data: data
-      };
-    }
-
-    return { success: false, error: 'Invalid response from server', data: null };
+    return { success: true, error: null, data };
   } catch (error) {
-    console.error('Exception in transitionRideStatus:', error);
+    console.error('Exception in passengerRidesApi.transitionRideStatus:', error);
     return { success: false, error: error.message, data: null };
   }
 }

@@ -1,20 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Button from '../../../../components/ui/Button';
-import { useRideStatus, RIDE_STATUSES } from '../../../../hooks/useRideStatus';
+import { RIDE_STATUSES } from '../../../../hooks/useRideStatus';
 import { useToast } from '../../../../components/ui/ToastProvider';
 import { supabase } from '../../../../lib/supabase';
-import useAuthStore from '../../../../stores/authStore';
-import { useRideCompletion } from '../../../../hooks/useRideCompletion';
-import { notifyStatusUpdateFromOverlay } from '../../../../services/notificationService';
-import { isErrandService } from '../../../../utils/serviceTypes';
-import { isRoundTripRide } from '../../../../utils/rideCostDisplay';
 
 // Import modular components
 import RideStatusDisplay from './RideStatusDisplay';
 import RideLocationInfo from './RideLocationInfo';
-import RideActionButtons from './RideActionButtons';
-import ErrandTaskManager from './ErrandTaskManager';
-import RideProgressStepper from './RideProgressStepper';
+import StatusUpdateActions from './StatusUpdateActions';
+import RideNavigationModal from './RideNavigationModal';
+import ComingSoonChatModal from '../../../../components/shared/ComingSoonChatModal';
+import RideCompactSummary from './RideCompactSummary';
+import { getActiveRideOverlayResolution } from './registry/activeRideOverlayRegistry.jsx';
 
 /**
  * RefactoredActiveRideOverlay Component
@@ -37,6 +34,10 @@ const RefactoredActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss,
   const [localRide, setLocalRide] = useState(ride);
   const [passengerPhone, setPassengerPhone] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [showNavModal, setShowNavModal] = useState(false);
+  const [navDefaultDestination, setNavDefaultDestination] = useState(null);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const completionTriggeredRef = useRef(false);
 
   // Computed values
   const isScheduled = localRide?.ride_timing !== 'instant';
@@ -45,13 +46,10 @@ const RefactoredActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss,
   const isRideCompleted = 
     localRide.ride_status === RIDE_STATUSES.TRIP_COMPLETED ||
     localRide.ride_status === RIDE_STATUSES.COMPLETED;
-  const isErrand = isErrandService(localRide.service_type);
-  const isRoundTrip = isRoundTripRide(localRide);
+  // (Round trip UI is handled in summary display / other screens; keep overlay lean.)
 
   // Hooks
   const { addToast } = useToast();
-  const { user } = useAuthStore();
-  const { completeRide, completing } = useRideCompletion();
 
   // Load passenger phone number
   useEffect(() => {
@@ -84,132 +82,108 @@ const RefactoredActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss,
     setLocalRide(ride);
   }, [ride]);
 
-  // Status update handler
-  const handleStatusUpdate = async (newStatus) => {
-    if (!localRide?.id || updatingStatus) return;
+  // Hydrate + keep local ride in sync with the database (important if the overlay is closed/reopened
+  // and the caller passes a stale/partial ride object).
+  useEffect(() => {
+    const rideId = ride?.id;
+    if (!rideId) return;
 
-    setUpdatingStatus(true);
-    try {
-      const { error } = await supabase
-        .from('rides')
-        .update({ 
-          ride_status: newStatus,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', localRide.id);
+    let cancelled = false;
 
-      if (error) {
-        console.error('Error updating ride status:', error);
-        addToast({
-          type: 'error',
-          title: 'Update Failed',
-          message: 'Failed to update ride status. Please try again.'
-        });
-        return;
-      }
+    const fetchLatest = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('rides')
+          .select('*')
+          .eq('id', rideId)
+          .single();
 
-      // Update local state
-      const updatedRide = { ...localRide, ride_status: newStatus };
-      setLocalRide(updatedRide);
-
-      // Send notification to passenger
-      const statusMessages = {
-        'driver_on_way': {
-          title: '🚗 Driver On The Way',
-          message: 'Your driver is heading to the pickup location.'
-        },
-        'driver_arrived': {
-          title: '📍 Driver Arrived',
-          message: 'Your driver has arrived at the pickup location.'
-        },
-        'trip_started': {
-          title: '🎯 Trip Started',
-          message: 'Your trip is now in progress.'
+        if (cancelled) return;
+        if (error) {
+          console.warn('Failed to hydrate active ride from DB:', error);
+          return;
         }
-      };
-
-      const notification = statusMessages[newStatus];
-      if (notification) {
-        await notifyStatusUpdateFromOverlay({
-          rideId: localRide.id,
-          passengerId: localRide.user_id,
-          title: notification.title,
-          message: notification.message
-        });
-      }
-
-      addToast({
-        type: 'success',
-        title: 'Status Updated',
-        message: `Ride status updated to ${newStatus.replace('_', ' ')}`
-      });
-
-    } catch (error) {
-      console.error('Error updating ride status:', error);
-      addToast({
-        type: 'error',
-        title: 'Update Failed',
-        message: 'Failed to update ride status. Please try again.'
-      });
-    } finally {
-      setUpdatingStatus(false);
-    }
-  };
-
-  // Complete ride handler
-  const handleCompleteRide = async () => {
-    try {
-      const result = await completeRide(localRide.id);
-      if (result.success) {
-        const completedRide = { ...localRide, ride_status: 'trip_completed' };
-        setLocalRide(completedRide);
-        
-        if (onCompleted) {
-          onCompleted(completedRide);
+        if (data) {
+          setLocalRide((prev) => ({ ...(prev || {}), ...data }));
         }
-
-        addToast({
-          type: 'success',
-          title: 'Trip Completed',
-          message: 'Trip has been marked as completed successfully.'
-        });
-      } else {
-        addToast({
-          type: 'error',
-          title: 'Completion Failed',
-          message: result.error || 'Failed to complete trip. Please try again.'
-        });
+      } catch (e) {
+        if (!cancelled) console.warn('Failed to hydrate active ride from DB:', e);
       }
-    } catch (error) {
-      console.error('Error completing ride:', error);
-      addToast({
-        type: 'error',
-        title: 'Completion Failed',
-        message: 'Failed to complete trip. Please try again.'
-      });
+    };
+
+    fetchLatest();
+
+    const channel = supabase
+      .channel(`refactored-active-ride-overlay-${rideId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'rides', filter: `id=eq.${rideId}` },
+        (payload) => {
+          if (!payload?.new) return;
+          setLocalRide((prev) => ({ ...(prev || {}), ...payload.new }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      try {
+        channel.unsubscribe();
+      } catch {}
+    };
+  }, [ride?.id]);
+
+  // Auto-dismiss overlay + trigger rating flow when trip reaches completion (non-errands).
+  const registry = getActiveRideOverlayResolution({
+    ride: localRide,
+    isRideCompleted,
+    setLocalRide,
+    onCompleted,
+    onDismiss,
+  });
+
+  useEffect(() => {
+    if (completionTriggeredRef.current) return;
+    const completed =
+      localRide?.ride_status === RIDE_STATUSES.TRIP_COMPLETED ||
+      localRide?.ride_status === RIDE_STATUSES.COMPLETED;
+    if (!completed) return;
+
+    // Some ride types (e.g. errands) handle completion internally.
+    if (registry?.handlesCompletion) return;
+
+    completionTriggeredRef.current = true;
+    if (typeof onCompleted === 'function') {
+      onCompleted(localRide);
     }
-  };
+    if (typeof onDismiss === 'function') {
+      onDismiss();
+    }
+  }, [localRide?.id, localRide?.ride_status, registry?.handlesCompletion, onCompleted, onDismiss]);
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 p-6 rounded-t-xl">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-gray-900">Active Ride</h2>
-            <button
-              onClick={onDismiss}
-              className="text-gray-400 hover:text-gray-600 text-2xl font-light"
-            >
-              ×
-            </button>
-          </div>
-        </div>
+    <>
+      {/* Non-blocking overlay shell (matches legacy overlay behavior) */}
+      <div className="fixed inset-0 z-40 flex justify-center items-start p-2 sm:p-4 pointer-events-none overflow-y-auto pt-16">
+        <div className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto p-4 space-y-3 relative pointer-events-auto">
+          <button
+            aria-label="Minimize overlay"
+            onClick={onDismiss}
+            className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900 font-bold text-xl transition-colors"
+            title="Minimize this overlay"
+          >
+            ✕
+          </button>
 
-        {/* Content */}
-        <div className="p-6 space-y-6">
-          {/* Ride Status */}
+          {/* Header */}
           <RideStatusDisplay ride={localRide} isScheduled={isScheduled} />
+
+          {/* Compact ride summary (pickup/dropoff/phone/cost) */}
+          <RideCompactSummary
+            ride={localRide}
+            passengerPhone={passengerPhone}
+            isScheduled={isScheduled}
+          />
 
           {/* Warning Messages */}
           {isInstant && (
@@ -228,81 +202,106 @@ const RefactoredActiveRideOverlay = ({ ride, onViewDetails, onCancel, onDismiss,
             </div>
           )}
 
-          {/* View Details Button */}
-          <Button
-            variant="primary"
-            size="md"
-            onClick={onViewDetails}
-            className="w-full"
-          >
-            📱 View Full Ride Details
-          </Button>
+          {/* Primary actions row */}
+          <div className="flex gap-2">
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => onViewDetails?.(localRide)}
+              className="w-1/2"
+            >
+              📱 View Details
+            </Button>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setShowChatModal(true)}
+              className="w-1/2"
+            >
+              💬 Chat
+            </Button>
+          </div>
 
           {/* Location Information */}
           <RideLocationInfo ride={localRide} passengerPhone={passengerPhone} />
 
-          {/* Errand Task Manager (if applicable) */}
-          {isErrand && (
-            <ErrandTaskManager 
-              ride={localRide} 
-              user={user} 
-              isRideCompleted={isRideCompleted} 
-            />
+          {/* Ride-type specific panels (registry-driven) */}
+          {registry?.servicePanels?.length > 0 && (
+            <div className="space-y-3">
+              {registry.servicePanels.map((panel, idx) => (
+                <React.Fragment key={idx}>{panel}</React.Fragment>
+              ))}
+            </div>
           )}
 
-          {/* Ride Progress Stepper */}
-          <RideProgressStepper ride={localRide} isScheduled={isScheduled} />
-
-          {/* Action Buttons */}
-          <RideActionButtons
+          {/* Status Stepper + Dynamic Button (canonical) */}
+          <StatusUpdateActions
             ride={localRide}
+            onStatusUpdate={(newStatus, updatedRide) => {
+              setUpdatingStatus(true);
+              if (updatedRide) {
+                setLocalRide(updatedRide);
+              } else {
+                setLocalRide((prev) => ({ ...(prev || {}), ride_status: newStatus }));
+              }
+              setUpdatingStatus(false);
+            }}
+            onPromptNavigate={({ defaultDestination }) => {
+              setNavDefaultDestination(defaultDestination || null);
+              setShowNavModal(true);
+            }}
+            updatingStatus={updatingStatus}
+            isRideCompleted={isRideCompleted}
             isScheduled={isScheduled}
             needsToBeStarted={needsToBeStarted}
-            updatingStatus={updatingStatus}
-            completing={completing}
-            onStatusUpdate={handleStatusUpdate}
-            onCompleteRide={handleCompleteRide}
-            onCancel={onCancel}
           />
 
-          {/* Round Trip Information */}
-          {isRoundTrip && (
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-purple-600 text-lg">🔄</span>
-                <h4 className="font-medium text-purple-900">Round Trip</h4>
-              </div>
-              <p className="text-sm text-purple-700">
-                This is a round trip ride. After reaching the destination, you'll return to the pickup location.
-              </p>
-            </div>
-          )}
+          {/* Always-visible actions */}
+          <div className="space-y-2 border-t-2 border-gray-200 pt-3">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => {
+                setNavDefaultDestination(null);
+                setShowNavModal(true);
+              }}
+              className="w-full"
+            >
+              🗺️ Navigate
+            </Button>
 
-          {/* Ride Completion Status */}
-          {isRideCompleted && (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 text-xl">✅</span>
-                <div>
-                  <h4 className="font-medium text-green-900">Trip Completed</h4>
-                  <p className="text-sm text-green-700">
-                    This ride has been completed successfully.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 p-4 rounded-b-xl">
-          <div className="flex items-center justify-between text-sm text-gray-600">
-            <span>Ride #{localRide.id?.toString().slice(-6)}</span>
-            <span>{localRide.service_type?.toUpperCase()}</span>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={onCancel}
+              className="w-full"
+            >
+              ❌ Cancel Ride
+            </Button>
           </div>
+
+          {/* Info Text */}
+          <p className="text-xs text-center text-gray-500">
+            Click the ✕ button to minimize this overlay. It will reappear when you navigate to a different page.
+          </p>
         </div>
       </div>
-    </div>
+
+      {/* IMPORTANT: render modals outside the pointer-events-none overlay wrapper */}
+      <RideNavigationModal
+        isOpen={showNavModal}
+        onClose={() => setShowNavModal(false)}
+        ride={localRide}
+        passengerPhone={passengerPhone}
+        defaultDestination={navDefaultDestination}
+      />
+
+      <ComingSoonChatModal
+        isOpen={showChatModal}
+        onClose={() => setShowChatModal(false)}
+        title="Chat (Coming soon)"
+      />
+    </>
   );
 };
 

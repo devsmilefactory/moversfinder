@@ -184,7 +184,7 @@ const ActiveRideCard = ({
         >
           View Details
         </Button>
-        {ride.ride_status !== 'trip_started' && (
+        {!['completed', 'cancelled'].includes((ride.ride_status || '').toLowerCase()) && (
           <Button
             variant="outline"
             size="md"

@@ -1,10 +1,10 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
-import { broadcastRideToDrivers } from '../utils/driverMatching';
 import { createRecurringSeries } from '../services/recurringTripService';
 import { prepareErrandTasksForInsert } from '../utils/errandTasks';
 import { enforceInstantOnly, FEATURE_FLAGS } from '../config/featureFlags';
 import { toGeoJSON, calculateDistance, getRouteDistanceAndDuration, getRouteWithStopsDistanceAndDuration } from '../utils/locationServices';
+import { addCostsToTasks } from '../utils/errandCostHelpers';
 import {
   calculateEstimatedFareV2
 } from '../utils/pricingCalculator';
@@ -74,53 +74,19 @@ const useBookingSubmission = ({
     }
 
     // Service-specific validations
-    switch (selectedService) {
-      case 'taxi':
-        if (!formData.passengers || formData.passengers < 1) {
-          errors.passengers = 'Number of passengers is required';
+    // Prefer ride-type handler registry (scales without growing this file).
+    // Keep 'bulk' local for now because bulk is a booking-mode (batch_id) rather than a canonical service_type.
+    if (selectedService !== 'bulk') {
+      try {
+        const handler = getRideTypeHandler(selectedService);
+        const result = handler?.validateBookingData?.(formData, serviceData);
+        if (result && result.isValid === false && result.errors) {
+          Object.assign(errors, result.errors);
         }
-        break;
-
-      case 'courier':
-        if (!serviceData.recipient?.name) {
-          errors.recipientName = 'Recipient name is required';
-        }
-        if (!serviceData.recipient?.phone) {
-          errors.recipientPhone = 'Recipient phone is required';
-        }
-        if (!serviceData.package?.description) {
-          errors.packageDescription = 'Package description is required';
-        }
-        break;
-
-      case 'school_run':
-        if (!serviceData.passenger?.name) {
-          errors.passengerName = 'Passenger name is required';
-        }
-        if (!serviceData.guardian?.name) {
-          errors.guardianName = 'Guardian name is required';
-        }
-        if (!serviceData.guardian?.phone) {
-          errors.guardianPhone = 'Guardian phone is required';
-        }
-        if (!formData.tripTime) {
-          errors.tripTime = 'Trip time is required for school runs';
-        }
-        break;
-
-      case 'errands':
-        if (!serviceData.tasks || serviceData.tasks.length === 0) {
-          errors.tasks = 'At least one task is required';
-        } else {
-          serviceData.tasks.forEach((task, index) => {
-            if (!task.startPoint || !task.destinationPoint) {
-              errors[`task_${index}`] = `Task ${index + 1} requires both start and destination points`;
-            }
-          });
-        }
-        break;
-
-      case 'bulk':
+      } catch (e) {
+        errors.service = 'Invalid service type';
+      }
+    } else {
         const mode = serviceData.bulkMode || 'multi_pickup';
         if (mode === 'multi_pickup') {
           if (!formData.dropoffLocation) {
@@ -143,10 +109,6 @@ const useBookingSubmission = ({
         if (!serviceData.contactPerson) {
           errors.contactPerson = 'Contact person is required';
         }
-        break;
-
-      default:
-        errors.service = 'Invalid service type';
     }
 
     return {
@@ -294,6 +256,23 @@ const useBookingSubmission = ({
     rideTiming = enforceInstantOnly(rideTiming);
     const rideIsInstant = rideTiming === 'instant';
 
+    // Errands: normalize tasks and store them on rides.errand_tasks (canonical in app/UI)
+    // We keep the errand_tasks table in the schema, but the app’s UX relies on rides.errand_tasks JSON.
+    let errandsPayload = {};
+    if (selectedService === 'errands') {
+      const normalizedTasks = prepareErrandTasksForInsert(serviceData?.tasks || formData?.tasks || []);
+      const tasksWithCosts = addCostsToTasks(normalizedTasks, Number(totalFare || 0));
+      const taskCount = Array.isArray(tasksWithCosts) ? tasksWithCosts.length : 0;
+
+      errandsPayload = {
+        errand_tasks: taskCount > 0 ? JSON.stringify(tasksWithCosts) : JSON.stringify([]),
+        number_of_tasks: taskCount,
+        completed_tasks_count: 0,
+        remaining_tasks_count: taskCount,
+        active_errand_task_index: 0
+      };
+    }
+
     return {
       // User and service info
       user_id: user.id,
@@ -323,7 +302,8 @@ const useBookingSubmission = ({
       payment_method: formData.paymentMethod || 'cash',
 
       // Scheduling (only set if not in instant-only mode)
-      scheduled_datetime: (rideTiming === 'instant' || !hasSpecificSchedule) ? null : (() => {
+      // Instant-only: scheduled_datetime must be NULL
+      scheduled_datetime: rideTiming === 'instant' ? null : (!hasSpecificSchedule ? null : (() => {
         let dateStr;
         if (scheduleType === 'specific_dates' && formData.selectedDates.length > 0) {
           dateStr = formData.selectedDates[0];
@@ -343,7 +323,7 @@ const useBookingSubmission = ({
         }
 
         return dateObj.toISOString();
-      })() : null,
+      })()),
 
       // Recurrence pattern (only set if recurring is enabled)
       recurrence_pattern: (!rideIsInstant && rideTiming === 'scheduled_recurring' && FEATURE_FLAGS.RECURRING_RIDES_ENABLED) ? (
@@ -382,7 +362,10 @@ const useBookingSubmission = ({
       series_trip_number: 1,
       series_occurrence_index: null,
 
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+
+      // Ride-type specific payloads
+      ...errandsPayload
     };
   }, [roundToNearestHalfDollar]);
 
@@ -431,16 +414,7 @@ const useBookingSubmission = ({
       }
 
       // Step 6: Handle service-specific post-processing
-      if (selectedService === 'errands' && serviceData.tasks?.length > 0) {
-        const errandTasks = prepareErrandTasksForInsert(serviceData.tasks, rideData.id);
-        const { error: tasksError } = await supabase
-          .from('errand_tasks')
-          .insert(errandTasks);
-
-        if (tasksError) {
-          console.warn('Failed to insert errand tasks:', tasksError);
-        }
-      }
+      // Errands post-processing removed: errands are stored canonically on rides.errand_tasks JSON.
 
       // Step 7: Handle recurring rides (only if feature flag enabled)
       if (FEATURE_FLAGS.RECURRING_RIDES_ENABLED && 
@@ -457,14 +431,9 @@ const useBookingSubmission = ({
         }
       }
 
-      // Step 8: Broadcast to drivers (for instant rides)
-      if (bookingData.ride_timing === 'instant') {
-        try {
-          await broadcastRideToDrivers(rideData);
-        } catch (broadcastError) {
-          console.warn('Failed to broadcast ride to drivers:', broadcastError);
-        }
-      }
+      // Step 8: Broadcast to drivers
+      // IMPORTANT: this is now handled by a DB trigger on rides INSERT (production),
+      // so we do not broadcast from the client to avoid double notifications/queue rows.
 
       setSubmitSuccess(true);
       

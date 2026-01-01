@@ -6,6 +6,7 @@ import { getRideProgressDetails } from '../../../utils/rideProgress';
 import { isErrandService } from '../../../utils/serviceTypes';
 import { getRideCostDisplay } from '../../../utils/rideCostDisplay';
 import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
+import { useCancelRide } from '../../../hooks/useCancelRide';
 
 /**
  * Card component for active rides (driver assigned through completed)
@@ -14,6 +15,7 @@ import { getRideTypeHandler } from '../../../utils/rideTypeHandlers';
 const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
   const [driverInfo, setDriverInfo] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { cancelRide } = useCancelRide();
 
   // Get ride type handler for modular service-specific handling
   const rideTypeHandler = getRideTypeHandler(ride.service_type);
@@ -161,20 +163,17 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
     if (!window.confirm('Are you sure you want to cancel this ride?')) return;
     
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data, error } = await supabase.rpc('transition_ride_status', {
-        p_ride_id: ride.id,
-        p_new_state: 'CANCELLED',
-        p_actor_type: 'PASSENGER',
-        p_actor_id: user.id
+      const result = await cancelRide({
+        rideId: ride.id,
+        role: 'passenger',
+        reason: 'Cancelled by passenger',
+        otherPartyUserId: ride.driver_id || null
       });
-
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Failed to cancel ride');
-      
-      alert('Ride cancelled successfully');
+      if (result?.success) {
+        alert('Ride cancelled successfully');
+      } else {
+        throw new Error(result?.error || 'Failed to cancel ride');
+      }
     } catch (error) {
       console.error('Error cancelling ride:', error);
       alert(`Error: ${error.message}`);
@@ -212,8 +211,8 @@ const ActiveRideCard = ({ ride, onClick, tabContext = 'active' }) => {
               {statusInfo.label}
             </span>
             
-            {/* Cancel Button - Only show if not trip_completed/completed */}
-            {!['trip_completed', 'completed'].includes(ride.ride_status || ride.status) && (
+            {/* Cancel Button - Allowed in any non-terminal state (including trip_completed) */}
+            {!['completed', 'cancelled'].includes((ride.ride_status || ride.status || '').toLowerCase()) && (
               <button
                 onClick={handleCancelRide}
                 className="text-red-600 hover:text-red-800 text-xs font-bold px-2 py-1.5 bg-red-50 rounded-full border border-red-200 flex items-center gap-1 transition-colors"

@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import useAuthStore from './stores/authStore';
+import useProfileStore from './stores/profileStore';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import { redirectToDashboard } from './lib/routing';
 
@@ -62,13 +63,30 @@ const DriversManagementPage = React.lazy(() => import('./pages/operator/DriversM
 const RootRedirect = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const { activeProfileType, profileLoading, availableProfiles } = useProfileStore();
 
   useEffect(() => {
     if (!user) { navigate('/login', { replace: true }); return; }
-    // Delegate routing logic to centralized util (reads type-specific tables)
-    // Pass navigate function for client-side navigation (no full page reload)
-    redirectToDashboard(user, navigate);
-  }, [user, navigate]);
+
+    // IMPORTANT:
+    // Route based on the *selected/active profile* (multi-profile), not the account's primary user_type.
+    // This prevents driver accounts browsing as passengers from being forced into driver profile/status flows.
+    const selectedProfileType =
+      activeProfileType ||
+      user.active_profile_type ||
+      user.last_selected_profile_type ||
+      user.last_used_profile ||
+      user.user_type;
+
+    // If profiles are still loading and we don't yet know the active profile, wait.
+    if (profileLoading && !activeProfileType && (!availableProfiles || availableProfiles.length === 0)) {
+      return;
+    }
+
+    // Delegate routing logic to centralized util (reads type-specific tables),
+    // but override user_type with the selected profile so driver-only checks don't run in passenger mode.
+    redirectToDashboard({ ...user, user_type: selectedProfileType }, navigate);
+  }, [user, navigate, activeProfileType, profileLoading, availableProfiles]);
 
   // Show loading while redirecting
   return (
@@ -93,12 +111,25 @@ const RootRedirect = () => {
  */
 const AppRoutes = () => {
   const { user, isAuthenticated } = useAuthStore();
+  const { activeProfileType } = useProfileStore();
 
   // Redirect to appropriate page based on last selected profile type
   const getDefaultRoute = () => {
     if (!isAuthenticated || !user) {
       return '/';
     }
+
+    // Prefer the actively selected profile (multi-profile) over stale authStore fields.
+    const selectedProfileType =
+      activeProfileType ||
+      user.active_profile_type ||
+      user.last_selected_profile_type ||
+      user.last_used_profile ||
+      user.user_type;
+
+    if (selectedProfileType === 'individual') return '/user/book-ride';
+    if (selectedProfileType === 'corporate') return '/corporate/book-ride';
+    if (selectedProfileType === 'driver') return '/driver/rides';
 
     // Check for last selected profile type (remembers user's choice)
     if (user.last_selected_profile_type) {

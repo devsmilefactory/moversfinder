@@ -36,6 +36,8 @@ const IndividualRidesPage = () => {
   const [offerCounts, setOfferCounts] = useState({});
   const [filters, setFilters] = useState({ serviceType: 'all', rideTiming: 'all' });
   const previousOfferCountsRef = useRef({});
+  const pendingAutoOpenRef = useRef(null); // 'active' | 'pending' | null
+  const didAutoOpenRef = useRef(false);
 
   // Initialize passenger rides feed hook
   const feedHook = usePassengerRidesFeed(user?.id);
@@ -77,9 +79,15 @@ const IndividualRidesPage = () => {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const tabParam = params.get('tab');
+    const openActive = params.get('openActive') === '1';
+    const openPending = params.get('openPending') === '1';
     if (tabParam && REVERSE_TAB_MAP[tabParam]) {
       feedChangeTab(REVERSE_TAB_MAP[tabParam]);
     }
+
+    // If coming from the green indicator, request auto-opening the primary ride modal
+    if (openActive) pendingAutoOpenRef.current = 'active';
+    if (openPending) pendingAutoOpenRef.current = 'pending';
   }, [location.search]);
   
   // Map service type filter to hook's rideTypeFilter
@@ -218,6 +226,38 @@ const IndividualRidesPage = () => {
     setShowRideDetails(true);
   };
 
+  const openPrimaryRideForTab = (tab) => {
+    // Use the same function as the feed cards (opens the RideDetails modal)
+    const statusList =
+      tab === 'active'
+        ? ['accepted', 'driver_on_way', 'driver_arrived', 'trip_started', 'trip_completed']
+        : ['pending'];
+    const primary = (feedRides || []).find((r) => statusList.includes((r.ride_status || r.status || '').toLowerCase()));
+    if (primary) {
+      handleRideClick(primary);
+      return true;
+    }
+    return false;
+  };
+
+  // Auto-open modal when navigated from the green indicator (once data is available)
+  useEffect(() => {
+    if (didAutoOpenRef.current) return;
+    const requested = pendingAutoOpenRef.current;
+    if (!requested) return;
+    if (ridesLoading) return;
+
+    // Ensure correct tab first, then open
+    if (requested === 'active' && activeTab !== 'active') return;
+    if (requested === 'pending' && activeTab !== 'pending') return;
+
+    const opened = openPrimaryRideForTab(requested);
+    if (opened) {
+      didAutoOpenRef.current = true;
+      pendingAutoOpenRef.current = null;
+    }
+  }, [activeTab, ridesLoading, feedRides]);
+
   // Hook already returns rides filtered by tab - no manual categorization needed
   // Just use the rides directly from the hook
 
@@ -279,7 +319,19 @@ const IndividualRidesPage = () => {
             <RefreshCw className={`w-4 h-4 text-slate-700 ${ridesLoading ? 'animate-spin' : ''}`} />
           </button>
           {tabCounts.active > 0 && (
-            <button onClick={() => feedChangeTab('ACTIVE')} className="flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-800 text-xs font-medium">
+            <button
+              onClick={() => {
+                // Match feed-card behavior: open the active ride modal (RideDetailsModal)
+                if (activeTab !== 'active') {
+                  pendingAutoOpenRef.current = 'active';
+                  didAutoOpenRef.current = false;
+                  feedChangeTab('ACTIVE');
+                  return;
+                }
+                openPrimaryRideForTab('active');
+              }}
+              className="flex items-center gap-1 px-2 py-1 rounded-full bg-green-100 text-green-800 text-xs font-medium"
+            >
               <span className="text-sm">🚗</span>
               <span>{tabCounts.active}</span>
             </button>
